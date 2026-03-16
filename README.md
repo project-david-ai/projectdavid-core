@@ -78,10 +78,11 @@ Usage: platform-api [OPTIONS] COMMAND [ARGS]...
 
  Entities API management CLI.
 
-╭─ Commands ────────────────────────────────────────────────────────────────╮
-│ bootstrap-admin   Bootstrap the initial admin user and API key.           │
-│ docker-manager    Manage Docker Compose stack: build, run, set up .env... │
-╰───────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ configure        Update variables in an existing .env without regenerating secrets.                                                                                              │
+│ bootstrap-admin  Provision the default admin user inside the running api container.                                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
 ```
 
 For the full command reference see [Docker orchestration commands →](https://github.com/project-david-ai/projectdavid_docs/blob/master/src/pages/api-infra/docker_commands.md)
