@@ -8,4 +8,6 @@ docker compose exec api alembic revision --autogenerate -m "Remove thread ---> v
 docker compose exec api alembic revision --autogenerate -m "Add soft delete to Files"
 
 
+platform-api docker-manager --mode both --exclude ollama --exclude vllm
+
 docker compose exec api alembic revision --autogenerate -m "Add soft delete to VectorStore"
