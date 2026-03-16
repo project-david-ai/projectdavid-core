@@ -1,3 +1,34 @@
+# [1.24.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.23.0...v1.24.0) (2026-03-16)
+
+
+### Bug Fixes
+
+* remove fine-tuning pipeline and associated tables (Dataset, TrainingJob, FineTunedModel) ([6771b9c](https://github.com/project-david-ai/projectdavid-core/commit/6771b9c656c254ff74178544346064eaedffd723))
+
+
+### Features
+
+* add fine-tuning pipeline with Dataset, TrainingJob, and FineTunedModel tables ([3d4b652](https://github.com/project-david-ai/projectdavid-core/commit/3d4b6529ba4123652876dd6bde383ef60f959b4e))
+
+# [1.23.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.22.1...v1.23.0) (2026-03-16)
+
+
+### Bug Fixes
+
+* update README commands, improve token counting with safe text handling, and add guard for empty inputs ([46a645f](https://github.com/project-david-ai/projectdavid-core/commit/46a645f67ac843e2f3fec7c2bb1c0df090abfa62))
+
+
+### Features
+
+* implement admin check utility and enhance access control logic ([062896d](https://github.com/project-david-ai/projectdavid-core/commit/062896da533eba4931c72e6a07056e95e1d2c944))
+
+## [1.22.1](https://github.com/project-david-ai/platform/compare/v1.22.0...v1.22.1) (2026-03-15)
+
+
+### Bug Fixes
+
+* enable Docker build cache export and remove redundant prune step in CI workflow ([b07c3bf](https://github.com/project-david-ai/platform/commit/b07c3bfb1ee7711750e968d23b93178ff915d1fd))
+
 # [1.22.0](https://github.com/project-david-ai/platform/compare/v1.21.1...v1.22.0) (2026-03-15)
 
 

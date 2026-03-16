@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "projectdavid-core"
-version = "1.22.0"
-description = "Core runtime for the Project David platform — API, inference orchestration, and data layer"
+name = "entities_api"
+version = "1.24.0"
+description = "Unified multi vendor AI inference API"
 readme = "README.md"
 
 authors = [
@@ -14,7 +14,7 @@ authors = [
 
 license = { file = "LICENSE" }
 
-keywords = ["AI", "API", "Assistants", "LLM", "RAG", "Vector", "ProjectDavid"]
+keywords = ["AI", "API", "Assistants", "LLM", "RAG", "Vector"]
 
 requires-python = ">=3.9"
 
@@ -51,9 +51,9 @@ dev = [
 platform-api = "entities_api.__main__:root"
 
 [project.urls]
-Homepage = "https://github.com/project-david-ai/projectdavid-core"
+Homepage = "https://github.com/project-david-ai/platform"
 Documentation = "https://github.com/project-david-ai/projectdavid_docs/tree/master/src/pages"
-Changelog = "https://github.com/project-david-ai/projectdavid-core/blob/master/CHANGELOG.md"
+Changelog = "https://github.com/project-david-ai/platform/blob/master/CHANGELOG.md"
 
 [tool.setuptools]
 package-dir = { "" = "src/api" }
