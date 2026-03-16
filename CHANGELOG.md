@@ -1,3 +1,10 @@
+## [1.24.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.24.0...v1.24.1) (2026-03-16)
+
+
+### Bug Fixes
+
+* update build cache configuration and remove redundant Docker prune step in CI workflow ([28f01a0](https://github.com/project-david-ai/projectdavid-core/commit/28f01a05b143ed9c7d1a17a877d615a64dfca935))
+
 # [1.24.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.23.0...v1.24.0) (2026-03-16)
 
 
