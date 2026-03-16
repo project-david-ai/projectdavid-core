@@ -139,9 +139,6 @@ jobs:
           username: thanosprime
           password: ${{ secrets.DOCKERHUB_THANOSPRIME }}
 
-      - name: "🧼 Prune Docker System Cache"
-        run: docker system prune -af || true
-
       # ----- semantic-release -------------------------------------------------
       - name: "🚀 Setup Node.js"
         uses: actions/setup-node@v4
@@ -209,8 +206,8 @@ jobs:
           tags: ${{ steps.meta_api.outputs.tags }}
           labels: ${{ steps.meta_api.outputs.labels }}
           platforms: linux/amd64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
 
       # ---------------- Build / Push Sandbox --------------
       - name: "🏗️ Build & Push Sandbox Image"
@@ -222,5 +219,5 @@ jobs:
           tags: ${{ steps.meta_sandbox.outputs.tags }}
           labels: ${{ steps.meta_sandbox.outputs.labels }}
           platforms: linux/amd64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=sandbox
+          cache-to: type=gha,mode=max,scope=sandbox
