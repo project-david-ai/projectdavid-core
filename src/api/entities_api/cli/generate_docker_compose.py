@@ -56,9 +56,19 @@ services:
 
 
 # --------------------------------------------------------------------------- #
-# main generator
+# Main generator
 # --------------------------------------------------------------------------- #
-def generate_dev_docker_compose() -> None:
+def generate_dev_docker_compose(force: bool = False) -> None:
+    """
+    Write docker-compose.yml and docker-compose.training.yml to the project root.
+
+    Parameters
+    ----------
+    force:
+        If True, overwrite existing files. Defaults to False (skip if present).
+        Pass force=True when you know the template has changed and need to
+        push the update to disk.
+    """
     # project root — file lives at src/api/entities_api/cli/generate_docker_compose.py
     # so we must walk up 5 levels: cli → entities_api → api → src → repo root
     project_root = Path(__file__).resolve().parents[4]
@@ -67,7 +77,7 @@ def generate_dev_docker_compose() -> None:
     training_compose_path = project_root / "docker-compose.training.yml"
 
     # --- 1. Generate Main Compose File ---
-    if main_compose_path.exists():
+    if main_compose_path.exists() and not force:
         print(f"⚠️  {main_compose_path.name} already exists – generation skipped.")
     else:
         compose_yaml = """\
@@ -86,7 +96,7 @@ services:
     ports:
       - "3307:3306"
     healthcheck:
-      test:["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -347,16 +357,16 @@ networks:
     driver: bridge
 """
         main_compose_path.write_text(compose_yaml, encoding="utf-8")
-        print(f"✅  Development docker-compose.yml written → {main_compose_path}")
+        print(f"✅  docker-compose.yml written → {main_compose_path}")
 
     # --- 2. Generate Training Overlay File ---
-    if training_compose_path.exists():
+    if training_compose_path.exists() and not force:
         print(f"⚠️  {training_compose_path.name} already exists – generation skipped.")
     else:
         training_compose_path.write_text(TRAINING_YML_CONTENT, encoding="utf-8")
-        print(f"✅  Training overlay docker-compose.training.yml written → {training_compose_path}")
+        print(f"✅  docker-compose.training.yml written → {training_compose_path}")
 
 
 # --------------------------------------------------------------------------- #
 if __name__ == "__main__":
-    generate_dev_docker_compose()
+    generate_dev_docker_compose(force=True)

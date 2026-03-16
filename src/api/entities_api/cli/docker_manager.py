@@ -108,6 +108,7 @@ class DockerManager:
         "SANDBOX_AUTH_SECRET",
         "DEFAULT_SECRET_KEY",
         "SMBCLIENT_PASSWORD",
+        "SEARXNG_SECRET_KEY",  # Required by searxng service in docker-compose.yml
     ]
 
     _GENERATED_TOOL_IDS = [
@@ -213,6 +214,7 @@ class DockerManager:
             "CODE_EXECUTION_URL",
             "SIGNED_URL_SECRET",
             "SANDBOX_AUTH_SECRET",
+            "SEARXNG_SECRET_KEY",  # Required by searxng service — auto-generated
             "DISABLE_FIREJAIL",
             "SECRET_KEY",
             "DEFAULT_SECRET_KEY",
@@ -549,7 +551,6 @@ def docker_manager(
     ollama_gpu: bool = typer.Option(False, "--ollama-gpu"),
     verbose: bool = typer.Option(False, "--verbose", "--debug"),
     debug_cache: bool = typer.Option(False, "--debug-cache"),
-    # ---> NEW FLAG ADDED HERE <---
     train: bool = typer.Option(
         False, "--train", help="Include the fine-tuning training overlay (GPU required)."
     ),
@@ -580,7 +581,7 @@ def docker_manager(
         ollama_gpu=ollama_gpu,
         verbose=verbose,
         debug_cache=debug_cache,
-        train=train,  # pass the new flag to the namespace
+        train=train,
     )
 
     try:
