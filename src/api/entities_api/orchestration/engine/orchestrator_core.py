@@ -7,6 +7,20 @@ The ultra-thin root class.
 • Carries only a few shared state fields
 • Leaves `stream` + `process_conversation` abstract so each provider
   (Hyperbolic, OpenAI, Together, …) can implement its own wire-format.
+
+Cache ownership
+───────────────
+AssistantCacheMixin is the single source of truth for _assistant_cache
+resolution. It provides the `assistant_cache` property and
+`get_assistant_cache()` accessor with a four-level fallback chain:
+    1. Injected via __init__ (fast path)
+    2. ServiceRegistry (_get_service)
+    3. Lazy construction from self.redis
+    4. Hard ValueError
+
+OrchestratorCore.__init__ sets self.redis before any cache access so
+AssistantCacheMixin path 3 always resolves correctly if paths 1 and 2
+are unavailable.
 """
 
 from __future__ import annotations
@@ -33,6 +47,8 @@ from projectdavid_common.utilities.logging_service import LoggingUtility
 
 from src.api.entities_api.constants.platform import PLATFORM_TOOLS
 # Mixins
+from src.api.entities_api.orchestration.mixins.assistant_cache_mixin import \
+    AssistantCacheMixin
 from src.api.entities_api.orchestration.mixins.code_interpreter_mixin import \
     CodeInterpreterMixin
 from src.api.entities_api.orchestration.mixins.consumer_tool_handlers_mixin import \
@@ -69,6 +85,9 @@ class StreamState:
 
 class OrchestratorCore(
     ServiceRegistryMixin,
+    AssistantCacheMixin,  # Owns: assistant_cache property, get_assistant_cache(),
+    # _assistant_cache resolution. Replaces the duplicated
+    # property/setter/getter that previously lived here.
     JsonUtilsMixin,
     ContextMixin,
     ToolRoutingMixin,
@@ -95,14 +114,20 @@ class OrchestratorCore(
         self.is_deep_research = None
         self._scratch_pad_thread = None
 
-        # 1. Setup Redis (Critical for the Mixin fallback)
+        # 1. Setup Redis — must be set before any AssistantCacheMixin access
+        #    so that the lazy-construction fallback (path 3) can resolve correctly.
         self.redis = redis or get_redis_sync()
 
-        # 2. Setup the Cache Service
+        # 2. Seed _assistant_cache if explicitly injected.
+        #    AssistantCacheMixin owns the property and resolution chain —
+        #    we only set the backing attribute here when the caller passes
+        #    a ready-made instance, bypassing all fallback paths.
         if assistant_cache_service:
             self._assistant_cache = assistant_cache_service
         elif "assistant_cache" in extra and isinstance(extra["assistant_cache"], AssistantCache):
             self._assistant_cache = extra["assistant_cache"]
+        # If neither is provided, AssistantCacheMixin will resolve lazily
+        # via ServiceRegistry or self.redis on first access.
 
         # 3. Setup the Data/Config
         legacy_config = extra.get("assistant_config") or extra.get("assistant_cache")
@@ -161,17 +186,6 @@ class OrchestratorCore(
     # --------------------------------------------------------------------------
     # CONFIG HELPERS
     # --------------------------------------------------------------------------
-
-    @property
-    def assistant_cache(self) -> dict:
-        return self._assistant_cache
-
-    @assistant_cache.setter
-    def assistant_cache(self, value: dict) -> None:
-        self._assistant_cache = value
-
-    def get_assistant_cache(self) -> dict:
-        return self._assistant_cache
 
     async def load_assistant_config(self):
         """
