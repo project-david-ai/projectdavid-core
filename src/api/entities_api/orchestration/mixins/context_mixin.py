@@ -20,6 +20,21 @@ LOG = LoggingUtility()
 
 
 class ContextMixin:
+    """
+    Owns: context window construction, system message assembly per agent role,
+          message history retrieval and normalisation, tool resolution and
+          deduplication.
+
+    Requires on self (satisfied by _ProviderMixins / OrchestratorCore composition):
+        self.get_assistant_cache()       — AssistantCacheMixin
+        self._native_exec                — NativeExecMixin
+        self.conversation_truncator      — set in BaseWorker.__init__
+        self.message_cache               — lazy property, self-initialising
+
+    Do NOT redefine get_assistant_cache() or _native_exec on any subclass —
+    both are owned by their respective mixins and must resolve through the MRO.
+    """
+
     _message_cache = None
 
     @property
