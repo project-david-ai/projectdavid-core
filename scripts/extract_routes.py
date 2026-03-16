@@ -37,9 +37,8 @@ if not any(os.environ.get(var) for var in db_var_names):
 # =================================================================
 
 try:
-    from fastapi.routing import APIRoute
-
     from entities_api.routers import api_router  # Central router only
+    from fastapi.routing import APIRoute
 except ImportError as e:
     print(f"❌ Failed to import FastAPI components: {e}")
     sys.exit(1)

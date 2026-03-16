@@ -19,6 +19,11 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
+from entities_api.cache.assistant_cache import AssistantCache
+from entities_api.dependencies import get_redis_sync
+from entities_api.platform_tools.delegated_model_map.delegation_model_map import \
+    get_delegated_model
+from entities_api.utils.assistant_manager import AssistantManager
 # -------------------------------------------------------------------------
 # IMPORTS
 # -------------------------------------------------------------------------
@@ -26,11 +31,6 @@ from projectdavid import StreamEvent
 from projectdavid_common import ToolValidator
 from projectdavid_common.utilities.logging_service import LoggingUtility
 
-from entities_api.cache.assistant_cache import AssistantCache
-from entities_api.dependencies import get_redis_sync
-from entities_api.platform_tools.delegated_model_map.delegation_model_map import \
-    get_delegated_model
-from entities_api.utils.assistant_manager import AssistantManager
 from src.api.entities_api.constants.platform import PLATFORM_TOOLS
 # Mixins
 from src.api.entities_api.orchestration.mixins.code_interpreter_mixin import \

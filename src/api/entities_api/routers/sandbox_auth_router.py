@@ -2,10 +2,10 @@ import os
 import time
 
 import jwt
+from entities_api.utils.mint_computer_ticket import mint_computer_ticket
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from entities_api.utils.mint_computer_ticket import mint_computer_ticket
 from src.api.entities_api.dependencies import get_api_key, get_current_user
 from src.api.entities_api.models.models import ApiKey as ApiKeyModel
 from src.api.entities_api.models.models import User

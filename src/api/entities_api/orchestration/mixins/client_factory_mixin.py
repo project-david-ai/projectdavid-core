@@ -2,12 +2,11 @@ from functools import lru_cache
 from typing import Optional, TypeVar
 
 from dotenv import load_dotenv
-from projectdavid import Entity
-from projectdavid_common.utilities.logging_service import LoggingUtility
-
 # Import your AsyncHyperbolicClient definition
 from entities_api.clients.unified_async_client import (
     _ACTIVE_CLIENTS, AsyncUnifiedInferenceClient)
+from projectdavid import Entity
+from projectdavid_common.utilities.logging_service import LoggingUtility
 
 load_dotenv()
 LOG = LoggingUtility()

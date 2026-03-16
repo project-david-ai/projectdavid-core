@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from entities_api.constants.tools import PLATFORM_TOOL_MAP
 from entities_api.orchestration.instructions.assembler import \
     assemble_instructions
+
 from src.api.entities_api.orchestration.instructions.include_lists import (
     L2_INSTRUCTIONS, L3_INSTRUCTIONS, L3_WEB_USE_INSTRUCTIONS,
     L4_JUNIOR_ENGINEER_INSTRUCTIONS, L4_RESEARCH_INSTRUCTIONS,

@@ -3,11 +3,6 @@ from datetime import datetime
 from typing import Optional
 
 import redis.asyncio as aioredis
-from fastapi import Depends, HTTPException, Security, status
-from fastapi.security import APIKeyHeader
-from redis.asyncio import Redis
-from sqlalchemy.orm import Session
-
 # --- CACHE IMPORTS ---
 from entities_api.cache.assistant_cache import AssistantCache
 from entities_api.cache.inventory_cache import InventoryCache
@@ -17,6 +12,11 @@ from entities_api.cache.web_cache import WebSessionCache
 # --- SERVICE IMPORTS ---
 from entities_api.services.scratchpad_service import ScratchpadService
 from entities_api.services.web_reader import UniversalWebReader
+from fastapi import Depends, HTTPException, Security, status
+from fastapi.security import APIKeyHeader
+from redis.asyncio import Redis
+from sqlalchemy.orm import Session
+
 # --- DB & MODEL IMPORTS ---
 from src.api.entities_api.db.database import get_db
 from src.api.entities_api.models.models import ApiKey, User

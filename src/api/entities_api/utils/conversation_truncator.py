@@ -106,16 +106,12 @@ class ConversationTruncator:
             return _load_tokenizer(cls.FALLBACK_MODEL)
 
     def _count_tokens_batch(self, texts: List[str]) -> List[int]:
-        """
-        Tokenize a list of plain strings in one batched call.
-
-        Callers must pass the output of _extract_text() — never raw content
-        that may be a list.
-        """
         if not texts:
             return []
+        # Guard: coerce any None that slipped through _extract_text to ""
+        safe_texts = [t if isinstance(t, str) else "" for t in texts]
         encoded = self.tokenizer(
-            texts,
+            safe_texts,
             add_special_tokens=False,
             return_attention_mask=False,
             return_length=True,

@@ -7,12 +7,12 @@ import time
 from typing import Any, Generator, Optional
 
 from dotenv import load_dotenv
-from projectdavid_common import ValidationInterface
-from projectdavid_common.utilities.logging_service import LoggingUtility
-
 from entities_api.clients.async_to_sync import async_to_sync_stream
 from entities_api.orchestration.engine.orchestrator_core import \
     OrchestratorCore
+from projectdavid_common import ValidationInterface
+from projectdavid_common.utilities.logging_service import LoggingUtility
+
 from src.api.entities_api.dependencies import get_redis
 from src.api.entities_api.orchestration.mixins import (
     AssistantCacheMixin, CodeInterpreterMixin, ConsumerToolHandlersMixin,

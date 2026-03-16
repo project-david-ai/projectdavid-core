@@ -3,9 +3,9 @@ import os
 from typing import AsyncGenerator, List, Optional
 
 from dotenv import load_dotenv
-
 from entities_api.platform_tools.handlers.computer.shell_command_client import (
     run_commands, run_commands_sync)
+
 from src.api.entities_api.services.logging_service import LoggingUtility
 
 load_dotenv()

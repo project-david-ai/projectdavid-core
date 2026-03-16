@@ -10,6 +10,7 @@ from entities_api.platform_tools.handlers.vector_store.vector_search_handler imp
     VectorSearchHandler
 from entities_api.platform_tools.handlers.web.web_search_handler import \
     FirecrawlService
+
 from src.api.entities_api.services.logging_service import LoggingUtility
 
 logging_utility = LoggingUtility()

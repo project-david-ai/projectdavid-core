@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import typer
-
 from entities_api.cli.bootstrap_admin import app as bootstrap_admin_app
 from entities_api.cli.docker_manager import app as docker_manager_app
 

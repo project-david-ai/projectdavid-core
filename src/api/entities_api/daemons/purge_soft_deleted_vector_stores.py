@@ -40,9 +40,8 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
-from sqlalchemy import text
-
 from entities_api.db.database import SessionLocal, wait_for_databases
+from sqlalchemy import text
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
 

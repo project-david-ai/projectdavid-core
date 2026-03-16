@@ -95,6 +95,7 @@ message = client.messages.create_message(
     content=TEST_PROMPT,
     assistant_id=ASSISTANT_ID,
 )
+
 run = client.runs.create_run(assistant_id=ASSISTANT_ID, thread_id=thread.id)
 
 # ------------------------------------------------------------------

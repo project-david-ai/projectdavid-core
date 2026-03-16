@@ -1,11 +1,11 @@
 # src/api/entities_api/routers/tools_router.py
 from typing import List, Optional
 
+from entities_api.services.scratchpad_service import ScratchpadService
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from entities_api.services.scratchpad_service import ScratchpadService
 # --- Core Dependencies ---
 from src.api.entities_api.dependencies import (get_api_key, get_db,
                                                get_scratchpad_service,

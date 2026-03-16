@@ -7,6 +7,7 @@ from entities_api.platform_tools.definitions.web_search.scroll_web_page import \
     scroll_web_page
 from entities_api.platform_tools.definitions.web_search.search_web_page import \
     search_web_page
+
 from src.api.entities_api.platform_tools.definitions.code_interpreter import \
     code_interpreter
 from src.api.entities_api.platform_tools.definitions.computer.computer import \

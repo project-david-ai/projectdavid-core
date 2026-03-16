@@ -7,12 +7,12 @@ from abc import ABC, abstractmethod
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 from dotenv import load_dotenv
+from entities_api.cache.assistant_cache import AssistantCache
+from entities_api.clients.delta_normalizer import DeltaNormalizer
 from projectdavid import StreamEvent
 from projectdavid_common.utilities.logging_service import LoggingUtility
 from projectdavid_common.validation import StatusEnum
 
-from entities_api.cache.assistant_cache import AssistantCache
-from entities_api.clients.delta_normalizer import DeltaNormalizer
 # --- DEPENDENCIES ---
 from src.api.entities_api.dependencies import get_redis, get_redis_sync
 from src.api.entities_api.orchestration.engine.orchestrator_core import \

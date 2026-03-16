@@ -2,12 +2,12 @@ import json
 import time
 from typing import Any, Dict, List
 
+from entities_api.utils.cache_utils import get_sync_message_cache
 from fastapi import HTTPException
 from projectdavid_common import UtilsInterface, ValidationInterface
 from projectdavid_common.utilities.logging_service import LoggingUtility
 from sqlalchemy.orm import Session
 
-from entities_api.utils.cache_utils import get_sync_message_cache
 from src.api.entities_api.db.database import SessionLocal
 from src.api.entities_api.models.models import Message, Thread, User
 

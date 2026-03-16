@@ -22,10 +22,9 @@ from sqlalchemy.orm import Session
 # or when the project root is on PYTHONPATH.
 # ---------------------------------------------------------------------------
 try:
+    from entities_api.models.models import ApiKey, User
     from projectdavid_common import UtilsInterface
     from projectdavid_common.utilities.logging_service import LoggingUtility
-
-    from entities_api.models.models import ApiKey, User
 except ImportError as exc:
     typer.echo(
         f"[error] Could not import project modules: {exc}\n"

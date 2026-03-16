@@ -8,6 +8,7 @@ from entities_api.platform_tools.tool_reigistry.research_supervisor import \
     SUPERVISOR_TOOLS
 from entities_api.platform_tools.tool_reigistry.senior_network_engineer import \
     SENIOR_ENGINEER_TOOLS
+
 from src.api.entities_api.services.logging_service import LoggingUtility
 
 LOG = LoggingUtility()

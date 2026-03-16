@@ -3,9 +3,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from redis.asyncio import Redis
-
     from entities_api.cache.assistant_cache import AssistantCache
+    from redis.asyncio import Redis
 
 
 class AssistantCacheMixin:

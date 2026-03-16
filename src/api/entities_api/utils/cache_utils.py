@@ -1,9 +1,8 @@
 import os
 
-from redis import Redis as SyncRedis
-
 from entities_api.cache.assistant_cache import AssistantCache
 from entities_api.cache.message_cache import MessageCache
+from redis import Redis as SyncRedis
 
 
 def get_sync_invalidator() -> AssistantCache:
