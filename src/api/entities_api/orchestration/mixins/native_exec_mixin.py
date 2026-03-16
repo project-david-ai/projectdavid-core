@@ -7,25 +7,32 @@ from src.api.entities_api.services.native_execution_service import \
 
 class NativeExecMixin:
     """
-    Provides a lazy singleton NativeExecutionService instance.
+    Provides a lazy singleton NativeExecutionService on self._native_exec.
 
-    Mix this in to any class that needs NativeExecutionService without
-    adding it to the MRO or requiring __init__ cooperation.
+    Owns:
+        _native_exec_svc         — backing attribute (private, no name-mangling)
+        _native_exec             — property, initialises on first access
 
-    Usage:
-        class MyMixin(NativeExecMixin):
-            async def do_something(self):
-                await self._native_exec.submit_tool_output(...)
+    Resolution:
+        Single instantiation per object lifetime. NativeExecutionService
+        manages its own DB and Redis connections internally — no constructor
+        arguments are required from the caller.
 
-    Notes:
-        - Single leading underscore avoids Python name-mangling, which
-          would make the attribute invisible to subclasses.
-        - getattr guard means this works even when the concrete subclass
-          does not call super().__init__() through the full MRO
-          (e.g. TogetherQwenWorker and similar provider workers).
-        - The instance is created once per mixin instance and reused,
-          so Redis / DB connections are shared across calls within a
-          single request lifecycle.
+    Used by (direct _native_exec calls observed across codebase):
+        ContextMixin             — get_raw_messages, hydrate_messages
+        ConsumerToolHandlersMixin — submit_tool_output, update_action_status,
+                                   create_action, update_run_status
+        DelegationMixin          — retrieve_run, create_action,
+                                   update_action_status, update_run_fields
+        CodeInterpreterMixin     — create_action, submit_tool_output,
+                                   update_action_status
+        StreamingMixin           — retrieve_run (cancellation monitor)
+        OrchestratorCore         — update_run_fields (lifecycle stamps)
+
+    Contract:
+        No __init__ participation required. The getattr guard on _native_exec_svc
+        means this works correctly even when super().__init__() is not called
+        through the full MRO. Do NOT redefine _native_exec on any subclass.
     """
 
     @property

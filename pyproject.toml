@@ -90,5 +90,7 @@ line-length = 100
 "src/api/entities_api/cli/*.py"     = ["E402"]
 "migrations/env.py"                 = ["E402"]
 
+
 [tool.pytest.ini_options]
 addopts = "--ignore=tests/integration"
+pythonpath = ["src/api"]

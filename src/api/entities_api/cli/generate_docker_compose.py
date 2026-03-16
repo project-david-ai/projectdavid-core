@@ -1,6 +1,6 @@
 #!src/api/entities_api/cli/generate_docker_compose.py
 """
-Generate a development-friendly docker-compose.yml.
+Generate a development-friendly docker-compose.yml and training overlay.
 
 All sensitive values (DB passwords, secret keys, etc.) are expressed as
 ${ENV_VAR:?message} placeholders — Docker Compose will refuse to start and
@@ -14,6 +14,46 @@ directly without going through the manager.
 """
 from pathlib import Path
 
+# --------------------------------------------------------------------------- #
+# Training Overlay Content
+# --------------------------------------------------------------------------- #
+TRAINING_YML_CONTENT = """\
+services:
+  training-worker:
+    image: thanosprime/projectdavid-core-training:latest
+    build:
+      context: .
+      dockerfile: docker/training/Dockerfile
+    container_name: training_worker
+    restart: unless-stopped
+    runtime: nvidia
+    environment:
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - ASSISTANTS_BASE_URL=http://api:9000
+      - WORKER_API_KEY=${ADMIN_API_KEY}
+      - SHARED_PATH=/mnt/training_data
+      - HF_TOKEN=${HF_TOKEN:-}
+      - HF_HOME=/mnt/training_data/.hf_cache
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ${SHARED_PATH:-./shared_data}:/mnt/training_data
+    command: ["python", "/app/worker.py"]
+    depends_on:
+      - redis
+      - api
+    networks:
+      - my_custom_network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+"""
+
 
 # --------------------------------------------------------------------------- #
 # main generator
@@ -22,13 +62,15 @@ def generate_dev_docker_compose() -> None:
     # project root — file lives at src/api/entities_api/cli/generate_docker_compose.py
     # so we must walk up 5 levels: cli → entities_api → api → src → repo root
     project_root = Path(__file__).resolve().parents[4]
-    output_path = project_root / "docker-compose.yml"
 
-    if output_path.exists():
-        print(f"⚠️  {output_path.name} already exists – generation skipped.")
-        return
+    main_compose_path = project_root / "docker-compose.yml"
+    training_compose_path = project_root / "docker-compose.training.yml"
 
-    compose_yaml = """\
+    # --- 1. Generate Main Compose File ---
+    if main_compose_path.exists():
+        print(f"⚠️  {main_compose_path.name} already exists – generation skipped.")
+    else:
+        compose_yaml = """\
 services:
   db:
     image: mysql:8.0
@@ -44,7 +86,7 @@ services:
     ports:
       - "3307:3306"
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test:["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -173,6 +215,7 @@ services:
               capabilities: [gpu]
 
   api:
+    image: thanosprime/projectdavid-core-api:latest
     build:
       context: .
       dockerfile: docker/api/Dockerfile
@@ -232,6 +275,7 @@ services:
       - my_custom_network
 
   sandbox:
+    image: thanosprime/projectdavid-core-sandbox:latest
     build:
       context: .
       dockerfile: docker/sandbox/Dockerfile
@@ -302,9 +346,15 @@ networks:
   my_custom_network:
     driver: bridge
 """
+        main_compose_path.write_text(compose_yaml, encoding="utf-8")
+        print(f"✅  Development docker-compose.yml written → {main_compose_path}")
 
-    output_path.write_text(compose_yaml, encoding="utf-8")
-    print(f"✅  Development docker-compose.yml written → {output_path}")
+    # --- 2. Generate Training Overlay File ---
+    if training_compose_path.exists():
+        print(f"⚠️  {training_compose_path.name} already exists – generation skipped.")
+    else:
+        training_compose_path.write_text(TRAINING_YML_CONTENT, encoding="utf-8")
+        print(f"✅  Training overlay docker-compose.training.yml written → {training_compose_path}")
 
 
 # --------------------------------------------------------------------------- #

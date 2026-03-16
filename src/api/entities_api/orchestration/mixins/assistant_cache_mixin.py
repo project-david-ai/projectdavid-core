@@ -40,9 +40,13 @@ class AssistantCacheMixin:
         if self._assistant_cache:
             return self._assistant_cache
 
-        # 2. Lazy Path: ServiceRegistryMixin
+        # 2. Lazy Path: ServiceRegistryMixin._get_service() expects a class,
+        #    not a string — import here since TYPE_CHECKING guard above
+        #    makes the top-level import unavailable at runtime.
         if hasattr(self, "_get_service"):
-            return self._get_service("AssistantCache")
+            from entities_api.cache.assistant_cache import AssistantCache
+
+            return self._get_service(AssistantCache)
 
         # 3. Last Resort: construct from self.redis
         if hasattr(self, "redis") and self.redis:

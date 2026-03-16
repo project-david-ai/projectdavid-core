@@ -66,6 +66,7 @@ jobs:
         run: |
           hadolint docker/api/Dockerfile || true
           hadolint docker/sandbox/Dockerfile || true
+          hadolint docker/training/Dockerfile || true
 
   # ──────────────────────────────────────────────────────────────────────────
   #  ✅  Tests
@@ -179,7 +180,7 @@ jobs:
         id: meta_api
         uses: docker/metadata-action@v5
         with:
-          images: thanosprime/entities-api-api
+          images: thanosprime/projectdavid-core-api
           tags: |
             type=semver,pattern={{version}},value=${{ steps.get_version.outputs.VERSION }}
             type=raw,value=latest,enable={{is_default_branch}}
@@ -190,7 +191,18 @@ jobs:
         id: meta_sandbox
         uses: docker/metadata-action@v5
         with:
-          images: thanosprime/entities-api-sandbox
+          images: thanosprime/projectdavid-core-sandbox
+          tags: |
+            type=semver,pattern={{version}},value=${{ steps.get_version.outputs.VERSION }}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+
+      # ---------------- Training image metadata -----------
+      - name: "🔧 Define Training Image Metadata"
+        id: meta_training
+        uses: docker/metadata-action@v5
+        with:
+          images: thanosprime/projectdavid-core-training
           tags: |
             type=semver,pattern={{version}},value=${{ steps.get_version.outputs.VERSION }}
             type=raw,value=latest,enable={{is_default_branch}}
@@ -221,3 +233,16 @@ jobs:
           platforms: linux/amd64
           cache-from: type=gha,scope=sandbox
           cache-to: type=gha,mode=max,scope=sandbox
+
+      # ---------------- Build / Push Training -------------
+      - name: "🏗️ Build & Push Training Image"
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./docker/training/Dockerfile
+          push: true
+          tags: ${{ steps.meta_training.outputs.tags }}
+          labels: ${{ steps.meta_training.outputs.labels }}
+          platforms: linux/amd64
+          cache-from: type=gha,scope=training
+          cache-to: type=gha,mode=max,scope=training
