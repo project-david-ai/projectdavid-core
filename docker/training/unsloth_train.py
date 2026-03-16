@@ -24,8 +24,9 @@
 #   dataset_text_field            — default "text"
 
 import sys
-import yaml
 from pathlib import Path
+
+import yaml
 
 
 def main():
@@ -43,10 +44,10 @@ def main():
     print(f"[unsloth] Dataset     : {cfg['dataset_path']}")
     print(f"[unsloth] Output dir  : {cfg['output_dir']}")
 
-    from unsloth import FastLanguageModel
-    from trl import SFTTrainer
-    from transformers import TrainingArguments
     from datasets import load_dataset
+    from transformers import TrainingArguments
+    from trl import SFTTrainer
+    from unsloth import FastLanguageModel
 
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=cfg["base_model"],

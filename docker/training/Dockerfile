@@ -51,23 +51,14 @@ RUN pip install \
 RUN pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git" \
     || echo "[training] Unsloth install failed — axolotl-only mode active"
 
-# ─── HuggingFace stack ───────────────────────────────────────────────────────
-RUN pip install \
-    huggingface_hub \
-    transformers \
-    datasets \
-    peft \
-    trl \
-    accelerate \
-    bitsandbytes \
-    sentencepiece \
-    tokenizers \
-    PyYAML \
-    rich
+# ─── Python dependencies ─────────────────────────────────────────────────────
+COPY training_reqs_unhashed.txt /app/training_reqs_unhashed.txt
+RUN pip install -r /app/training_reqs_unhashed.txt
 
 # Copy training scripts
 COPY docker/training/entrypoint.sh /app/entrypoint.sh
 COPY docker/training/unsloth_train.py /app/unsloth_train.py
+COPY docker/training/worker.py /app/worker.py
 RUN chmod +x /app/entrypoint.sh
 
 # Mount point — populated at runtime via ${SHARED_PATH} bind mount
