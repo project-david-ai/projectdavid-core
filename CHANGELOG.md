@@ -1,3 +1,15 @@
+# [1.23.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.22.1...v1.23.0) (2026-03-16)
+
+
+### Bug Fixes
+
+* update README commands, improve token counting with safe text handling, and add guard for empty inputs ([46a645f](https://github.com/project-david-ai/projectdavid-core/commit/46a645f67ac843e2f3fec7c2bb1c0df090abfa62))
+
+
+### Features
+
+* implement admin check utility and enhance access control logic ([062896d](https://github.com/project-david-ai/projectdavid-core/commit/062896da533eba4931c72e6a07056e95e1d2c944))
+
 ## [1.22.1](https://github.com/project-david-ai/platform/compare/v1.22.0...v1.22.1) (2026-03-15)
 
 
