@@ -76,3 +76,4 @@ projectdavid-common
 # ------------------------------------------------------------------
 SQLAlchemy>=2.0.0
 sqlalchemy
+pymysql
