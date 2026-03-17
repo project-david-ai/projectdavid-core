@@ -14,7 +14,7 @@ websockets==15.0.1
 transformers>=4.33.0,<5.0.0
 # ------------------------------------------------------------------ #
 # Internal packages
-projectdavid[text-embeddings]==1.77.8
+projectdavid[text-embeddings]==1.77.10
 # web search tools
 
 html2text>=2024.2.26

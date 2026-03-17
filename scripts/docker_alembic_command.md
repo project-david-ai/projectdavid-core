@@ -9,3 +9,4 @@ platform-api docker-manager --mode both --exclude ollama --exclude vllm
 docker compose exec api alembic revision --autogenerate -m "Add soft delete to VectorStore"
 docker compose exec api alembic revision --autogenerate -m "Add fine tuning tables"
 docker compose exec api alembic revision --autogenerate -m "Move fine tuning tables to training root instance of models.py"
+docker compose exec api alembic revision --autogenerate -m "Implement Fine tuning tables in training.models"

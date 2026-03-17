@@ -6,16 +6,17 @@ from enum import Enum as PyEnum
 
 from passlib.context import CryptContext
 from projectdavid_common import ValidationInterface
+from projectdavid_common.projectdavid_orm.base import Base
 from projectdavid_common.utilities.logging_service import LoggingUtility
 from sqlalchemy import JSON, BigInteger, Boolean, Column, DateTime
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy import (Float, ForeignKey, Index, Integer, String, Table, Text,
                         UniqueConstraint)
 from sqlalchemy.ext.mutable import MutableDict
-from sqlalchemy.orm import declarative_base, joinedload, relationship
+from sqlalchemy.orm import joinedload, relationship
 
 logger = LoggingUtility()
-Base = declarative_base()
+
 validation = ValidationInterface
 
 # --- Association Tables ---
