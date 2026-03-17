@@ -9,8 +9,7 @@ from projectdavid_common import ValidationInterface
 from projectdavid_common.utilities.logging_service import LoggingUtility
 from sqlalchemy import JSON, BigInteger, Boolean, Column, DateTime
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy import (Float, ForeignKey, Index, Integer, String, Table, Text,
-                        UniqueConstraint)
+from sqlalchemy import Float, ForeignKey, Index, Integer, String, Table, Text, UniqueConstraint
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import declarative_base, joinedload, relationship
 
@@ -746,3 +745,297 @@ class VectorStoreFile(Base):
     error_message = Column(Text, nullable=True)
     meta_data = Column(JSON, nullable=True)
     vector_store = relationship("VectorStore", back_populates="files")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  FINE-TUNING PIPELINE
+#
+#  Three new tables that power the self-hosted fine-tuning loop:
+#
+#    Dataset        — registered training datasets (raw files on Samba)
+#    TrainingJob    — a fine-tuning run (config, status, lifecycle timestamps)
+#    FineTunedModel — a trained model artifact (HF repo or local Samba path)
+#
+#  Ownership follows the same pattern as VectorStore / File:
+#    - user_id FK → CASCADE on user deletion
+#    - soft-deletion via deleted_at timestamp
+#    - status tracked via existing StatusEnum
+# ─────────────────────────────────────────────────────────────────────────────
+class Dataset(Base):
+    """
+    A registered training dataset.
+
+    Raw files live on Samba at `storage_path`.  The Dataset record is the
+    registry entry — it tracks format, split sizes, and which training jobs
+    have consumed this data.
+    """
+
+    __tablename__ = "datasets"
+
+    id = Column(
+        String(64),
+        primary_key=True,
+        index=True,
+        comment="Opaque dataset ID e.g. ds_abc123",
+    )
+
+    # CASCADE: datasets are deleted when their owning user is erased.
+    user_id = Column(
+        String(64),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    name = Column(String(128), nullable=False)
+    description = Column(Text, nullable=True)
+
+    format = Column(
+        String(32),
+        nullable=False,
+        comment="Training format: chatml | alpaca | sharegpt | jsonl",
+    )
+
+    storage_path = Column(
+        String(512),
+        nullable=False,
+        comment="Path to the dataset file(s) on Samba, relative to the share root.",
+    )
+
+    # Split metadata — populated after dataset preparation
+    train_samples = Column(Integer, nullable=True)
+    eval_samples = Column(Integer, nullable=True)
+
+    # Free-form config — tokenizer, sequence length, special tokens etc.
+    config = Column(JSON, nullable=True)
+
+    status = Column(
+        SAEnum(StatusEnum),
+        nullable=False,
+        default=StatusEnum.pending,
+        comment="pending → processing → active → failed",
+    )
+
+    created_at = Column(BigInteger, default=lambda: int(time.time()), nullable=False)
+    updated_at = Column(BigInteger, default=lambda: int(time.time()), nullable=False)
+
+    deleted_at = Column(
+        Integer,
+        nullable=True,
+        default=None,
+        index=True,
+        comment="Unix timestamp of soft-deletion.",
+    )
+
+    # Relationships
+    user = relationship("User", lazy="select")
+    training_jobs = relationship("TrainingJob", back_populates="dataset", lazy="dynamic")
+
+    __table_args__ = (
+        Index("idx_dataset_user_id", "user_id"),
+        Index("idx_dataset_status", "status"),
+    )
+
+
+class TrainingJob(Base):
+    """
+    A fine-tuning job.
+
+    Tracks the full lifecycle of a training run — from queued through to a
+    finished model artifact.  The config column stores the full training
+    configuration (LoRA rank, learning rate, epochs, etc.) as JSON so it
+    can be replayed or diffed.
+    """
+
+    __tablename__ = "training_jobs"
+
+    id = Column(
+        String(64),
+        primary_key=True,
+        index=True,
+        comment="Opaque job ID e.g. tj_abc123",
+    )
+
+    # CASCADE: jobs are deleted when their owning user is erased.
+    user_id = Column(
+        String(64),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    dataset_id = Column(
+        String(64),
+        ForeignKey("datasets.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="Source dataset. SET NULL if dataset is deleted — job record is preserved.",
+    )
+
+    base_model = Column(
+        String(256),
+        nullable=False,
+        comment="Base model identifier e.g. Qwen/Qwen2.5-7B-Instruct",
+    )
+
+    framework = Column(
+        String(32),
+        nullable=False,
+        default="axolotl",
+        comment="Training framework: axolotl | unsloth",
+    )
+
+    # Full training config — LoRA rank, learning rate, epochs, batch size etc.
+    config = Column(
+        JSON,
+        nullable=True,
+        comment="Complete training configuration passed to the training container.",
+    )
+
+    status = Column(
+        SAEnum(StatusEnum),
+        nullable=False,
+        default=StatusEnum.queued,
+        comment="queued → in_progress → completed | failed | cancelled",
+    )
+
+    # Lifecycle timestamps (epoch seconds)
+    created_at = Column(BigInteger, default=lambda: int(time.time()), nullable=False)
+    started_at = Column(BigInteger, nullable=True)
+    completed_at = Column(BigInteger, nullable=True)
+    failed_at = Column(BigInteger, nullable=True)
+
+    last_error = Column(Text, nullable=True)
+
+    # Training metrics — populated on completion
+    metrics = Column(
+        JSON,
+        nullable=True,
+        comment="Final training metrics: loss, eval_loss, perplexity etc.",
+    )
+
+    # Output — path to the raw checkpoint before registry push
+    output_path = Column(
+        String(512),
+        nullable=True,
+        comment="Samba path to the training output checkpoint.",
+    )
+
+    # Relationships
+    user = relationship("User", lazy="select")
+    dataset = relationship("Dataset", back_populates="training_jobs", lazy="select")
+    fine_tuned_model = relationship(
+        "FineTunedModel",
+        back_populates="training_job",
+        uselist=False,
+        lazy="select",
+    )
+
+    __table_args__ = (
+        Index("idx_trainingjob_user_id", "user_id"),
+        Index("idx_trainingjob_status", "status"),
+        Index("idx_trainingjob_dataset_id", "dataset_id"),
+    )
+
+
+class FineTunedModel(Base):
+    """
+    A registered fine-tuned model artifact.
+
+    Created when a TrainingJob completes successfully.  Tracks where the
+    model lives (HuggingFace Hub or local Samba path) and whether it is
+    currently loaded in vLLM.
+    """
+
+    __tablename__ = "fine_tuned_models"
+
+    id = Column(
+        String(64),
+        primary_key=True,
+        index=True,
+        comment="Opaque model ID e.g. ftm_abc123",
+    )
+
+    # CASCADE: model records are deleted when their owning user is erased.
+    user_id = Column(
+        String(64),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    training_job_id = Column(
+        String(64),
+        ForeignKey("training_jobs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="Source training job. SET NULL if job is deleted — model record is preserved.",
+    )
+
+    name = Column(String(128), nullable=False)
+    description = Column(Text, nullable=True)
+
+    base_model = Column(
+        String(256),
+        nullable=False,
+        comment="Base model this was fine-tuned from.",
+    )
+
+    # Where the model lives
+    hf_repo = Column(
+        String(256),
+        nullable=True,
+        comment="HuggingFace repository ID e.g. your-org/your-model",
+    )
+
+    storage_path = Column(
+        String(512),
+        nullable=True,
+        comment="Local Samba path to model weights (used when not pushed to HF).",
+    )
+
+    # Deployment state
+    is_active = Column(
+        Boolean,
+        default=False,
+        nullable=False,
+        comment="True when this model is currently loaded in vLLM.",
+    )
+
+    vllm_model_id = Column(
+        String(256),
+        nullable=True,
+        comment="The VLLM_MODEL value used to serve this model.",
+    )
+
+    status = Column(
+        SAEnum(StatusEnum),
+        nullable=False,
+        default=StatusEnum.processing,
+        comment="processing → active → failed",
+    )
+
+    created_at = Column(BigInteger, default=lambda: int(time.time()), nullable=False)
+    updated_at = Column(BigInteger, default=lambda: int(time.time()), nullable=False)
+
+    deleted_at = Column(
+        Integer,
+        nullable=True,
+        default=None,
+        index=True,
+        comment="Unix timestamp of soft-deletion.",
+    )
+
+    # Relationships
+    user = relationship("User", lazy="select")
+    training_job = relationship(
+        "TrainingJob",
+        back_populates="fine_tuned_model",
+        lazy="select",
+    )
+
+    __table_args__ = (
+        Index("idx_finetunedmodel_user_id", "user_id"),
+        Index("idx_finetunedmodel_status", "status"),
+        Index("idx_finetunedmodel_is_active", "is_active"),
+    )

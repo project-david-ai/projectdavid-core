@@ -11,3 +11,6 @@ docker compose exec api alembic revision --autogenerate -m "Add soft delete to F
 platform-api docker-manager --mode both --exclude ollama --exclude vllm
 
 docker compose exec api alembic revision --autogenerate -m "Add soft delete to VectorStore"
+
+
+docker compose exec api alembic revision --autogenerate -m "Add fine tuning tables"
