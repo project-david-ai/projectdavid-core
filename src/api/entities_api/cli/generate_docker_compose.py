@@ -77,7 +77,7 @@ services:
       - PYTHONUNBUFFERED=1
     volumes:
       - ${SHARED_PATH:-./shared_data}:/mnt/training_data
-    command: ["python", "/app/worker.py"]
+    command: ["python", "src/api/training/worker.py"]
     depends_on:
       - redis
       - api

@@ -75,5 +75,4 @@ projectdavid-common
 # DB dependencies
 # ------------------------------------------------------------------
 SQLAlchemy>=2.0.0
-# Add your DB driver if it isn't already there, for example:
-psycopg2-binary>=2.9.0
+sqlalchemy
