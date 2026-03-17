@@ -8,6 +8,7 @@
 #
 from __future__ import annotations
 
+import json
 import logging
 import os
 import platform
@@ -77,6 +78,10 @@ class DockerManager:
 
     _ENV_FILE = ".env"
     _DOCKER_COMPOSE_FILE = "docker-compose.yml"
+
+    _OLLAMA_IMAGE = "ollama/ollama"
+    _OLLAMA_CONTAINER = "ollama"
+    _OLLAMA_PORT = "11434"
 
     _COMPOSE_ENV_MAPPING = {
         "MYSQL_ROOT_PASSWORD": (DEFAULT_DB_SERVICE_NAME, "MYSQL_ROOT_PASSWORD"),
@@ -240,7 +245,6 @@ class DockerManager:
             self.log.setLevel(logging.DEBUG)
         self.log.debug("DockerManager initialised with args: %s", vars(args))
 
-        # Single compose file — all services including training live here now.
         self.compose_files = [self._DOCKER_COMPOSE_FILE]
 
         self.compose_config = self._load_compose_config()
@@ -322,35 +326,9 @@ class DockerManager:
         except Exception:
             return None
 
-    def _get_host_port_from_compose_service(self, service_name, container_port):
-        try:
-            service_data = self.compose_config.get("services", {}).get(service_name)
-            if not service_data:
-                return None
-            ports = service_data.get("ports", [])
-            container_port_base = str(container_port).split("/")[0]
-            for port_mapping in ports:
-                parts = str(port_mapping).split(":")
-                host_port = cont_port_part = None
-                if len(parts) == 1:
-                    if parts[0].split("/")[0] == container_port_base:
-                        return parts[0]
-                elif len(parts) == 2:
-                    host_port, cont_port_part = parts
-                elif len(parts) == 3:
-                    host_port, cont_port_part = parts[1], parts[2]
-                if (
-                    host_port
-                    and cont_port_part
-                    and cont_port_part.split("/")[0] == container_port_base
-                ):
-                    return host_port.strip()
-            return None
-        except Exception:
-            return None
-
     def _prompt_user_required(self, env_values: dict, generation_log: dict):
         if not sys.stdin.isatty():
+            self.log.warning("Non-interactive environment detected. Prompting skipped.")
             return
         typer.echo("\n" + "=" * 60 + "\n  Optional: User-Supplied Configuration\n" + "=" * 60)
         for key, (label, help_text, hide) in self._USER_REQUIRED.items():
@@ -468,6 +446,195 @@ class DockerManager:
     def _has_docker(self):
         return shutil.which("docker") is not None
 
+    def _is_container_running(self, container_name):
+        if not self._has_docker():
+            return False
+        try:
+            result = self._run_command(
+                ["docker", "ps", "--filter", f"name=^{container_name}$", "--format", "{{.Names}}"],
+                capture_output=True,
+                check=False,
+                suppress_logs=True,
+            )
+            return result.stdout.strip() == container_name
+        except Exception:
+            return False
+
+    def _is_image_present(self, image_name):
+        if not self._has_docker():
+            return False
+        try:
+            result = self._run_command(
+                ["docker", "images", image_name, "--quiet"],
+                capture_output=True,
+                check=False,
+                suppress_logs=True,
+            )
+            return bool(result.stdout.strip())
+        except Exception:
+            return False
+
+    def _has_nvidia_support(self):
+        cmd = shutil.which("nvidia-smi.exe" if self.is_windows else "nvidia-smi") or (
+            shutil.which("nvidia-smi") if self.is_windows else None
+        )
+        if not cmd:
+            cmd = shutil.which("nvidia-smi")
+        if cmd:
+            try:
+                self._run_command([cmd], check=True, capture_output=True, suppress_logs=True)
+                return True
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                pass
+        return False
+
+    def _start_ollama(self, cpu_only=True):
+        if not self._has_docker():
+            return False
+        container_name = self._OLLAMA_CONTAINER
+        if self._is_container_running(container_name):
+            self.log.info("External Ollama container '%s' is already running.", container_name)
+            return True
+        if not self._is_image_present(self._OLLAMA_IMAGE):
+            self.log.info("Pulling Ollama image '%s'...", self._OLLAMA_IMAGE)
+            try:
+                self._run_command(["docker", "pull", self._OLLAMA_IMAGE], check=True)
+            except Exception as e:
+                self.log.error("Failed to pull Ollama image: %s", e)
+                return False
+        cmd = [
+            "docker",
+            "run",
+            "-d",
+            "--rm",
+            "-v",
+            "ollama:/root/.ollama",
+            "-p",
+            f"{self._OLLAMA_PORT}:{self._OLLAMA_PORT}",
+            "--name",
+            container_name,
+        ]
+        gpu_support_added = False
+        if not cpu_only and self._has_nvidia_support():
+            cmd.extend(["--gpus", "all"])
+            gpu_support_added = True
+        cmd.append(self._OLLAMA_IMAGE)
+        try:
+            self._run_command(cmd, check=True)
+            time.sleep(5)
+            if self._is_container_running(container_name):
+                mode = "GPU" if gpu_support_added else "CPU"
+                self.log.info("External Ollama container started in %s mode.", mode)
+                return True
+            self.log.error("Ollama container failed to start.")
+            return False
+        except Exception as e:
+            self.log.error("Error starting Ollama container: %s", e)
+            return False
+
+    def _ensure_ollama(self, opt_in=False, use_gpu=False):
+        if not opt_in:
+            return True
+        self.log.info("--- External Ollama Setup ---")
+        if os.path.exists("/.dockerenv") or "DOCKER_HOST" in os.environ:
+            self.log.warning("Running inside Docker; skipping external Ollama management.")
+            return True
+        if platform.system() == "Darwin" and use_gpu:
+            self.log.warning(
+                "macOS detected; GPU passthrough has limitations. CPU mode recommended."
+            )
+        success = self._start_ollama(cpu_only=not use_gpu)
+        if not success:
+            self.log.error("Failed to start the external Ollama container.")
+        self.log.info("--- End External Ollama Setup ---")
+        return success
+
+    def _run_docker_cache_diagnostics(self):
+        self.log.info("--- Docker Cache Diagnostics ---")
+        if not self._has_docker():
+            return
+        try:
+            total_size = sum(
+                f.stat().st_size
+                for f in Path(".").resolve().rglob("*")
+                if f.is_file() and not f.is_symlink()
+            )
+            size_mb = total_size / (1024 * 1024)
+            self.log.info("Approximate build context size: %.2f MB", size_mb)
+            if size_mb > 500:
+                self.log.warning(
+                    "Build context > 500 MB. Review .dockerignore to exclude large files."
+                )
+
+            config_res = self._run_command(
+                ["docker", "compose", *self._get_compose_flags(), "config", "--format", "json"],
+                capture_output=True,
+                check=True,
+                suppress_logs=True,
+            )
+            service_configs = json.loads(config_res.stdout).get("services", {})
+            for svc, cfg in service_configs.items():
+                image_name = cfg.get("image")
+                if not image_name:
+                    continue
+                self.log.info("--- History for image '%s' (service: %s) ---", image_name, svc)
+                history_res = self._run_command(
+                    [
+                        "docker",
+                        "history",
+                        image_name,
+                        "--no-trunc=false",
+                        "--format",
+                        '{{printf "%.12s" .ID}} | {{.Size | printf "%-12s"}} | {{.CreatedBy}}',
+                    ],
+                    check=False,
+                    capture_output=True,
+                    suppress_logs=True,
+                )
+                if history_res.returncode == 0 and history_res.stdout.strip():
+                    for line in history_res.stdout.strip().splitlines():
+                        self.log.info(line)
+        except Exception as e:
+            self.log.error("Diagnostics error: %s", e)
+        finally:
+            self.log.info("--- End Docker Cache Diagnostics ---")
+
+    def _handle_nuke(self):
+        self.log.warning("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        self.log.warning("!!!    NUKE MODE ACTIVATED   !!!")
+        self.log.warning("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        self.log.warning(
+            "This will stop all compose services, remove their volumes, AND prune ALL unused Docker data system-wide."
+        )
+        try:
+            confirm = input(">>> Type 'confirm nuke' exactly to proceed: ")
+        except EOFError:
+            self.log.error("Nuke requires interactive confirmation. Aborting.")
+            raise SystemExit(1)
+        if confirm.strip() != "confirm nuke":
+            self.log.info("Nuke operation cancelled.")
+            raise SystemExit(0)
+        self.log.info("Proceeding with Docker nuke...")
+        self._run_command(
+            [
+                "docker",
+                "compose",
+                *self._get_compose_flags(),
+                "down",
+                "--volumes",
+                "--remove-orphans",
+            ],
+            check=False,
+        )
+        try:
+            self._run_command(
+                ["docker", "system", "prune", "-a", "--volumes", "--force"], check=True
+            )
+        except subprocess.CalledProcessError as e:
+            self.log.critical("docker system prune failed (code %s).", e.returncode)
+            raise SystemExit(1)
+        self.log.info("*** Docker Nuke Complete ***")
+
     def _handle_down(self):
         down_cmd = [
             "docker",
@@ -477,11 +644,42 @@ class DockerManager:
             "--remove-orphans",
         ]
         if self.args.clear_volumes:
-            if input("Remove volumes? (yes/no): ").lower() == "yes":
-                down_cmd.append("--volumes")
+            try:
+                if input("Remove volumes? (yes/no): ").lower().strip() == "yes":
+                    down_cmd.append("--volumes")
+            except EOFError:
+                self.log.error("Volume deletion confirmation requires interactive input. Aborting.")
+                raise SystemExit(1)
+
         if self.args.services:
             down_cmd.extend(self.args.services)
         self._run_command(down_cmd, check=False)
+
+    def _tag_images(self, tag, targeted_services=None):
+        if not (tag and self._has_docker()):
+            return
+        try:
+            config_res = self._run_command(
+                ["docker", "compose", *self._get_compose_flags(), "config", "--format", "json"],
+                capture_output=True,
+                check=True,
+                suppress_logs=True,
+            )
+            services_data = json.loads(config_res.stdout).get("services", {})
+            for svc_name, svc_config in services_data.items():
+                if targeted_services and svc_name not in targeted_services:
+                    continue
+                image_name = svc_config.get("image")
+                if not image_name:
+                    continue
+                base_image = image_name.split(":")[0]
+                new_tag = f"{base_image}:{tag}"
+                self.log.info("Tagging: %s  ->  %s", image_name, new_tag)
+                self._run_command(
+                    ["docker", "tag", image_name, new_tag], check=True, suppress_logs=True
+                )
+        except Exception as e:
+            self.log.error("Error during image tagging: %s", e)
 
     def _handle_build(self):
         build_cmd = ["docker", "compose", *self._get_compose_flags(), "build"]
@@ -491,7 +689,13 @@ class DockerManager:
             build_cmd.append("--parallel")
         if self.args.services:
             build_cmd.extend(self.args.services)
-        self._run_command(build_cmd, check=True)
+        try:
+            self._run_command(build_cmd, check=True)
+            if self.args.tag:
+                self._tag_images(self.args.tag, targeted_services=self.args.services or None)
+        except subprocess.CalledProcessError as e:
+            self.log.critical("Docker build failed (code %s). Check logs above.", e.returncode)
+            raise SystemExit(1)
 
     def _handle_logs(self):
         logs_cmd = ["docker", "compose", *self._get_compose_flags(), "logs"]
@@ -499,6 +703,11 @@ class DockerManager:
             logs_cmd.append("-f")
         if self.args.tail:
             logs_cmd.extend(["--tail", str(self.args.tail)])
+        if self.args.timestamps:
+            logs_cmd.append("-t")
+        if self.args.no_log_prefix:
+            logs_cmd.append("--no-log-prefix")
+
         if self.args.services:
             logs_cmd.extend(self.args.services)
         self._run_command(logs_cmd, check=False)
@@ -513,13 +722,25 @@ class DockerManager:
         if self.args.force_recreate:
             up_cmd.append("--force-recreate")
 
-        target = [
-            s
-            for s in (self.args.services or self._get_all_services())
-            if s not in set(self.args.exclude or [])
-        ]
+        # ── Resolve which services to actually start ───────────────────
+        exclude = set(self.args.exclude or [])
+        target = list(self.args.services or [])
+
+        if exclude:
+            # If excluding, we must explicitly tell Compose what TO start so it doesn't default.
+            # We fetch all services that do NOT have a profile, so we don't accidentally
+            # opt-in the training services just because the user excluded 'ollama'.
+            if not target:
+                target = [
+                    name
+                    for name, cfg in self.compose_config.get("services", {}).items()
+                    if not cfg.get("profiles")
+                ]
+            target = [s for s in target if s not in exclude]
+
         if target:
             up_cmd.extend(target)
+        # ───────────────────────────────────────────────────────────────
 
         try:
             self._run_command(up_cmd, check=True, suppress_logs=self.args.attached)
@@ -527,8 +748,19 @@ class DockerManager:
             raise SystemExit(1)
 
     def run(self):
+        if self.args.debug_cache:
+            self._run_docker_cache_diagnostics()
+            raise SystemExit(0)
+
+        if self.args.nuke:
+            self._handle_nuke()
+            raise SystemExit(0)
+
         if not self._has_docker():
             raise SystemExit(1)
+
+        if self.args.with_ollama:
+            self._ensure_ollama(opt_in=True, use_gpu=self.args.ollama_gpu)
 
         if self.args.mode == "down_only":
             self.args.down = True
@@ -603,7 +835,8 @@ def docker_manager(
     )
 
     try:
-        from entities_api.cli.generate_docker_compose import generate_dev_docker_compose
+        from entities_api.cli.generate_docker_compose import \
+            generate_dev_docker_compose
 
         generate_dev_docker_compose()
         time.sleep(0.5)
