@@ -173,3 +173,31 @@ docker-compose.runtime.yml
 #.idea/
 /tmp/
 proposed_pull_requestst.md
+
+
+# ---------------------------------------------------
+# MISSING IGNORES CAUSING THE OUT-OF-MEMORY CRASH
+# ---------------------------------------------------
+
+# 1. Ignore the massive local data and HuggingFace cache
+shared_data/
+data/
+datasets/
+models/
+.hf_cache/
+
+# 2. Ignore Git history (which can be gigabytes in ML projects)
+.git/
+
+# 3. Ignore PyCharm's indexing folder (Uncommenting this is highly recommended)
+.idea/
+
+# 4. Ignore large machine learning weights and tensors
+*.pt
+*.pth
+*.h5
+*.weights
+*.bin
+*.safetensors
+*.csv
+*.jsonl

@@ -1,10 +1,10 @@
 # src/api/entities_api/cli/docker_manager.py
 #
 # Run via:
-#   python -m entities_api docker-manager --mode up
-#   python -m entities_api docker-manager --mode both --no-cache --tag v1.0
-#   entities-api docker-manager --mode up --train
-#   entities-api docker-manager configure --interactive
+#   platform-api docker-manager --mode up
+#   platform-api docker-manager --mode both --no-cache --tag v1.0
+#   platform-api docker-manager --mode up --services training-api
+#   platform-api docker-manager --mode build --services training-worker
 #
 from __future__ import annotations
 
@@ -248,13 +248,26 @@ class DockerManager:
         self.log.debug("DockerManager initialised with args: %s", vars(args))
 
         # -------------------------------------------------------------------
-        # FIX: Exclusively use the training file if --train is passed
+        # COMPOSE FILE SELECTION & AUTO-DETECTION LOGIC
         # -------------------------------------------------------------------
+        self.compose_files = []
         if getattr(self.args, "train", False):
-            self.compose_files = [self._TRAINING_COMPOSE_FILE]
-            self.log.info("Fine-tuning training file activated standalone (--train).")
+            self.compose_files.append(self._TRAINING_COMPOSE_FILE)
         else:
-            self.compose_files = [self._DOCKER_COMPOSE_FILE]
+            self.compose_files.append(self._DOCKER_COMPOSE_FILE)
+
+        # Auto-detect if training containers are explicitly requested in --services
+        training_services = {"training-api", "training-worker"}
+        if getattr(self.args, "services", []):
+            if any(svc in training_services for svc in self.args.services):
+                if self._TRAINING_COMPOSE_FILE not in self.compose_files:
+                    # If ALL requested services belong to training, exclusively use training file
+                    if all(svc in training_services for svc in self.args.services):
+                        self.compose_files = [self._TRAINING_COMPOSE_FILE]
+                    else:
+                        # Mix of core and training (rare), load both
+                        self.compose_files.append(self._TRAINING_COMPOSE_FILE)
+                self.log.info("Auto-detected training services. Using docker-compose.training.yml")
 
         self.compose_config = self._load_compose_config()
         self._check_for_required_env_file()
