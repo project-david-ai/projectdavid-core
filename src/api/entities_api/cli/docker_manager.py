@@ -247,11 +247,14 @@ class DockerManager:
             self.log.setLevel(logging.DEBUG)
         self.log.debug("DockerManager initialised with args: %s", vars(args))
 
-        # Compose files handling (Overlay support)
-        self.compose_files = [self._DOCKER_COMPOSE_FILE]
+        # -------------------------------------------------------------------
+        # FIX: Exclusively use the training file if --train is passed
+        # -------------------------------------------------------------------
         if getattr(self.args, "train", False):
-            self.compose_files.append(self._TRAINING_COMPOSE_FILE)
-            self.log.info("Fine-tuning training overlay activated (--train).")
+            self.compose_files = [self._TRAINING_COMPOSE_FILE]
+            self.log.info("Fine-tuning training file activated standalone (--train).")
+        else:
+            self.compose_files = [self._DOCKER_COMPOSE_FILE]
 
         self.compose_config = self._load_compose_config()
         self._check_for_required_env_file()
@@ -260,7 +263,7 @@ class DockerManager:
         self._ensure_dockerignore()
 
     def _get_compose_flags(self) -> List[str]:
-        """Returns the necessary -f flags for docker compose based on active overlays."""
+        """Returns the necessary -f flags for docker compose based on active mode."""
         flags = []
         for file in self.compose_files:
             flags.extend(["-f", file])
@@ -514,16 +517,24 @@ class DockerManager:
     def run(self):
         if not self._has_docker():
             raise SystemExit(1)
+
+        # down_only mode implicitly means --down
+        if self.args.mode == "down_only":
+            self.args.down = True
+
         if self.args.down or self.args.clear_volumes:
             self._handle_down()
             if self.args.mode == "down_only":
                 raise SystemExit(0)
+
         if self.args.mode in ("build", "both"):
             self._handle_build()
             if self.args.mode == "build":
                 raise SystemExit(0)
+
         if self.args.mode in ("up", "both"):
             self._handle_up()
+
         if self.args.mode == "logs":
             self._handle_logs()
 
@@ -552,7 +563,7 @@ def docker_manager(
     verbose: bool = typer.Option(False, "--verbose", "--debug"),
     debug_cache: bool = typer.Option(False, "--debug-cache"),
     train: bool = typer.Option(
-        False, "--train", help="Include the fine-tuning training overlay (GPU required)."
+        False, "--train", help="Run the fine-tuning training stack standalone."
     ),
 ) -> None:
     if ctx.invoked_subcommand is not None:

@@ -748,20 +748,6 @@ class VectorStoreFile(Base):
     vector_store = relationship("VectorStore", back_populates="files")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  FINE-TUNING PIPELINE
-#
-#  Three new tables that power the self-hosted fine-tuning loop:
-#
-#    Dataset        — registered training datasets (raw files on Samba)
-#    TrainingJob    — a fine-tuning run (config, status, lifecycle timestamps)
-#    FineTunedModel — a trained model artifact (HF repo or local Samba path)
-#
-#  Ownership follows the same pattern as VectorStore / File:
-#    - user_id FK → CASCADE on user deletion
-#    - soft-deletion via deleted_at timestamp
-#    - status tracked via existing StatusEnum
-# ─────────────────────────────────────────────────────────────────────────────
 class Dataset(Base):
     """
     A registered training dataset.

@@ -1,39 +1,45 @@
-# docker/training/Dockerfile.api
-#
-# Training Service — FastAPI HTTP layer.
-# Lightweight, no GPU, no ML frameworks.
-# Serves the fine-tuning REST API on port 9001.
-#
-# Build:
-#   docker build -t projectdavid/training-api:latest -f docker/training/Dockerfile.api .
-#
-# The GPU training runner (worker.py + axolotl/unsloth) lives in Dockerfile.
+# -------------------------
+# MULTI-STAGE DOCKERFILE (TRAINING API)
+# -------------------------
 
-FROM python:3.11-slim
+# === Stage 0: base layer ============================================
+FROM python:3.11-slim AS base
+WORKDIR /install
+
+RUN pip install --upgrade pip setuptools wheel
+
+# === Stage 1: install UNHASHED packages ===============================================
+FROM base AS builder
+
+COPY training_reqs_unhashed.txt .
+
+RUN pip install \
+    --prefix=/install/packages \
+    --default-timeout=1800 \
+    --retries 30 \
+    -r training_reqs_unhashed.txt
+
+# === Stage 2: runtime container =======================================================
+FROM python:3.11-slim AS runtime
+WORKDIR /app
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV PIP_NO_CACHE_DIR=1
+ENV PYTHONPATH=/app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-WORKDIR /app
+# --- Copy installed packages from the builder stage ---
+COPY --from=builder /install/packages /usr/local
 
-RUN pip install --upgrade pip setuptools wheel
-
-# API dependencies only — no torch, no axolotl, no unsloth
-COPY training_api_reqs.txt /app/training_api_reqs.txt
-RUN pip install -r /app/training_api_reqs.txt
-
-# Application source — training package only
+# --- Copy training app code ---
 COPY src/api/training /app/src/api/training
-
-# Required so Python resolves src.api.training as a package
-COPY src/__init__.py /app/src/__init__.py
-COPY src/api/__init__.py /app/src/api/__init__.py
 
 EXPOSE 9001
 
+# --- Default command ---
 CMD ["uvicorn", "src.api.training.app:app", "--host", "0.0.0.0", "--port", "9001"]

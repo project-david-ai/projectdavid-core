@@ -1,3 +1,4 @@
+# __init__.py
 from fastapi import APIRouter
 
 from src.api.entities_api.routers.actions_router import \

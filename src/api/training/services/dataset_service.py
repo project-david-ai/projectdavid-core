@@ -6,10 +6,11 @@ from typing import List, Optional
 
 from fastapi import HTTPException, UploadFile
 from projectdavid_common import UtilsInterface
+from projectdavid_common.schemas.enums import StatusEnum
 from projectdavid_common.utilities.identifier_service import IdentifierService
 from sqlalchemy.orm import Session
 
-from src.api.training.models.models import Dataset, StatusEnum
+from src.api.training.models.models import Dataset
 
 logging_utility = UtilsInterface.LoggingUtility()
 
@@ -232,7 +233,6 @@ async def _run_preparation(
 
     db_bg = SessionLocal()
     try:
-        # Re-fetch inside the background session
         bg_dataset = db_bg.query(Dataset).filter(Dataset.id == dataset.id).first()
         if not bg_dataset:
             logging_utility.error("Background prep: dataset %s not found.", dataset.id)

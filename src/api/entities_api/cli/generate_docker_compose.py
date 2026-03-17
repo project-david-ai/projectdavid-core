@@ -19,8 +19,46 @@ from pathlib import Path
 # --------------------------------------------------------------------------- #
 TRAINING_YML_CONTENT = """\
 services:
+
+  # ---------------------------------------------------------------------------
+  # training-api — FastAPI HTTP layer (no GPU required)
+  # Serves /v1/datasets, /v1/training-jobs, /v1/fine-tuned-models on port 9001.
+  # ---------------------------------------------------------------------------
+  training-api:
+    image: thanosprime/projectdavid-core-training-api:latest
+    build:
+      context: .
+      dockerfile: docker/training/Dockerfile.api
+    container_name: training_api
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - ASSISTANTS_BASE_URL=http://api:9000
+      - WORKER_API_KEY=${ADMIN_API_KEY}
+      - SANDBOX_AUTH_SECRET=${SANDBOX_AUTH_SECRET}
+      - SHARED_PATH=/mnt/training_data
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "9001:9001"
+    volumes:
+      - ${SHARED_PATH:-./shared_data}:/mnt/training_data
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      api:
+        condition: service_started
+    networks:
+      - my_custom_network
+
+  # ---------------------------------------------------------------------------
+  # training-worker — GPU runner (requires nvidia-container-toolkit)
+  # BRPOPs from Redis, spawns axolotl/unsloth training subprocess per job.
+  # ---------------------------------------------------------------------------
   training-worker:
-    image: thanosprime/projectdavid-core-training:latest
+    image: thanosprime/projectdavid-core-training-worker:latest
     build:
       context: .
       dockerfile: docker/training/Dockerfile
@@ -69,8 +107,6 @@ def generate_dev_docker_compose(force: bool = False) -> None:
         Pass force=True when you know the template has changed and need to
         push the update to disk.
     """
-    # project root — file lives at src/api/entities_api/cli/generate_docker_compose.py
-    # so we must walk up 5 levels: cli → entities_api → api → src → repo root
     project_root = Path(__file__).resolve().parents[4]
 
     main_compose_path = project_root / "docker-compose.yml"
@@ -253,8 +289,6 @@ services:
       - SHARED_PATH=/app/shared_data
       - ASSISTANTS_BASE_URL=http://localhost:80
       - DOWNLOAD_BASE_URL=http://localhost:80/v1/files/download
-    # Port 9000 kept open in dev for direct access / debugging.
-    # In production traffic flows through nginx on port 80.
     ports:
       - "9000:9000"
     volumes:
@@ -335,12 +369,8 @@ services:
     restart: always
     ports:
       - "80:80"
-      # Uncomment when TLS certs are available:
-      # - "443:443"
     volumes:
       - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      # Uncomment when TLS certs are available:
-      # - ./docker/nginx/certs:/etc/nginx/certs:ro
     depends_on:
       - api
     networks:
