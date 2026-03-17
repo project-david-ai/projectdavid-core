@@ -4,11 +4,10 @@
 #   platform-api docker-manager --mode up
 #   platform-api docker-manager --mode both --no-cache --tag v1.0
 #   platform-api docker-manager --mode up --services training-api
-#   platform-api docker-manager --mode build --services training-worker
+#   platform-api docker-manager --mode build --services training-api
 #
 from __future__ import annotations
 
-import json
 import logging
 import os
 import platform
@@ -68,22 +67,16 @@ log = logging.getLogger(__name__)
 
 app = typer.Typer(
     name="docker-manager",
-    help="Manage Docker Compose stack: build, run, set up .env, fine-tuning overlay, and external Ollama.",
+    help="Manage Docker Compose stack: build, run, set up .env, and manage services.",
     add_completion=False,
 )
 
 
 class DockerManager:
-    """Manages Docker Compose stack operations, env setup, and overlays."""
+    """Manages Docker Compose stack operations and env setup."""
 
-    _ENV_EXAMPLE_FILE = ".env.example"
     _ENV_FILE = ".env"
     _DOCKER_COMPOSE_FILE = "docker-compose.yml"
-    _TRAINING_COMPOSE_FILE = "docker-compose.training.yml"
-
-    _OLLAMA_IMAGE = "ollama/ollama"
-    _OLLAMA_CONTAINER = "ollama"
-    _OLLAMA_PORT = "11434"
 
     _COMPOSE_ENV_MAPPING = {
         "MYSQL_ROOT_PASSWORD": (DEFAULT_DB_SERVICE_NAME, "MYSQL_ROOT_PASSWORD"),
@@ -108,7 +101,7 @@ class DockerManager:
         "SANDBOX_AUTH_SECRET",
         "DEFAULT_SECRET_KEY",
         "SMBCLIENT_PASSWORD",
-        "SEARXNG_SECRET_KEY",  # Required by searxng service in docker-compose.yml
+        "SEARXNG_SECRET_KEY",
     ]
 
     _GENERATED_TOOL_IDS = [
@@ -214,7 +207,7 @@ class DockerManager:
             "CODE_EXECUTION_URL",
             "SIGNED_URL_SECRET",
             "SANDBOX_AUTH_SECRET",
-            "SEARXNG_SECRET_KEY",  # Required by searxng service — auto-generated
+            "SEARXNG_SECRET_KEY",
             "DISABLE_FIREJAIL",
             "SECRET_KEY",
             "DEFAULT_SECRET_KEY",
@@ -247,27 +240,8 @@ class DockerManager:
             self.log.setLevel(logging.DEBUG)
         self.log.debug("DockerManager initialised with args: %s", vars(args))
 
-        # -------------------------------------------------------------------
-        # COMPOSE FILE SELECTION & AUTO-DETECTION LOGIC
-        # -------------------------------------------------------------------
-        self.compose_files = []
-        if getattr(self.args, "train", False):
-            self.compose_files.append(self._TRAINING_COMPOSE_FILE)
-        else:
-            self.compose_files.append(self._DOCKER_COMPOSE_FILE)
-
-        # Auto-detect if training containers are explicitly requested in --services
-        training_services = {"training-api", "training-worker"}
-        if getattr(self.args, "services", []):
-            if any(svc in training_services for svc in self.args.services):
-                if self._TRAINING_COMPOSE_FILE not in self.compose_files:
-                    # If ALL requested services belong to training, exclusively use training file
-                    if all(svc in training_services for svc in self.args.services):
-                        self.compose_files = [self._TRAINING_COMPOSE_FILE]
-                    else:
-                        # Mix of core and training (rare), load both
-                        self.compose_files.append(self._TRAINING_COMPOSE_FILE)
-                self.log.info("Auto-detected training services. Using docker-compose.training.yml")
+        # Single compose file — all services including training live here now.
+        self.compose_files = [self._DOCKER_COMPOSE_FILE]
 
         self.compose_config = self._load_compose_config()
         self._check_for_required_env_file()
@@ -276,7 +250,6 @@ class DockerManager:
         self._ensure_dockerignore()
 
     def _get_compose_flags(self) -> List[str]:
-        """Returns the necessary -f flags for docker compose based on active mode."""
         flags = []
         for file in self.compose_files:
             flags.extend(["-f", file])
@@ -307,11 +280,11 @@ class DockerManager:
         dockerignore = Path(".dockerignore")
         if not dockerignore.exists():
             dockerignore.write_text(
-                "__pycache__/\n.venv/\nnode_modules/\n*.log\n*.pyc\n.git/\n.env*\n.env\n*.sqlite\ndist/\nbuild/\ncoverage/\ntmp/\n*.egg-info/\n"
+                "__pycache__/\n.venv/\nnode_modules/\n*.log\n*.pyc\n.git/\n"
+                ".env*\n.env\n*.sqlite\ndist/\nbuild/\ncoverage/\ntmp/\n*.egg-info/\n"
             )
 
     def _load_compose_config(self):
-        """Loads and merges config across multiple compose files to allow extracting vars."""
         merged_config = {"services": {}}
         for cf in self.compose_files:
             path = Path(cf)
@@ -400,25 +373,30 @@ class DockerManager:
             value = self._get_env_from_compose_service(service_name, compose_key)
             if value is not None and not str(value).startswith("${"):
                 env_values[env_key] = str(value)
+                generation_log[env_key] = (
+                    f"From {self._DOCKER_COMPOSE_FILE} ({service_name}/{compose_key})"
+                )
 
         for key in self._GENERATED_SECRETS:
             env_values[key] = secrets.token_hex(16 if key == "API_KEY" else 32)
+            generation_log[key] = "Generated new secret"
 
         for key in self._GENERATED_TOOL_IDS:
             env_values[key] = f"tool_{secrets.token_hex(10)}"
+            generation_log[key] = "Generated new tool ID"
 
-        db_user, db_pass, db_name = (
-            env_values.get("MYSQL_USER"),
-            env_values.get("MYSQL_PASSWORD"),
-            env_values.get("MYSQL_DATABASE"),
-        )
-        db_host, db_port = env_values.get("MYSQL_HOST", DEFAULT_DB_SERVICE_NAME), env_values.get(
-            "MYSQL_PORT", DEFAULT_DB_CONTAINER_PORT
-        )
+        db_user = env_values.get("MYSQL_USER")
+        db_pass = env_values.get("MYSQL_PASSWORD")
+        db_name = env_values.get("MYSQL_DATABASE")
+        db_host = env_values.get("MYSQL_HOST", DEFAULT_DB_SERVICE_NAME)
+        db_port = env_values.get("MYSQL_PORT", DEFAULT_DB_CONTAINER_PORT)
+
         if all([db_user, db_pass, db_host, db_port, db_name]):
             env_values["DATABASE_URL"] = (
-                f"mysql+pymysql://{db_user}:{quote_plus(str(db_pass))}@{db_host}:{db_port}/{db_name}"
+                f"mysql+pymysql://{db_user}:{quote_plus(str(db_pass))}"
+                f"@{db_host}:{db_port}/{db_name}"
             )
+            generation_log["DATABASE_URL"] = "Constructed from DB components"
 
         if not env_values.get("HF_CACHE_PATH"):
             env_values["HF_CACHE_PATH"] = os.path.join(
@@ -427,8 +405,9 @@ class DockerManager:
 
         self._prompt_user_required(env_values, generation_log)
 
-        env_lines = [f"# Auto-generated .env file\n"]
-        processed_keys = set()
+        env_lines = ["# Auto-generated .env file\n"]
+        processed_keys: set = set()
+
         for section_name, keys_in_section in self._ENV_STRUCTURE.items():
             env_lines += [
                 "#############################",
@@ -453,11 +432,14 @@ class DockerManager:
             )
 
         Path(self._ENV_FILE).write_text("\n".join(env_lines), encoding="utf-8")
+        self.log.info("Successfully generated '%s'.", self._ENV_FILE)
 
     def _check_for_required_env_file(self):
         if not os.path.exists(self._ENV_FILE):
+            self.log.warning("'%s' missing. Generating...", self._ENV_FILE)
             self._generate_dot_env_file()
         else:
+            self.log.info("'%s' exists. Loading.", self._ENV_FILE)
             load_dotenv(dotenv_path=self._ENV_FILE, override=True)
 
     def _configure_shared_path(self):
@@ -472,15 +454,28 @@ class DockerManager:
         os.environ["HF_CACHE_PATH"] = hf_path
 
     def _validate_secrets(self):
-        if any(os.environ.get(k, "") in self._INSECURE_VALUES for k in self._GENERATED_SECRETS):
-            self.log.error("Insecure value detected. Delete .env and regenerate.")
+        failed = False
+        for key in self._GENERATED_SECRETS:
+            val = os.environ.get(key, "")
+            if val in self._INSECURE_VALUES:
+                self.log.error(
+                    "Insecure or missing value for '%s'. Delete .env and re-run to regenerate.", key
+                )
+                failed = True
+        if failed:
             raise SystemExit(1)
 
     def _has_docker(self):
         return shutil.which("docker") is not None
 
     def _handle_down(self):
-        down_cmd = ["docker", "compose", *self._get_compose_flags(), "down", "--remove-orphans"]
+        down_cmd = [
+            "docker",
+            "compose",
+            *self._get_compose_flags(),
+            "down",
+            "--remove-orphans",
+        ]
         if self.args.clear_volumes:
             if input("Remove volumes? (yes/no): ").lower() == "yes":
                 down_cmd.append("--volumes")
@@ -502,6 +497,8 @@ class DockerManager:
         logs_cmd = ["docker", "compose", *self._get_compose_flags(), "logs"]
         if self.args.follow:
             logs_cmd.append("-f")
+        if self.args.tail:
+            logs_cmd.extend(["--tail", str(self.args.tail)])
         if self.args.services:
             logs_cmd.extend(self.args.services)
         self._run_command(logs_cmd, check=False)
@@ -513,6 +510,8 @@ class DockerManager:
             up_cmd.append("-d")
         if self.args.build_before_up:
             up_cmd.append("--build")
+        if self.args.force_recreate:
+            up_cmd.append("--force-recreate")
 
         target = [
             s
@@ -531,7 +530,6 @@ class DockerManager:
         if not self._has_docker():
             raise SystemExit(1)
 
-        # down_only mode implicitly means --down
         if self.args.mode == "down_only":
             self.args.down = True
 
@@ -575,9 +573,6 @@ def docker_manager(
     ollama_gpu: bool = typer.Option(False, "--ollama-gpu"),
     verbose: bool = typer.Option(False, "--verbose", "--debug"),
     debug_cache: bool = typer.Option(False, "--debug-cache"),
-    train: bool = typer.Option(
-        False, "--train", help="Run the fine-tuning training stack standalone."
-    ),
 ) -> None:
     if ctx.invoked_subcommand is not None:
         return
@@ -605,12 +600,10 @@ def docker_manager(
         ollama_gpu=ollama_gpu,
         verbose=verbose,
         debug_cache=debug_cache,
-        train=train,
     )
 
     try:
-        from entities_api.cli.generate_docker_compose import \
-            generate_dev_docker_compose
+        from entities_api.cli.generate_docker_compose import generate_dev_docker_compose
 
         generate_dev_docker_compose()
         time.sleep(0.5)
@@ -627,11 +620,68 @@ def configure(
     set_var: Optional[List[str]] = typer.Option(None, "--set", "-s"),
     interactive: bool = typer.Option(False, "--interactive", "-i"),
 ) -> None:
+    """Update specific variables in an existing .env without regenerating secrets."""
     env_path = Path(DockerManager._ENV_FILE)
     if not env_path.exists():
+        typer.echo(
+            f"[error] '{DockerManager._ENV_FILE}' not found. "
+            "Run 'docker-manager --mode up' first to generate it.",
+            err=True,
+        )
         raise SystemExit(1)
-    # Configure logic remains unchanged
-    pass
+
+    load_dotenv(dotenv_path=env_path, override=True)
+    updates: dict = {}
+
+    if set_var:
+        for item in set_var:
+            if "=" not in item:
+                typer.echo(f"[error] Invalid format '{item}'. Expected KEY=VALUE.", err=True)
+                raise SystemExit(1)
+            key, _, value = item.partition("=")
+            updates[key.strip()] = value.strip()
+
+    if interactive:
+        typer.echo("\n" + "=" * 60 + "\n  Interactive Configuration\n" + "=" * 60)
+        for key, (label, help_text, hide) in DockerManager._USER_REQUIRED.items():
+            current = os.environ.get(key, "")
+            status = "(currently set)" if current else "(currently blank)"
+            typer.echo(f"  {help_text}\n")
+            value = typer.prompt(
+                f"  {label} {status}",
+                default="",
+                show_default=False,
+                hide_input=hide,
+            )
+            if value.strip():
+                updates[key] = value.strip()
+                typer.echo(f"  ✓ {key} will be updated.\n")
+        typer.echo("=" * 60 + "\n")
+
+    if not updates:
+        typer.echo("Nothing to update. Use --set KEY=VALUE or --interactive.")
+        raise SystemExit(0)
+
+    content = env_path.read_text(encoding="utf-8")
+    for key, value in updates.items():
+        if any(c in value for c in [" ", "#", "="]):
+            escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+            new_line = f'{key}="{escaped}"'
+        else:
+            new_line = f"{key}={value}"
+
+        pattern = re.compile(rf"^{re.escape(key)}=.*$", re.MULTILINE)
+        if pattern.search(content):
+            content = pattern.sub(new_line, content)
+        else:
+            content += f"\n# Added by configure\n{new_line}\n"
+
+    env_path.write_text(content, encoding="utf-8")
+    typer.echo(
+        f"✓ {len(updates)} variable(s) updated: {', '.join(updates.keys())}\n"
+        "Restart the stack for changes to take effect:\n"
+        "  platform-api docker-manager --mode up --force-recreate"
+    )
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 #!src/api/entities_api/cli/generate_docker_compose.py
 """
-Generate a development-friendly docker-compose.yml and training overlay.
+Generate a development-friendly docker-compose.yml.
 
 All sensitive values (DB passwords, secret keys, etc.) are expressed as
 ${ENV_VAR:?message} placeholders — Docker Compose will refuse to start and
@@ -14,101 +14,17 @@ directly without going through the manager.
 """
 from pathlib import Path
 
-# --------------------------------------------------------------------------- #
-# Training Overlay Content
-# --------------------------------------------------------------------------- #
-TRAINING_YML_CONTENT = """\
-services:
 
-  # ---------------------------------------------------------------------------
-  # training-api — FastAPI HTTP layer (no GPU required)
-  # Serves /v1/datasets, /v1/training-jobs, /v1/fine-tuned-models on port 9001.
-  # ---------------------------------------------------------------------------
-  training-api:
-    image: thanosprime/projectdavid-core-training-api:latest
-    build:
-      context: .
-      dockerfile: docker/training/Dockerfile.api
-    container_name: training_api
-    restart: unless-stopped
-    environment:
-      - DATABASE_URL=${DATABASE_URL}
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
-      - ASSISTANTS_BASE_URL=http://api:9000
-      - WORKER_API_KEY=${ADMIN_API_KEY}
-      - SANDBOX_AUTH_SECRET=${SANDBOX_AUTH_SECRET}
-      - SHARED_PATH=/mnt/training_data
-      - PYTHONUNBUFFERED=1
-    ports:
-      - "9001:9001"
-    volumes:
-      - ${SHARED_PATH:-./shared_data}:/mnt/training_data
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_started
-      api:
-        condition: service_started
-    networks:
-      - my_custom_network
-
-  # ---------------------------------------------------------------------------
-  # training-worker — GPU runner (requires nvidia-container-toolkit)
-  # BRPOPs from Redis, spawns axolotl/unsloth training subprocess per job.
-  # ---------------------------------------------------------------------------
-  training-worker:
-    image: thanosprime/projectdavid-core-training-worker:latest
-    build:
-      context: .
-      dockerfile: docker/training/Dockerfile
-    container_name: training_worker
-    restart: unless-stopped
-    runtime: nvidia
-    environment:
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
-      - ASSISTANTS_BASE_URL=http://api:9000
-      - WORKER_API_KEY=${ADMIN_API_KEY}
-      - SHARED_PATH=/mnt/training_data
-      - HF_TOKEN=${HF_TOKEN:-}
-      - HF_HOME=/mnt/training_data/.hf_cache
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      - PYTHONUNBUFFERED=1
-    volumes:
-      - ${SHARED_PATH:-./shared_data}:/mnt/training_data
-    command: ["python", "src/api/training/worker.py"]
-    depends_on:
-      - redis
-      - api
-    networks:
-      - my_custom_network
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-"""
-
-
-# --------------------------------------------------------------------------- #
-# Main generator
-# --------------------------------------------------------------------------- #
 def generate_dev_docker_compose(force: bool = False) -> None:
     """
-    Write docker-compose.yml and docker-compose.training.yml to the project root.
+    Write docker-compose.yml to the project root.
 
     Parameters
     ----------
     force:
-        If True, overwrite existing files. Defaults to False (skip if present).
-        Pass force=True when you know the template has changed and need to
-        push the update to disk.
+        If True, overwrite existing file. Defaults to False (skip if present).
     """
     project_root = Path(__file__).resolve().parents[4]
-
     main_compose_path = project_root / "docker-compose.yml"
     training_compose_path = project_root / "docker-compose.training.yml"
 
@@ -376,6 +292,69 @@ services:
     networks:
       - my_custom_network
 
+  # ---------------------------------------------------------------------------
+  # training-api — Fine-tuning REST API (no GPU required)
+  # Opt-in: platform-api docker-manager --mode up --services training-api
+  # ---------------------------------------------------------------------------
+  training-api:
+    image: thanosprime/projectdavid-core-training-api:latest
+    build:
+      context: .
+      dockerfile: docker/training/Dockerfile
+    container_name: training_api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379/0
+      - ASSISTANTS_BASE_URL=http://api:9000
+      - WORKER_API_KEY=${ADMIN_API_KEY}
+      - SANDBOX_AUTH_SECRET=${SANDBOX_AUTH_SECRET}
+      - SHARED_PATH=/mnt/training_data
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "9001:9001"
+    volumes:
+      - ${SHARED_PATH:-./shared_data}:/mnt/training_data
+    networks:
+      - my_custom_network
+
+  # ---------------------------------------------------------------------------
+  # training-worker — GPU training runner (requires nvidia-container-toolkit)
+  # Opt-in: platform-api docker-manager --mode up --services training-worker
+  # ---------------------------------------------------------------------------
+  training-worker:
+    image: thanosprime/projectdavid-core-training-worker:latest
+    build:
+      context: .
+      dockerfile: docker/training/Dockerfile
+    container_name: training_worker
+    restart: unless-stopped
+    runtime: nvidia
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - ASSISTANTS_BASE_URL=http://api:9000
+      - WORKER_API_KEY=${ADMIN_API_KEY}
+      - SHARED_PATH=/mnt/training_data
+      - HF_TOKEN=${HF_TOKEN:-}
+      - HF_HOME=/mnt/training_data/.hf_cache
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ${SHARED_PATH:-./shared_data}:/mnt/training_data
+    command: ["python", "src/api/training/worker.py"]
+    networks:
+      - my_custom_network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
 volumes:
   mysql_data:
   qdrant_storage:
@@ -389,14 +368,19 @@ networks:
         main_compose_path.write_text(compose_yaml, encoding="utf-8")
         print(f"✅  docker-compose.yml written → {main_compose_path}")
 
-    # --- 2. Generate Training Overlay File ---
+    # --- 2. Training overlay is now part of main compose.
+    #        Keep the file stub so existing references don't break.
     if training_compose_path.exists() and not force:
         print(f"⚠️  {training_compose_path.name} already exists – generation skipped.")
     else:
-        training_compose_path.write_text(TRAINING_YML_CONTENT, encoding="utf-8")
+        training_compose_path.write_text(
+            "# Training services are now defined in docker-compose.yml.\n"
+            "# Use: platform-api docker-manager --mode up --services training-api\n",
+            encoding="utf-8",
+        )
         print(f"✅  docker-compose.training.yml written → {training_compose_path}")
 
 
 # --------------------------------------------------------------------------- #
 if __name__ == "__main__":
-    generate_dev_docker_compose(force=True)
+    generate_dev_docker_compose(force=False)
