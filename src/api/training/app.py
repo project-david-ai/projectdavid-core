@@ -1,11 +1,24 @@
 # src/api/training/app.py
-
+#
+# Training Service — FastAPI application entry point.
+#
+# Architecture:
+#   - Direct DB access via its own SQLAlchemy engine (shared MySQL instance).
+#   - No local auth logic — JWT ticket method (wired when routers are added).
+#   - No observability yet — circle back once the pipeline is functional.
+#
+# Run locally:
+#   uvicorn src.api.training.app:app --host 0.0.0.0 --port 9001 --reload
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from projectdavid_common import UtilsInterface
 
+from src.api.training.db.database import wait_for_db
+
 logging_utility = UtilsInterface.LoggingUtility()
+
+wait_for_db()
 
 
 def create_app() -> FastAPI:
