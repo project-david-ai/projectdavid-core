@@ -714,36 +714,54 @@ class DockerManager:
 
     def _handle_up(self):
         self._validate_secrets()
+
         up_cmd = ["docker", "compose", *self._get_compose_flags(), "up"]
+
         if not self.args.attached:
             up_cmd.append("-d")
+
         if self.args.build_before_up:
             up_cmd.append("--build")
+
         if self.args.force_recreate:
             up_cmd.append("--force-recreate")
 
-        # ── Resolve which services to actually start ───────────────────
-        exclude = set(self.args.exclude or [])
-        target = list(self.args.services or [])
+        # -------------------------------------------------------
+        # HARD RULE:
+        # We ALWAYS explicitly tell compose what services to start
+        # so profile services NEVER auto-start.
+        # -------------------------------------------------------
 
-        if exclude:
-            # If excluding, we must explicitly tell Compose what TO start so it doesn't default.
-            # We fetch all services that do NOT have a profile, so we don't accidentally
-            # opt-in the training services just because the user excluded 'ollama'.
-            if not target:
-                target = [
-                    name
-                    for name, cfg in self.compose_config.get("services", {}).items()
-                    if not cfg.get("profiles")
-                ]
-            target = [s for s in target if s not in exclude]
+        all_services = self.compose_config.get("services", {})
 
-        if target:
-            up_cmd.extend(target)
-        # ───────────────────────────────────────────────────────────────
+        profile_services = {name for name, cfg in all_services.items() if cfg.get("profiles")}
+
+        default_services = [name for name in all_services.keys() if name not in profile_services]
+
+        requested = set(self.args.services or [])
+        excluded = set(self.args.exclude or [])
+
+        if requested:
+            final_services = requested - excluded
+        else:
+            final_services = set(default_services) - excluded
+
+        final_services = sorted(final_services)
+
+        if not final_services:
+            self.log.error("No services resolved to start.")
+            raise SystemExit(1)
+
+        up_cmd.extend(final_services)
+
+        self.log.info("Starting services: %s", ", ".join(final_services))
 
         try:
-            self._run_command(up_cmd, check=True, suppress_logs=self.args.attached)
+            self._run_command(
+                up_cmd,
+                check=True,
+                suppress_logs=self.args.attached,
+            )
         except subprocess.CalledProcessError:
             raise SystemExit(1)
 
