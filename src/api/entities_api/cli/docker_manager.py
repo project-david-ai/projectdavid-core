@@ -702,17 +702,6 @@ class DockerManager:
     def _handle_up(self):
         self._validate_secrets()
 
-        up_cmd = ["docker", "compose", *self._get_compose_flags(), "up"]
-
-        if not self.args.attached:
-            up_cmd.append("-d")
-
-        if self.args.build_before_up:
-            up_cmd.append("--build")
-
-        if self.args.force_recreate:
-            up_cmd.append("--force-recreate")
-
         # -------------------------------------------------------
         # HARD RULE:
         # We ALWAYS explicitly tell compose what services to start
@@ -720,8 +709,11 @@ class DockerManager:
         # -------------------------------------------------------
 
         all_services = self.compose_config.get("services", {})
-
         profile_services = {name for name, cfg in all_services.items() if cfg.get("profiles")}
+
+        # FIX: Bypass the profile hard rule specifically for 'nginx'
+        if "nginx" in profile_services:
+            profile_services.remove("nginx")
 
         default_services = [name for name in all_services.keys() if name not in profile_services]
 
@@ -739,18 +731,52 @@ class DockerManager:
             self.log.error("No services resolved to start.")
             raise SystemExit(1)
 
-        up_cmd.extend(final_services)
+        # FIX: Start 'nginx' service explicitly before the others
+        if "nginx" in final_services:
+            self.log.info("Starting 'nginx' container first...")
+            nginx_cmd = ["docker", "compose", *self._get_compose_flags(), "up", "-d"]
 
-        self.log.info("Starting services: %s", ", ".join(final_services))
+            if self.args.build_before_up:
+                nginx_cmd.append("--build")
 
-        try:
-            self._run_command(
-                up_cmd,
-                check=True,
-                suppress_logs=self.args.attached,
-            )
-        except subprocess.CalledProcessError:
-            raise SystemExit(1)
+            if self.args.force_recreate:
+                nginx_cmd.append("--force-recreate")
+
+            nginx_cmd.append("nginx")
+
+            try:
+                self._run_command(nginx_cmd, check=True, suppress_logs=False)
+            except subprocess.CalledProcessError:
+                raise SystemExit(1)
+
+            # Remove nginx from final batch as it's already up
+            final_services.remove("nginx")
+
+        # Start the remaining services
+        if final_services:
+            up_cmd = ["docker", "compose", *self._get_compose_flags(), "up"]
+
+            if not self.args.attached:
+                up_cmd.append("-d")
+
+            if self.args.build_before_up:
+                up_cmd.append("--build")
+
+            if self.args.force_recreate:
+                up_cmd.append("--force-recreate")
+
+            up_cmd.extend(final_services)
+
+            self.log.info("Starting remaining services: %s", ", ".join(final_services))
+
+            try:
+                self._run_command(
+                    up_cmd,
+                    check=True,
+                    suppress_logs=self.args.attached,
+                )
+            except subprocess.CalledProcessError:
+                raise SystemExit(1)
 
     def _is_service_running(self, service_name: str) -> bool:
         if not self._has_docker():

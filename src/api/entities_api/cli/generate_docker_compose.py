@@ -173,6 +173,8 @@ services:
       - .env
     environment:
       - DATABASE_URL=${DATABASE_URL}
+      - SECRET_KEY=${SECRET_KEY}
+      - DEFAULT_SECRET_KEY=${DEFAULT_SECRET_KEY}
       - REDIS_URL=redis://redis:6379/0
       - ASSISTANTS_BASE_URL=http://api:9000
       - WORKER_API_KEY=${ADMIN_API_KEY}
