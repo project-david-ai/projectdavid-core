@@ -16,9 +16,8 @@ transformers>=4.33.0,<5.0.0
 # Internal packages
 projectdavid[text-embeddings]==1.78.0
 projectdavid-orm
-projectdavid-services
+projectdavid-services==1.0.4
 # web search tools
-
 html2text>=2024.2.26
 playwright>=1.41.0
 requests>=2.31.0

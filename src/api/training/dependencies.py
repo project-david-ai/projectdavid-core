@@ -10,10 +10,10 @@ from typing import Optional
 from fastapi import Depends, HTTPException, Security, status
 from fastapi.security import APIKeyHeader
 from projectdavid_common import UtilsInterface
+from projectdavid_orm.projectdavid_orm.models import ApiKey
 from sqlalchemy.orm import Session
 
 from src.api.training.db.database import get_db
-from src.api.training.models.models import ApiKey
 
 logging_utility = UtilsInterface.LoggingUtility()
 

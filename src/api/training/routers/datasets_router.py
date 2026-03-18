@@ -5,11 +5,11 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from projectdavid_common import UtilsInterface, ValidationInterface
+from projectdavid_common.schemas.enums import StatusEnum
 from sqlalchemy.orm import Session
 
 from src.api.training.db.database import get_db
 from src.api.training.dependencies import get_current_user_id
-from src.api.training.models.models import StatusEnum
 from src.api.training.services.dataset_service import (create_dataset,
                                                        delete_dataset,
                                                        get_dataset,

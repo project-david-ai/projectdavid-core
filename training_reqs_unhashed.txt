@@ -73,9 +73,9 @@ passlib[bcrypt]
 # ------------------------------------------------------------------
 # Internal dependencies
 # ------------------------------------------------------------------
-projectdavid-common==0.49.0
+projectdavid-common
 projectdavid-orm==1.1.5
-projectdavid-services
+projectdavid-services==1.0.4
 # ------------------------------------------------------------------
 # DB dependencies
 # ------------------------------------------------------------------
