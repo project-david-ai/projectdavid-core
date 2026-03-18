@@ -112,12 +112,61 @@ jobs:
         run: pytest tests/ --cov=src --cov-report=term-missing
 
   # ──────────────────────────────────────────────────────────────────────────
-  #  🚀  Build & Publish Docker images
+  #  🏗️  Verify Docker Builds (DRY RUN FOR PRs)
+  # ──────────────────────────────────────────────────────────────────────────
+  verify_docker_builds:
+    name: "🏗️ Verify Docker Builds (Dry Run)"
+    runs-on: ubuntu-latest
+    needs: test
+    # Run this ONLY on Pull Requests (Feature branches pointing to main)
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: "🕺 Checkout repository"
+        uses: actions/checkout@v5
+
+      - name: "⚙️ Setup Docker Buildx"
+        uses: docker/setup-buildx-action@v3
+
+      # Build but DO NOT push. This verifies the Dockerfile won't crash in production.
+      - name: "🏗️ Build API Image (No Push)"
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./docker/api/Dockerfile
+          push: false
+          platforms: linux/amd64
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+      - name: "🏗️ Build Sandbox Image (No Push)"
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./docker/sandbox/Dockerfile
+          push: false
+          platforms: linux/amd64
+          cache-from: type=gha,scope=sandbox
+          cache-to: type=gha,mode=max,scope=sandbox
+
+      - name: "🏗️ Build Training Image (No Push)"
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./docker/training/Dockerfile
+          push: false
+          platforms: linux/amd64
+          cache-from: type=gha,scope=training
+          cache-to: type=gha,mode=max,scope=training
+
+  # ──────────────────────────────────────────────────────────────────────────
+  #  🚀  Build & Publish Docker images (MAIN BRANCH ONLY)
   # ──────────────────────────────────────────────────────────────────────────
   build_and_publish:
     name: "🚀 Build, Tag, and Publish Images to Docker Hub"
     runs-on: ubuntu-latest
     needs: test
+    # Run this ONLY on direct pushes/merges to main or master
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
 
     steps:

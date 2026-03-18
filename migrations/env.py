@@ -4,28 +4,14 @@ from logging.config import fileConfig
 
 from alembic import context
 from dotenv import load_dotenv
-from sqlalchemy import (Column, MetaData, String, Table, engine_from_config,
-                        pool)
+from sqlalchemy import engine_from_config, pool
 
-# --- PATH FIX ---
 project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if project_dir not in sys.path:
     sys.path.insert(0, project_dir)
 
-# --- MODELS IMPORT ---
 from src.api.entities_api.models.models import Base
-from src.api.training.models.models import Base as TrainingBase
-
-# Stub the users table into the training metadata so FK resolution works.
-# The real users table is owned by entities_api Base — this is just a
-# reference anchor for Alembic's FK graph traversal.
-if "users" not in TrainingBase.metadata.tables:
-    Table(
-        "users",
-        TrainingBase.metadata,
-        Column("id", String(64), primary_key=True),
-        keep_existing=True,
-    )
+from src.api.training.models.models import Base as training_base
 
 load_dotenv()
 
@@ -34,7 +20,18 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-target_metadata = [Base.metadata, TrainingBase.metadata]
+# Combine both metadata objects so autogenerate sees all tables
+from sqlalchemy import MetaData
+
+combined_metadata = MetaData()
+
+for table in Base.metadata.tables.values():
+    table.tometadata(combined_metadata)
+
+for table in training_base.metadata.tables.values():
+    table.tometadata(combined_metadata)
+
+target_metadata = combined_metadata
 
 DB_URL = os.getenv("DATABASE_URL")
 if not DB_URL:

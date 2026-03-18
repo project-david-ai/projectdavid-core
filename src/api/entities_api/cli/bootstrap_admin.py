@@ -5,17 +5,33 @@
 #   python -m entities_api bootstrap-admin --email admin@example.com --db-url mysql+pymysql://...
 #
 
-
 from __future__ import annotations
 
+import os
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 import typer
+from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy import exc as sqlalchemy_exc
 from sqlalchemy.orm import Session
+
+# ---------------------------------------------------------------------------
+# Load .env before initializing any Project DB models to ensure DATABASE_URL is set
+# ---------------------------------------------------------------------------
+_env_path = Path(".env")
+if _env_path.exists():
+    load_dotenv(dotenv_path=_env_path, override=True)
+else:
+    # Walk up the directory tree to find project root .env
+    for parent in Path(__file__).parents:
+        candidate = parent / ".env"
+        if candidate.exists():
+            load_dotenv(dotenv_path=candidate, override=True)
+            break
 
 # ---------------------------------------------------------------------------
 # Project imports — these will resolve correctly when the package is installed
@@ -185,8 +201,6 @@ def _print_existing_key(user: User, prefix: str) -> None:
 # ---------------------------------------------------------------------------
 # CLI entry-point
 # ---------------------------------------------------------------------------
-
-
 @app.command()
 def bootstrap_admin(
     email: str = typer.Option(

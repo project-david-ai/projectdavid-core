@@ -1,67 +1,65 @@
 # src/api/training/dependencies.py
 #
-# FastAPI dependencies for the training service.
-# Auth uses the same JWT secret as sandbox (SANDBOX_AUTH_SECRET)
-# but via Authorization: Bearer header rather than WebSocket query param.
+# Auth for the training service.
+# Uses the same X-API-Key pattern as the core API — queries the shared
+# MySQL instance directly. No network hop, no JWT, no duplication.
 
-import os
+from datetime import datetime
+from typing import Optional
 
-import jwt
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import Depends, HTTPException, Security, status
+from fastapi.security import APIKeyHeader
 from projectdavid_common import UtilsInterface
+from sqlalchemy.orm import Session
+
+from src.api.training.db.database import get_db
+from src.api.training.models.models import ApiKey
 
 logging_utility = UtilsInterface.LoggingUtility()
 
-SECRET_KEY = os.getenv("SANDBOX_AUTH_SECRET")
-ALGORITHM = "HS256"
-
-bearer_scheme = HTTPBearer()
+API_KEY_NAME = "X-API-Key"
+_api_key_scheme = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
 
 def get_current_user_id(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    api_key_header: Optional[str] = Security(_api_key_scheme),
+    db: Session = Depends(get_db),
 ) -> str:
     """
-    Validates the Bearer JWT and returns the user_id (sub claim).
-    Raises 401 on any auth failure.
+    Validates X-API-Key directly against the shared MySQL api_keys table.
+    Mirrors entities_api/dependencies.py get_api_key exactly.
+    Returns the user_id string on success.
     """
-    token = credentials.credentials
-
-    if not SECRET_KEY:
-        logging_utility.error("SANDBOX_AUTH_SECRET is not set.")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Server auth configuration error.",
-        )
-
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id = payload.get("sub")
-
-        if not user_id:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token payload — missing sub claim.",
-            )
-
-        return str(user_id)
-
-    except jwt.ExpiredSignatureError:
-        logging_utility.warning("Rejected request: token expired.")
+    if not api_key_header:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired.",
+            detail="Missing API Key in 'X-API-Key' header.",
+            headers={"WWW-Authenticate": "APIKey"},
         )
-    except jwt.InvalidTokenError as e:
-        logging_utility.warning("Rejected request: invalid token — %s", e)
+
+    prefix = api_key_header[:8]
+    if len(api_key_header) <= len(prefix):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token.",
+            detail="Invalid API Key format.",
+            headers={"WWW-Authenticate": "APIKey"},
         )
-    except Exception as e:
-        logging_utility.error("Unexpected auth error: %s", e)
+
+    key = db.query(ApiKey).filter(ApiKey.prefix == prefix, ApiKey.is_active.is_(True)).first()
+
+    if not key or not key.verify_key(api_key_header):
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Authentication error.",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or inactive API Key.",
+            headers={"WWW-Authenticate": "APIKey"},
         )
+
+    if key.expires_at and key.expires_at < datetime.utcnow():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API Key has expired.",
+            headers={"WWW-Authenticate": "APIKey"},
+        )
+
+    logging_utility.info("Training API — authenticated user: %s", key.user_id)
+    return key.user_id

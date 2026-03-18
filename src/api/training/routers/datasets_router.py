@@ -1,8 +1,9 @@
 # src/api/training/routers/datasets_router.py
 
+import os
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException
 from projectdavid_common import UtilsInterface, ValidationInterface
 from sqlalchemy.orm import Session
 
@@ -16,20 +17,11 @@ from src.api.training.services.dataset_service import (create_dataset,
                                                        prepare_dataset)
 
 logging_utility = UtilsInterface.LoggingUtility()
-validator = ValidationInterface()
 
 router = APIRouter()
 
-# ---------------------------------------------------------------------------
-# Samba client dependency
-# ---------------------------------------------------------------------------
-# Injected so the router stays testable — swap out for a mock in tests.
-
-
-def get_samba_client():
-    from src.api.entities_api.utils.samba_client import SambaClient
-
-    return SambaClient()
+API_BASE_URL = os.getenv("ASSISTANTS_BASE_URL", "http://api:9000")
+WORKER_API_KEY = os.getenv("WORKER_API_KEY", "")
 
 
 # ---------------------------------------------------------------------------
@@ -41,26 +33,28 @@ def get_samba_client():
     "/",
     response_model=ValidationInterface.DatasetRead,
     status_code=201,
-    summary="Register a new dataset",
+    summary="Register a dataset by file_id",
 )
-async def create_dataset_endpoint(
-    name: str = Form(...),
-    format: str = Form(...),
-    description: Optional[str] = Form(default=None),
-    file: UploadFile = File(...),
+def create_dataset_endpoint(
+    payload: ValidationInterface.DatasetCreate,
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
-    samba_client=Depends(get_samba_client),
 ):
-    logging_utility.info("POST /datasets — user=%s name=%s format=%s", user_id, name, format)
+    logging_utility.info(
+        "POST /datasets — user=%s name=%s format=%s file_id=%s",
+        user_id,
+        payload.name,
+        payload.format,
+        payload.file_id,
+    )
     dataset = create_dataset(
         db=db,
-        samba_client=samba_client,
         user_id=user_id,
-        name=name,
-        fmt=format,
-        file=file,
-        description=description,
+        name=payload.name,
+        fmt=payload.format,
+        file_id=payload.file_id,
+        description=payload.description,
+        filename=getattr(payload, "filename", None),
     )
     return ValidationInterface.DatasetRead.model_validate(dataset)
 
@@ -87,17 +81,10 @@ def list_datasets_endpoint(
         try:
             status_filter = StatusEnum(status)
         except ValueError:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Invalid status value '{status}'.",
-            )
+            raise HTTPException(status_code=422, detail=f"Invalid status value '{status}'.")
 
     datasets = list_datasets(
-        db=db,
-        user_id=user_id,
-        status=status_filter,
-        limit=limit,
-        offset=offset,
+        db=db, user_id=user_id, status=status_filter, limit=limit, offset=offset
     )
     return ValidationInterface.DatasetList(
         data=[ValidationInterface.DatasetRead.model_validate(d) for d in datasets],
@@ -131,21 +118,20 @@ def get_dataset_endpoint(
 
 @router.post(
     "/{dataset_id}/prepare",
-    summary="Trigger format validation and train/eval split",
+    summary="Validate format and compute train/eval split",
 )
 async def prepare_dataset_endpoint(
     dataset_id: str,
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
-    samba_client=Depends(get_samba_client),
 ):
-    result = prepare_dataset(
+    return prepare_dataset(
         db=db,
-        samba_client=samba_client,
         dataset_id=dataset_id,
         user_id=user_id,
+        api_base_url=API_BASE_URL,
+        api_key=WORKER_API_KEY,
     )
-    return result
 
 
 # ---------------------------------------------------------------------------

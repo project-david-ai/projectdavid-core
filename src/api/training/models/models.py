@@ -1,8 +1,11 @@
+# src/api/training/models/models.py
+
 import time
+from datetime import datetime
 
 from projectdavid_common.projectdavid_orm.base import Base
 from projectdavid_common.schemas.enums import StatusEnum
-from sqlalchemy import JSON, BigInteger, Boolean, Column
+from sqlalchemy import JSON, BigInteger, Boolean, Column, DateTime
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy import ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import relationship
@@ -22,6 +25,7 @@ class Dataset(Base):
     format = Column(
         String(32), nullable=False, comment="Training format: chatml | alpaca | sharegpt | jsonl"
     )
+
     # Reference to the uploaded file in the core API files table.
     # The actual Samba path is resolved via GET /v1/files/{file_id} at training time.
     file_id = Column(

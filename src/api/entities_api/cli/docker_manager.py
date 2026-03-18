@@ -5,6 +5,7 @@
 #   platform-api docker-manager --mode both --no-cache --tag v1.0
 #   platform-api docker-manager --mode up --services training-api
 #   platform-api docker-manager --mode build --services training-api
+#   platform-api docker-manager bootstrap-admin
 #
 from __future__ import annotations
 
@@ -460,20 +461,6 @@ class DockerManager:
         except Exception:
             return False
 
-    def _is_image_present(self, image_name):
-        if not self._has_docker():
-            return False
-        try:
-            result = self._run_command(
-                ["docker", "images", image_name, "--quiet"],
-                capture_output=True,
-                check=False,
-                suppress_logs=True,
-            )
-            return bool(result.stdout.strip())
-        except Exception:
-            return False
-
     def _has_nvidia_support(self):
         cmd = shutil.which("nvidia-smi.exe" if self.is_windows else "nvidia-smi") or (
             shutil.which("nvidia-smi") if self.is_windows else None
@@ -765,6 +752,70 @@ class DockerManager:
         except subprocess.CalledProcessError:
             raise SystemExit(1)
 
+    def _is_service_running(self, service_name: str) -> bool:
+        if not self._has_docker():
+            return False
+        try:
+            res = self._run_command(
+                [
+                    "docker",
+                    "compose",
+                    *self._get_compose_flags(),
+                    "ps",
+                    "--services",
+                    "--filter",
+                    "status=running",
+                ],
+                capture_output=True,
+                check=True,
+                suppress_logs=True,
+            )
+            return service_name in res.stdout.split()
+        except Exception:
+            return False
+
+    def _ensure_api_running(self, action: str):
+        if not self._is_service_running("api"):
+            self.log.error(
+                "The 'api' service is not running. Start the stack first:\n"
+                "  platform-api docker-manager --mode up"
+            )
+            raise SystemExit(1)
+
+    def exec_bootstrap_admin(self, db_url: Optional[str] = None):
+        self._ensure_api_running("bootstrap-admin")
+
+        # Ensure environment variables are loaded
+        load_dotenv(dotenv_path=self._ENV_FILE, override=True)
+        resolved_db_url = db_url or os.environ.get("DATABASE_URL")
+
+        if not resolved_db_url:
+            self.log.error(
+                "No DATABASE_URL found. Ensure it is set in .env or pass --db-url explicitly."
+            )
+            raise SystemExit(1)
+
+        cmd = [
+            "docker",
+            "compose",
+            *self._get_compose_flags(),
+            "exec",
+            "api",
+            "python",
+            "/app/src/api/entities_api/cli/bootstrap_admin.py",
+            "--db-url",
+            resolved_db_url,
+        ]
+
+        try:
+            self._run_command(cmd, check=True, suppress_logs=True)
+            self.log.info(
+                "bootstrap-admin finished. "
+                "Copy any printed ADMIN_API_KEY — it is required for API-level user provisioning."
+            )
+        except subprocess.CalledProcessError:
+            raise SystemExit(1)
+
     def run(self):
         if self.args.debug_cache:
             self._run_docker_cache_diagnostics()
@@ -933,6 +984,50 @@ def configure(
         "Restart the stack for changes to take effect:\n"
         "  platform-api docker-manager --mode up --force-recreate"
     )
+
+
+@app.command(name="bootstrap-admin")
+def bootstrap_admin(
+    db_url: Optional[str] = typer.Option(
+        None,
+        "--db-url",
+        help="Override DATABASE_URL for the bootstrap script. Defaults to DATABASE_URL from .env.",
+    ),
+    verbose: bool = typer.Option(False, "--verbose", help="Enable debug logging."),
+) -> None:
+    """
+    Provision the default admin user inside the running api container.
+
+    The stack must be running before calling this command.
+    Copy any printed ADMIN_API_KEY — it is required for API-level user provisioning.
+
+    Safe to re-run: existing users and keys are detected and left untouched.
+    """
+    args = SimpleNamespace(
+        mode="up",
+        services=[],
+        exclude=[],
+        no_cache=False,
+        parallel=False,
+        tag=None,
+        attached=False,
+        build_before_up=False,
+        force_recreate=False,
+        down=False,
+        clear_volumes=False,
+        nuke=False,
+        follow=False,
+        tail=None,
+        timestamps=False,
+        no_log_prefix=False,
+        with_ollama=False,
+        ollama_gpu=False,
+        verbose=verbose,
+        debug_cache=False,
+    )
+
+    manager = DockerManager(args)
+    manager.exec_bootstrap_admin(db_url=db_url)
 
 
 if __name__ == "__main__":

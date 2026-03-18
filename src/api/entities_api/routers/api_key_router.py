@@ -6,15 +6,31 @@ from projectdavid_common.schemas.api_key_schemas import (ApiKeyCreateRequest,
 from sqlalchemy.orm import Session
 
 from src.api.entities_api.dependencies import get_api_key, get_db
+from src.api.entities_api.models.models import ApiKey
 from src.api.entities_api.models.models import ApiKey as ApiKeyModel
 from src.api.entities_api.services.api_key_service import ApiKeyService
 from src.api.entities_api.utils.check_admin_status import _is_admin
+
+auth_router = APIRouter(tags=["API Keys"])
+
+
+@auth_router.get("/auth/validate-key")
+async def validate_key(auth_key: ApiKey = Depends(get_api_key)):
+    """Internal endpoint for service-to-service API key validation."""
+    return {"user_id": auth_key.user_id, "valid": True}
+
 
 router = APIRouter(
     prefix="/users/{user_id}/apikeys",
     tags=["API Keys"],
     responses={404: {"description": "User or Key not found"}},
 )
+
+
+@router.get("/auth/validate-key")
+async def validate_key(auth_key: ApiKey = Depends(get_api_key)):
+    """Internal endpoint for service-to-service API key validation."""
+    return {"user_id": auth_key.user_id, "valid": True}
 
 
 def verify_user_access(

@@ -10,3 +10,13 @@ docker compose exec api alembic revision --autogenerate -m "Add soft delete to V
 docker compose exec api alembic revision --autogenerate -m "Add fine tuning tables"
 docker compose exec api alembic revision --autogenerate -m "Move fine tuning tables to training root instance of models.py"
 docker compose exec api alembic revision --autogenerate -m "Implement Fine tuning tables in training.models"
+
+
+
+
+docker compose exec api alembic revision --autogenerate -m "Remove training data from models.py"
+
+docker compose exec api alembic revision --autogenerate -m "Add training data to training.models2"
+
+
+docker compose exec api alembic revision --autogenerate -m "Add fine tuning tables"
