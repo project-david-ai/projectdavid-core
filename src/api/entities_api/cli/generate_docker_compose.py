@@ -3,8 +3,9 @@ from pathlib import Path
 
 def generate_dev_docker_compose() -> None:
 
-    project_root = Path(__file__).resolve().parents[4]
-    output_path = project_root / "docker-compose.yml"
+    # Use the current working directory (where the user runs the command)
+    # This ensures it drops into the project root regardless of where the package is installed.
+    output_path = Path.cwd() / "docker-compose.yml"
 
     if output_path.exists():
         print(f"⚠️  {output_path.name} already exists – generation skipped.")
