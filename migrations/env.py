@@ -10,8 +10,7 @@ project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if project_dir not in sys.path:
     sys.path.insert(0, project_dir)
 
-from src.api.entities_api.models.models import Base
-from src.api.training.models.models import Base as training_base
+from projectdavid_orm.projectdavid_orm.base import Base
 
 load_dotenv()
 
@@ -28,8 +27,6 @@ combined_metadata = MetaData()
 for table in Base.metadata.tables.values():
     table.tometadata(combined_metadata)
 
-for table in training_base.metadata.tables.values():
-    table.tometadata(combined_metadata)
 
 target_metadata = combined_metadata
 

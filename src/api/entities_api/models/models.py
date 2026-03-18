@@ -1,83 +1,56 @@
 # src/api/entities_api/models/models.py
-from enum import Enum as PyEnum
+"""
+Model Aliases — Thin Re-export Layer
+=====================================
 
-from passlib.context import CryptContext
-from projectdavid_common import ValidationInterface
-from projectdavid_common.projectdavid_orm.base import Base
-from projectdavid_common.utilities.logging_service import LoggingUtility
+The canonical SQLAlchemy ORM model definitions for this platform have been
+extracted into a dedicated shared package:
+
+    Package : projectdavid-orm
+    Repo    : https://github.com/project-david-ai/projectdavid-orm
+    Module  : projectdavid_orm.ormInterface
+
+This file exists solely to preserve backwards-compatible imports across the
+entities_api codebase. All routers, services, and dependencies that import
+from ``src.api.entities_api.models.models`` continue to work without change.
+
+DO NOT define new models here. Any schema changes must be made in
+``projectdavid-orm`` and a corresponding Alembic migration must be written
+in this repo under ``migrations/versions/``.
+
+Import map
+----------
+    entities_api.models.models.User          → projectdavid_orm.ormInterface.User
+    entities_api.models.models.ApiKey        → projectdavid_orm.ormInterface.ApiKey
+    entities_api.models.models.Assistant     → projectdavid_orm.ormInterface.Assistant
+    entities_api.models.models.Thread        → projectdavid_orm.ormInterface.Thread
+    entities_api.models.models.Message       → projectdavid_orm.ormInterface.Message
+    entities_api.models.models.Run           → projectdavid_orm.ormInterface.Run
+    entities_api.models.models.Action        → projectdavid_orm.ormInterface.Action
+    entities_api.models.models.Sandbox       → projectdavid_orm.ormInterface.Sandbox
+    entities_api.models.models.File          → projectdavid_orm.ormInterface.File
+    entities_api.models.models.FileStorage   → projectdavid_orm.ormInterface.FileStorage
+    entities_api.models.models.VectorStore   → projectdavid_orm.ormInterface.VectorStore
+    entities_api.models.models.VectorStoreFile → projectdavid_orm.ormInterface.VectorStoreFile
+    entities_api.models.models.AuditLog      → projectdavid_orm.ormInterface.AuditLog
+"""
 from projectdavid_orm.ormInterface import (Action, ApiKey, Assistant, AuditLog,
                                            File, FileStorage, Message, Run,
                                            Sandbox, Thread, User, VectorStore,
                                            VectorStoreFile)
-from sqlalchemy import Column, ForeignKey, String, Table
 
-logger = LoggingUtility()
-
-validation = ValidationInterface
-
-# --- Association Tables ---
-
-thread_participants = Table(
-    "thread_participants",
-    Base.metadata,
-    Column("thread_id", String(64), ForeignKey("threads.id", ondelete="CASCADE"), primary_key=True),
-    Column("user_id", String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
-)
-
-user_assistants = Table(
-    "user_assistants",
-    Base.metadata,
-    Column("user_id", String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
-    Column(
-        "assistant_id",
-        String(64),
-        ForeignKey("assistants.id", ondelete="CASCADE"),
-        primary_key=True,
-    ),
-)
-
-
-# --- Enums & Context ---
-
-
-class StatusEnum(PyEnum):
-    deleted = "deleted"
-    active = "active"
-    queued = "queued"
-    in_progress = "in_progress"
-    pending_action = "action_required"
-    completed = "completed"
-    failed = "failed"
-    cancelling = "cancelling"
-    cancelled = "cancelled"
-    pending = "pending"
-    processing = "processing"
-    expired = "expired"
-    retrying = "retrying"
-
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-
-# --- Core Models ---
-
-ApiKey=ApiKey
-User=User
-# ───────────────────────────────────────────────
-#  AUDIT LOGGING (GDPR & Enterprise Compliance)
-# ───────────────────────────────────────────────
-AuditLog=AuditLog
-Thread=Thread
-Message=Message
-Run=Run
-Assistant=Assistant
-Action=Action
-Sandbox=Sandbox
-File=File
-FileStorage=FileStorage
-VectorStore=VectorStore
-VectorStoreFile=VectorStoreFile
-
-
-
-
+__all__ = [
+    "Action",
+    "ApiKey",
+    "Assistant",
+    "AuditLog",
+    "File",
+    "FileStorage",
+    "Message",
+    "Run",
+    "Sandbox",
+    "Thread",
+    "User",
+    "VectorStore",
+    "VectorStoreFile",
+]

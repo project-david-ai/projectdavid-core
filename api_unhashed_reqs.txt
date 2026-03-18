@@ -15,7 +15,8 @@ transformers>=4.33.0,<5.0.0
 # ------------------------------------------------------------------ #
 # Internal packages
 projectdavid[text-embeddings]==1.78.0
-projectdavid-orm==1.1.5
+projectdavid-orm
+projectdavid-services
 # web search tools
 
 html2text>=2024.2.26
