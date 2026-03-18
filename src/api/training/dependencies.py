@@ -1,9 +1,4 @@
 # src/api/training/dependencies.py
-#
-# Auth for the training service.
-# Uses the same pattern as the core API — queries the shared
-# MySQL instance directly. No network hop, no JWT, no duplication.
-# Supports both X-API-Key and Authorization: Bearer headers.
 
 from datetime import datetime
 from typing import Optional
@@ -30,14 +25,12 @@ def get_current_user_id(
     db: Session = Depends(get_db),
 ) -> str:
     """
-    Validates API Key from either 'X-API-Key' or 'Authorization: Bearer' headers.
-    Directly queries the shared MySQL api_keys table.
-    Returns the user_id string on success.
+    Direct Auth: Validates API Key against the shared MySQL database.
+    Prevents Bcrypt crashes by validating token length before verification.
     """
 
-    # 1. Resolve which API Key to use
+    # 1. Resolve API Key from headers
     api_key = None
-
     if api_key_header:
         api_key = api_key_header.strip()
     elif bearer_token:
@@ -46,22 +39,30 @@ def get_current_user_id(
     if not api_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing API Key. Please provide 'X-API-Key' or 'Authorization: Bearer' header.",
+            detail="Missing API Key.",
             headers={"WWW-Authenticate": "Bearer, APIKey"},
         )
 
-    # 2. Extract prefix and validate format
-    prefix = api_key[:8]
+    # 2. Bcrypt Safety Check
+    # The 'bcrypt' algorithm used by the ORM has a hard limit of 72 bytes.
+    # If the provided string is longer, it is mathematically impossible to be a valid key.
+    if len(api_key.encode('utf-8')) > 72:
+        logging_utility.warning("Auth attempt with over-sized token (>72 bytes). Rejecting.")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API Key format (too long).",
+        )
 
-    if len(api_key) <= len(prefix):
+    # 3. Extract prefix and validate basic format
+    prefix = api_key[:8]
+    if len(api_key) <= 8:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API Key format.",
-            headers={"WWW-Authenticate": "Bearer, APIKey"},
         )
 
-    # 3. Query the shared database
-    key = (
+    # 4. Query the shared database directly
+    key_record = (
         db.query(ApiKey)
         .filter(
             ApiKey.prefix == prefix,
@@ -70,20 +71,35 @@ def get_current_user_id(
         .first()
     )
 
-    if not key or not hasattr(key, "verify_key") or not key.verify_key(api_key):
+    # 5. Verify the key hash
+    if not key_record or not hasattr(key_record, "verify_key"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or inactive API Key.",
-            headers={"WWW-Authenticate": "Bearer, APIKey"},
         )
 
-    if key.expires_at and key.expires_at < datetime.utcnow():
+    try:
+        # This call reaches out to the passlib/bcrypt logic
+        if not key_record.verify_key(api_key):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid API Key.",
+            )
+    except ValueError as e:
+        # Catch-all for any other bcrypt-level string errors
+        logging_utility.error("Bcrypt verification failed: %s", str(e))
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Error validating API Key format.",
+        )
+
+    # 6. Check Expiration
+    if key_record.expires_at and key_record.expires_at < datetime.utcnow():
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="API Key has expired.",
-            headers={"WWW-Authenticate": "Bearer, APIKey"},
         )
 
-    logging_utility.info("Training API — authenticated user: %s", key.user_id)
+    logging_utility.info("Training API — Direct Auth Successful: %s", key_record.user_id)
 
-    return key.user_id
+    return key_record.user_id

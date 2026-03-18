@@ -1,12 +1,5 @@
 # src/api/entities_api/cli/docker_manager.py
-#
-# Run via:
-#   platform-api docker-manager --mode up
-#   platform-api docker-manager --mode both --no-cache --tag v1.0
-#   platform-api docker-manager --mode up --services training-api
-#   platform-api docker-manager --mode build --services training-api
-#   platform-api docker-manager bootstrap-admin
-#
+
 from __future__ import annotations
 
 import json
@@ -21,7 +14,7 @@ import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from typing import List, Optional
+from typing import Dict, List, Optional, Set
 from urllib.parse import quote_plus
 
 import typer
@@ -168,7 +161,7 @@ class DockerManager:
         "ADMIN_USER_EMAIL": "admin@example.com",
         "ADMIN_USER_ID": "",
         "ADMIN_KEY_PREFIX": "",
-        "SMBCLIENT_SERVER": "samba_server",
+        "SMBCLIENT_SERVER": "samba",
         "SMBCLIENT_SHARE": "cosmic_share",
         "SMBCLIENT_USERNAME": "samba_user",
         "SMBCLIENT_PORT": "445",
@@ -703,13 +696,18 @@ class DockerManager:
         self._validate_secrets()
 
         # -------------------------------------------------------
-        # HARD RULE:
-        # We ALWAYS explicitly tell compose what services to start
-        # so profile services NEVER auto-start.
+        # Resolve Service and Profile Mapping
         # -------------------------------------------------------
-
         all_services = self.compose_config.get("services", {})
-        profile_services = {name for name, cfg in all_services.items() if cfg.get("profiles")}
+
+        # Map which services belong to which profiles
+        service_to_profiles: Dict[str, List[str]] = {}
+        for name, cfg in all_services.items():
+            p = cfg.get("profiles")
+            if p:
+                service_to_profiles[name] = p
+
+        profile_services = set(service_to_profiles.keys())
 
         # FIX: Bypass the profile hard rule specifically for 'nginx'
         if "nginx" in profile_services:
@@ -725,16 +723,34 @@ class DockerManager:
         else:
             final_services = set(default_services) - excluded
 
-        final_services = sorted(final_services)
+        final_services_list = sorted(list(final_services))
 
-        if not final_services:
+        if not final_services_list:
             self.log.error("No services resolved to start.")
             raise SystemExit(1)
 
+        # -------------------------------------------------------
+        # Determine Profiles to Activate
+        # -------------------------------------------------------
+        active_profiles: Set[str] = set()
+        for svc in final_services_list:
+            if svc in service_to_profiles:
+                active_profiles.update(service_to_profiles[svc])
+
+        # -------------------------------------------------------
+        # Assemble Command with Profile Flags
+        # -------------------------------------------------------
+        # Compose V2 requires profile flags to come BEFORE the "up" command
+        profile_flags: List[str] = []
+        for profile in sorted(list(active_profiles)):
+            profile_flags.extend(["--profile", profile])
+
+        base_compose_cmd = ["docker", "compose", *self._get_compose_flags(), *profile_flags]
+
         # FIX: Start 'nginx' service explicitly before the others
-        if "nginx" in final_services:
+        if "nginx" in final_services_list:
             self.log.info("Starting 'nginx' container first...")
-            nginx_cmd = ["docker", "compose", *self._get_compose_flags(), "up", "-d"]
+            nginx_cmd = [*base_compose_cmd, "up", "-d"]
 
             if self.args.build_before_up:
                 nginx_cmd.append("--build")
@@ -750,11 +766,11 @@ class DockerManager:
                 raise SystemExit(1)
 
             # Remove nginx from final batch as it's already up
-            final_services.remove("nginx")
+            final_services_list.remove("nginx")
 
         # Start the remaining services
-        if final_services:
-            up_cmd = ["docker", "compose", *self._get_compose_flags(), "up"]
+        if final_services_list:
+            up_cmd = [*base_compose_cmd, "up"]
 
             if not self.args.attached:
                 up_cmd.append("-d")
@@ -765,9 +781,13 @@ class DockerManager:
             if self.args.force_recreate:
                 up_cmd.append("--force-recreate")
 
-            up_cmd.extend(final_services)
+            up_cmd.extend(final_services_list)
 
-            self.log.info("Starting remaining services: %s", ", ".join(final_services))
+            self.log.info(
+                "Starting remaining services (Profiles: %s): %s",
+                list(active_profiles) if active_profiles else "None",
+                ", ".join(final_services_list),
+            )
 
             try:
                 self._run_command(
