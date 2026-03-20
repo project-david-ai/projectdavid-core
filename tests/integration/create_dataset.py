@@ -5,10 +5,11 @@ import time
 from dotenv import load_dotenv
 from projectdavid import Entity
 
-# Load environment variables
+# Load environment variables (Local context)
 load_dotenv()
 
 # Initialize the ProjectDavid SDK
+# Presumes internal clients (datasets, training, models) are correctly wired in Entity
 client = Entity(
     base_url=os.getenv("PROJECT_DAVID_PLATFORM_BASE_URL"),
     api_key=os.getenv("DEV_PROJECT_DAVID_CORE_TEST_USER_KEY"),
@@ -40,11 +41,13 @@ def create_local_test_file(filename="test_dataset.jsonl"):
 def run_integration_test():
     print("🚀 Starting Full Fine-Tuning Pipeline Test (Laptop Mode)...")
 
-    # 1. Create Local File
+    # ──────────────────────────────────────────────────────────────────────────
+    # STAGE 1: DATA INGESTION
+    # SDK reads local bytes and hands them to the Core API (Port 9000).
+    # The Core API persists the file to the Samba Hub.
+    # ──────────────────────────────────────────────────────────────────────────
     file_name = create_local_test_file()
-
-    # 2. Upload and Register Dataset
-    print(f"📦 Registering dataset from {file_name}...")
+    print(f"📦 STAGE 1: Uploading and registering dataset from {file_name}...")
     dataset = client.datasets.create(
         name="integration_test_ds",
         fmt="jsonl",
@@ -53,17 +56,20 @@ def run_integration_test():
     )
     print(f"✅ Dataset Created: ID={dataset.id}, Status={dataset.status}")
 
-    # 3. Trigger Preparation
-    print(f"⚙️ Triggering preparation for dataset {dataset.id}...")
+    # ──────────────────────────────────────────────────────────────────────────
+    # STAGE 2: ASYNC PREPARATION
+    # Training API (Port 9001) performs an infrastructure-direct read from Samba.
+    # It validates the JSONL format and computes train/eval splits.
+    # ──────────────────────────────────────────────────────────────────────────
+    print(f"⚙️ STAGE 2: Triggering preparation for dataset {dataset.id}...")
     client.datasets.prepare(dataset.id)
 
-    # 4. Wait for Dataset to be 'active'
     print("⏳ Polling for 'active' status...")
     max_retries = 15
     for i in range(max_retries):
         dataset = client.datasets.retrieve(dataset.id)
         if dataset.status == "active":
-            print(f"✅ Dataset is ready! (Samples: {dataset.train_samples})")
+            print(f"✅ Dataset ready! (Samples: {dataset.train_samples})")
             break
         elif dataset.status == "failed":
             print(f"❌ Dataset preparation failed: {dataset.config.get('preparation_error')}")
@@ -73,8 +79,12 @@ def run_integration_test():
         print("❌ Timeout: Dataset preparation taking too long.")
         return
 
-    # 5. Submit Training Job
-    print(f"🔥 Submitting training job [Qwen-1.5B] for dataset {dataset.id}...")
+    # ──────────────────────────────────────────────────────────────────────────
+    # STAGE 3: JOB ORCHESTRATION
+    # Training API creates a Job record and pushes a ticket to Redis.
+    # This handoff moves the task from the Web tier to the GPU tier.
+    # ──────────────────────────────────────────────────────────────────────────
+    print(f"🔥 STAGE 3: Submitting training job [Qwen-1.5B] for dataset {dataset.id}...")
     job = client.training.create(
         dataset_id=dataset.id,
         base_model="Qwen/Qwen2.5-1.5B-Instruct",
@@ -83,51 +93,71 @@ def run_integration_test():
     )
     print(f"✅ Training Job Submitted: ID={job.id}, Status={job.status}")
 
-    # 6. Resilient Pipeline Verification
-    print("🔍 Verifying pipeline connection (SDK -> API -> Redis -> Worker)...")
-    time.sleep(1)  # Brief pause for Redis LPUSH
-
+    # ──────────────────────────────────────────────────────────────────────────
+    # STAGE 4: REDIS PIPELINE VERIFICATION
+    # Verification of the destructive BRPOP handoff.
+    # Checks if the job is either in the queue OR already picked up by the worker.
+    # ──────────────────────────────────────────────────────────────────────────
+    print("🔍 STAGE 4: Verifying pipeline connection (Redis -> Worker handoff)...")
+    time.sleep(1)
     verified = False
     for attempt in range(5):
-        # A. Check if still in Redis queue
         queue_state = client.training.peek_queue()
         in_queue = any(item.job_id == job.id for item in queue_state.data)
 
-        # B. Check if Worker already updated the DB status
         job = client.training.retrieve(job.id)
         started = job.status in ["in_progress", "completed"]
 
         if in_queue or started:
-            print(
-                f"✨ SUCCESS: Pipeline handoff verified! (In Queue: {in_queue}, Started: {started})"
-            )
+            print(f"✨ Handoff verified! (In Queue: {in_queue}, Started: {started})")
             verified = True
             break
-
-        print(f"   ...waiting for worker pickup (Attempt {attempt+1})")
         time.sleep(2)
 
     if not verified:
         print(f"❌ FAIL: Job {job.id} never reached the queue or worker.")
         return
 
-    # 7. Final Step: Monitor the REAL Training Process
-    print(f"⏳ Monitoring GPU training (Check Worker Terminal for live logs)...")
+    # ──────────────────────────────────────────────────────────────────────────
+    # STAGE 5: GPU EXECUTION (MONITORING)
+    # The Worker stages data from Samba to local NVMe and runs the ML subprocess.
+    # We poll the MySQL state until the LoRA adapters are exported.
+    # ──────────────────────────────────────────────────────────────────────────
+    print(f"⏳ STAGE 5: Monitoring GPU training (Check Worker Terminal for live kernels)...")
     while True:
         job = client.training.retrieve(job.id)
-
         if job.status == "completed":
             print(f"\n🏆 VICTORY: Training finished successfully!")
-            print(f"📂 Weights saved to Samba at: {job.output_path}")
             break
         elif job.status == "failed":
             print(f"\n💥 CRASH: Training failed. Error: {job.last_error}")
-            break
+            return
         else:
-            # Simple progress ticker
             print(f"   Worker Status: {job.status}...", end="\r")
-
         time.sleep(10)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # STAGE 6: REGISTRY & ACTIVATION
+    # We promote the resulting adapter to be the 'Active' model in the DB.
+    # This instructs the Orchestrator/vLLM to load these weights on next boot.
+    # ──────────────────────────────────────────────────────────────────────────
+    print(f"🎯 STAGE 6: Promoting model from Job {job.id} to ACTIVE status...")
+
+    # Locate the model artifact registered by the worker
+    models = client.models.list()
+    new_model = next((m for m in models.data if m.training_job_id == job.id), None)
+
+    if new_model:
+        print(f"✅ Found Registry Artifact: {new_model.id}")
+        activation = client.models.activate(new_model.id)
+        print(f"💡 Next Step: {activation.next_step}")
+
+        # Final Database Verification
+        final_check = client.models.retrieve(new_model.id)
+        if final_check.is_active:
+            print(f"✨ PIPELINE COMPLETE: Model {new_model.id} is now the Active Brain.")
+    else:
+        print("❌ FAIL: Could not find fine_tuned_model record in registry.")
 
     # Cleanup local file
     if os.path.exists(file_name):

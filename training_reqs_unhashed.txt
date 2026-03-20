@@ -37,7 +37,7 @@ bcrypt==3.2.0
 
 # --- Internal Dependencies ---
 # projectdavid-common==0.55.1
-projectdavid-common==0.55.1
+projectdavid-common==0.56.0
 # projectdavid-orm==1.1.9
 projectdavid-orm==1.1.10
 projectdavid-services==1.0.9
