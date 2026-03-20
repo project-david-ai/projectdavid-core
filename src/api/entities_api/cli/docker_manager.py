@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Dict, List, Optional, Set
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 
 import typer
 
@@ -55,6 +55,7 @@ except ImportError:
 # Constants
 # ---------------------------------------------------------------------------
 DEFAULT_DB_CONTAINER_PORT = "3306"
+DEFAULT_DB_HOST_PORT = "3307"  # Port mapped to Windows host
 DEFAULT_DB_SERVICE_NAME = "db"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -139,7 +140,8 @@ class DockerManager:
         "OLLAMA_BASE_URL": "http://ollama:11434",
         "HF_TOKEN": "",
         "HF_CACHE_PATH": "",
-        "VLLM_MODEL": "Qwen/Qwen2.5-VL-3B-Instruct",
+        "VLLM_MODEL": "Qwen/Qwen2.5-1.5B-Instruct",
+        "TRAINING_PROFILE": "laptop",  # Default for local box
         "TOGETHER_API_KEY": "",
         "HYPERBOLIC_API_KEY": "",
         "ADMIN_API_KEY": "",
@@ -178,7 +180,7 @@ class DockerManager:
             "TOGETHER_BASE_URL",
             "OLLAMA_BASE_URL",
         ],
-        "AI Model Configuration": ["HF_TOKEN", "HF_CACHE_PATH", "VLLM_MODEL"],
+        "AI Model Configuration": ["HF_TOKEN", "HF_CACHE_PATH", "VLLM_MODEL", "TRAINING_PROFILE"],
         "Database Configuration": [
             "DATABASE_URL",
             "SPECIAL_DB_URL",
@@ -246,6 +248,54 @@ class DockerManager:
         self._configure_shared_path()
         self._configure_hf_cache_path()
         self._ensure_dockerignore()
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Hot-Fire Dynamic Activation Logic
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _get_active_model_override(self) -> Optional[Dict[str, str]]:
+        """
+        Connects to DB and returns metadata for the active fine-tuned model.
+        """
+        raw_db_url = os.getenv("DATABASE_URL")
+        if not raw_db_url:
+            return None
+
+        try:
+            import pymysql
+
+            pattern = re.compile(
+                r"mysql\+pymysql://(?P<user>[^:]+):(?P<password>[^@]+)@(?P<host>[^:/]+)(?::(?P<port>\d+))?/(?P<db>.*)"
+            )
+            match = pattern.match(raw_db_url)
+            if not match:
+                return None
+
+            connection = pymysql.connect(
+                host="localhost",
+                port=3307,
+                user=match.group("user"),
+                password=match.group("password"),
+                database=match.group("db"),
+                connect_timeout=5,
+            )
+
+            model_data = None
+            with connection.cursor() as cursor:
+                # FETCH BOTH base_model AND storage_path
+                sql = "SELECT base_model, storage_path FROM fine_tuned_models WHERE is_active = 1 LIMIT 1"
+                cursor.execute(sql)
+                result = cursor.fetchone()
+                if result:
+                    model_data = {
+                        "base_model": result[0],
+                        "adapter_path": f"/mnt/training_data/{result[1]}",
+                    }
+            connection.close()
+            return model_data
+        except Exception as e:
+            self.log.debug("Active model DB lookup skipped: %s", e)
+        return None
 
     def _get_compose_flags(self) -> List[str]:
         flags = []
@@ -695,12 +745,7 @@ class DockerManager:
     def _handle_up(self):
         self._validate_secrets()
 
-        # -------------------------------------------------------
-        # Resolve Service and Profile Mapping
-        # -------------------------------------------------------
         all_services = self.compose_config.get("services", {})
-
-        # Map which services belong to which profiles
         service_to_profiles: Dict[str, List[str]] = {}
         for name, cfg in all_services.items():
             p = cfg.get("profiles")
@@ -708,8 +753,6 @@ class DockerManager:
                 service_to_profiles[name] = p
 
         profile_services = set(service_to_profiles.keys())
-
-        # FIX: Bypass the profile hard rule specifically for 'nginx'
         if "nginx" in profile_services:
             profile_services.remove("nginx")
 
@@ -729,72 +772,63 @@ class DockerManager:
             self.log.error("No services resolved to start.")
             raise SystemExit(1)
 
-        # -------------------------------------------------------
-        # Determine Profiles to Activate
-        # -------------------------------------------------------
+        # 🎯 HOT-FIRE OVERRIDE: Check for active Fine-Tuned Model in DB
+        if "vllm" in final_services_list:
+            model_metadata = self._get_active_model_override()
+            if model_metadata and isinstance(model_metadata, dict):
+                self.log.info(
+                    "🎯 Found active fine-tuned model: %s", model_metadata['adapter_path']
+                )
+                # We inject both the base model backbone and the specific LoRA path
+                os.environ["VLLM_MODEL"] = model_metadata['base_model']
+                os.environ["VLLM_LORA_PATH"] = model_metadata['adapter_path']
+            else:
+                self.log.info("ℹ️ Using base model from .env (no active fine-tuned model found).")
+                os.environ["VLLM_LORA_PATH"] = ""
+
         active_profiles: Set[str] = set()
         for svc in final_services_list:
             if svc in service_to_profiles:
                 active_profiles.update(service_to_profiles[svc])
 
-        # -------------------------------------------------------
-        # Assemble Command with Profile Flags
-        # -------------------------------------------------------
-        # Compose V2 requires profile flags to come BEFORE the "up" command
         profile_flags: List[str] = []
         for profile in sorted(list(active_profiles)):
             profile_flags.extend(["--profile", profile])
 
         base_compose_cmd = ["docker", "compose", *self._get_compose_flags(), *profile_flags]
 
-        # FIX: Start 'nginx' service explicitly before the others
         if "nginx" in final_services_list:
             self.log.info("Starting 'nginx' container first...")
             nginx_cmd = [*base_compose_cmd, "up", "-d"]
-
             if self.args.build_before_up:
                 nginx_cmd.append("--build")
-
             if self.args.force_recreate:
                 nginx_cmd.append("--force-recreate")
-
             nginx_cmd.append("nginx")
-
             try:
-                self._run_command(nginx_cmd, check=True, suppress_logs=False)
+                self._run_command(nginx_cmd, check=True)
             except subprocess.CalledProcessError:
                 raise SystemExit(1)
-
-            # Remove nginx from final batch as it's already up
             final_services_list.remove("nginx")
 
-        # Start the remaining services
         if final_services_list:
             up_cmd = [*base_compose_cmd, "up"]
-
             if not self.args.attached:
                 up_cmd.append("-d")
-
             if self.args.build_before_up:
                 up_cmd.append("--build")
-
             if self.args.force_recreate:
                 up_cmd.append("--force-recreate")
-
             up_cmd.extend(final_services_list)
 
             self.log.info(
-                "Starting remaining services (Profiles: %s): %s",
+                "Starting services (Profiles: %s): %s",
                 list(active_profiles) if active_profiles else "None",
                 ", ".join(final_services_list),
             )
 
             try:
-                self._run_command(
-                    up_cmd,
-                    check=True,
-                    suppress_logs=self.args.attached,
-                )
+                self._run_command(up_cmd, check=True, suppress_logs=self.args.attached)
             except subprocess.CalledProcessError:
                 raise SystemExit(1)
 
