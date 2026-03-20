@@ -9,7 +9,6 @@ from projectdavid import Entity
 load_dotenv()
 
 # Initialize the ProjectDavid SDK
-# Ensure your Entity class has self.datasets and self.training wired in
 client = Entity(
     base_url=os.getenv("PROJECT_DAVID_PLATFORM_BASE_URL"),
     api_key=os.getenv("DEV_PROJECT_DAVID_CORE_TEST_USER_KEY"),
@@ -39,7 +38,7 @@ def create_local_test_file(filename="test_dataset.jsonl"):
 
 
 def run_integration_test():
-    print("🚀 Starting Full Fine-Tuning Pipeline Test...")
+    print("🚀 Starting Full Fine-Tuning Pipeline Test (Laptop Mode)...")
 
     # 1. Create Local File
     file_name = create_local_test_file()
@@ -56,63 +55,79 @@ def run_integration_test():
 
     # 3. Trigger Preparation
     print(f"⚙️ Triggering preparation for dataset {dataset.id}...")
-    prep_response = client.datasets.prepare(dataset.id)
-    print(f"   Response: {prep_response}")
+    client.datasets.prepare(dataset.id)
 
     # 4. Wait for Dataset to be 'active'
-    print("⏳ Polling for 'active' status (validating file and computing splits)...")
+    print("⏳ Polling for 'active' status...")
     max_retries = 15
-    is_ready = False
     for i in range(max_retries):
         dataset = client.datasets.retrieve(dataset.id)
-        print(f"   - Attempt {i+1}: Status is '{dataset.status}'")
-
         if dataset.status == "active":
-            is_ready = True
-            print(f"✅ Dataset is ready! (Train samples: {dataset.train_samples})")
+            print(f"✅ Dataset is ready! (Samples: {dataset.train_samples})")
             break
         elif dataset.status == "failed":
-            error = dataset.config.get("preparation_error", "Unknown error")
-            print(f"❌ Dataset preparation failed: {error}")
+            print(f"❌ Dataset preparation failed: {dataset.config.get('preparation_error')}")
             return
-
         time.sleep(2)
-
-    if not is_ready:
-        print("❌ Timeout: Dataset did not reach 'active' status in time.")
+    else:
+        print("❌ Timeout: Dataset preparation taking too long.")
         return
 
     # 5. Submit Training Job
-    print(f"🔥 Submitting training job for dataset {dataset.id}...")
+    print(f"🔥 Submitting training job [Qwen-1.5B] for dataset {dataset.id}...")
     job = client.training.create(
         dataset_id=dataset.id,
-        base_model="unsloth/Llama-3.2-1B-Instruct",
+        base_model="Qwen/Qwen2.5-1.5B-Instruct",
         framework="unsloth",
         config={"learning_rate": 2e-4, "num_train_epochs": 1, "lora_r": 16},
     )
     print(f"✅ Training Job Submitted: ID={job.id}, Status={job.status}")
 
-    # 6. Secure Multi-tenant Queue Verification (Peek)
-    print("🔍 Verifying Redis queue via secure API gateway...")
-    # Give the API a moment to complete the Redis LPUSH
-    time.sleep(1)
+    # 6. Resilient Pipeline Verification
+    print("🔍 Verifying pipeline connection (SDK -> API -> Redis -> Worker)...")
+    time.sleep(1)  # Brief pause for Redis LPUSH
 
-    try:
+    verified = False
+    for attempt in range(5):
+        # A. Check if still in Redis queue
         queue_state = client.training.peek_queue()
-        print(f"   Queue Check: {queue_state.total_in_queue} items found for your user.")
+        in_queue = any(item.job_id == job.id for item in queue_state.data)
 
-        # Verify our specific job is in the list
-        found = any(item.job_id == job.id for item in queue_state.data)
+        # B. Check if Worker already updated the DB status
+        job = client.training.retrieve(job.id)
+        started = job.status in ["in_progress", "completed"]
 
-        if found:
-            print(f"\n✨ SUCCESS: Job {job.id} is confirmed in the Redis queue!")
-            print("The pipeline is fully connected: SDK -> API -> Redis.")
+        if in_queue or started:
+            print(
+                f"✨ SUCCESS: Pipeline handoff verified! (In Queue: {in_queue}, Started: {started})"
+            )
+            verified = True
+            break
+
+        print(f"   ...waiting for worker pickup (Attempt {attempt+1})")
+        time.sleep(2)
+
+    if not verified:
+        print(f"❌ FAIL: Job {job.id} never reached the queue or worker.")
+        return
+
+    # 7. Final Step: Monitor the REAL Training Process
+    print(f"⏳ Monitoring GPU training (Check Worker Terminal for live logs)...")
+    while True:
+        job = client.training.retrieve(job.id)
+
+        if job.status == "completed":
+            print(f"\n🏆 VICTORY: Training finished successfully!")
+            print(f"📂 Weights saved to Samba at: {job.output_path}")
+            break
+        elif job.status == "failed":
+            print(f"\n💥 CRASH: Training failed. Error: {job.last_error}")
+            break
         else:
-            print(f"\n❌ FAIL: Job {job.id} was not found in the queue peek.")
-            print(f"Current Queue: {[item.job_id for item in queue_state.data]}")
+            # Simple progress ticker
+            print(f"   Worker Status: {job.status}...", end="\r")
 
-    except Exception as e:
-        print(f"❌ FAIL: Error during queue verification: {e}")
+        time.sleep(10)
 
     # Cleanup local file
     if os.path.exists(file_name):
@@ -120,4 +135,9 @@ def run_integration_test():
 
 
 if __name__ == "__main__":
-    run_integration_test()
+    try:
+        run_integration_test()
+    except KeyboardInterrupt:
+        print("\nStopped by user.")
+    except Exception as e:
+        print(f"\n❌ Unexpected Error: {e}")

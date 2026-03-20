@@ -1,3 +1,4 @@
+# C:\Users\franc\PycharmProjects\projectdavid-core\migrations\env.py
 import os
 import sys
 from logging.config import fileConfig
@@ -6,35 +7,43 @@ from alembic import context
 from dotenv import load_dotenv
 from sqlalchemy import engine_from_config, pool
 
+# Ensure project root is in path
 project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if project_dir not in sys.path:
     sys.path.insert(0, project_dir)
 
-from projectdavid_orm.projectdavid_orm.base import Base
-
 load_dotenv()
 
-config = context.config
+# 1. Import models from the interface
+# This ensures they execute and register their metadata
+import projectdavid_orm.ormInterface as models
 
+# 2. EXTRACT METADATA DIRECTLY FROM A MODEL
+# Since 'User' inherits from Base, User.metadata IS the registry we want.
+# This bypasses any "duplicate Base instance" issues.
+target_metadata = models.User.metadata
+
+# --- DEBUG BLOCK ---
+print("-" * 50)
+print(f"DEBUG: Found {len(target_metadata.tables)} tables in extracted MetaData")
+for t in target_metadata.tables.keys():
+    print(f"  - {t}")
+if len(target_metadata.tables) == 0:
+    print("CRITICAL: STILL NO TABLES FOUND. Check ormInterface imports.")
+print("-" * 50)
+# -------------------
+
+config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Combine both metadata objects so autogenerate sees all tables
-from sqlalchemy import MetaData
-
-combined_metadata = MetaData()
-
-for table in Base.metadata.tables.values():
-    table.tometadata(combined_metadata)
-
-
-target_metadata = combined_metadata
-
 DB_URL = os.getenv("DATABASE_URL")
 if not DB_URL:
-    raise ValueError("FATAL: DATABASE_URL environment variable is not set or empty.")
+    raise ValueError("FATAL: DATABASE_URL not set.")
 
 config.set_main_option("sqlalchemy.url", DB_URL)
+
+# ... (rest of the run_migrations functions stay exactly the same) ...
 
 
 def run_migrations_offline() -> None:

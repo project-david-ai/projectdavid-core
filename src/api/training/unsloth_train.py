@@ -1,108 +1,128 @@
-# docker/training/unsloth_train.py
-#
-# Unsloth training script for the projectdavid training container.
-# Called by entrypoint.sh when --framework unsloth is specified.
-#
-# Usage: python unsloth_train.py /mnt/training_data/configs/{job_id}/config.yml
-#
-# Config keys consumed:
-#   base_model                    — HF model ID or local path
-#   dataset_path                  — path to prepared JSONL under /mnt/training_data
-#   output_dir                    — checkpoint output path under /mnt/training_data
-#   max_seq_length                — default 2048
-#   load_in_4bit                  — default True
-#   lora_r                        — default 16
-#   lora_alpha                    — default 32
-#   lora_dropout                  — default 0.05
-#   per_device_train_batch_size   — default 4
-#   gradient_accumulation_steps   — default 4
-#   num_epochs                    — default 3
-#   learning_rate                 — default 2e-4
-#   save_steps                    — default 100
-#   logging_steps                 — default 10
-#   bf16                          — default False (uses fp16)
-#   dataset_text_field            — default "text"
+import argparse
+import os
 
-import sys
-from pathlib import Path
+import torch
+from datasets import load_dataset
+from transformers import TrainingArguments
+from trl import SFTTrainer
+from unsloth import FastLanguageModel, is_bfloat16_supported
 
-import yaml
+# ─── PROFILE DEFINITIONS ──────────────────────────────────────────────────
+# Add new profiles here to handle different hardware targets.
+PROFILES = {
+    "laptop": {
+        "max_seq_length": 1024,  # Massive VRAM saver
+        "per_device_train_batch_size": 1,  # Minimal VRAM footprint
+        "gradient_accumulation_steps": 8,  # Compels batch size 1 to act like 8
+        "max_steps": 20,  # Quick smoke test / Small GPU safe
+        "optim": "adamw_8bit",  # Essential for laptop GPUs
+    },
+    "standard": {
+        "max_seq_length": 2048,
+        "per_device_train_batch_size": 2,
+        "gradient_accumulation_steps": 4,
+        "max_steps": 60,
+        "optim": "adamw_8bit",
+    },
+}
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("[unsloth] ERROR: config path required", file=sys.stderr)
-        sys.exit(1)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", required=True, help="HuggingFace Base Model ID")
+    parser.add_argument("--data", required=True, help="Path to local staged JSONL dataset")
+    parser.add_argument("--out", required=True, help="Samba path to save fine-tuned adapters")
+    parser.add_argument(
+        "--profile",
+        default="standard",
+        choices=["standard", "laptop"],
+        help="Hardware profile to use",
+    )
+    args = parser.parse_args()
 
-    config_path = sys.argv[1]
-    print(f"[unsloth] Loading config from: {config_path}")
+    # Load parameters from the selected profile
+    p = PROFILES[args.profile]
 
-    with open(config_path) as f:
-        cfg = yaml.safe_load(f)
+    print(f"🚀 Initializing Unsloth Fine-Tuning [Profile: {args.profile.upper()}]")
+    print(f"📦 Base Model: {args.model}")
+    print(f"📂 Dataset: {args.data}")
 
-    print(f"[unsloth] Base model  : {cfg['base_model']}")
-    print(f"[unsloth] Dataset     : {cfg['dataset_path']}")
-    print(f"[unsloth] Output dir  : {cfg['output_dir']}")
-
-    from datasets import load_dataset
-    from transformers import TrainingArguments
-    from trl import SFTTrainer
-    from unsloth import FastLanguageModel
-
+    # 1. Load Model and Tokenizer
     model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=cfg["base_model"],
-        max_seq_length=cfg.get("max_seq_length", 2048),
-        load_in_4bit=cfg.get("load_in_4bit", True),
+        model_name=args.model,
+        max_seq_length=p["max_seq_length"],
+        load_in_4bit=True,
+        token=os.getenv("HF_TOKEN"),
     )
 
+    # 2. Add LoRA Adapters
     model = FastLanguageModel.get_peft_model(
         model,
-        r=cfg.get("lora_r", 16),
-        lora_alpha=cfg.get("lora_alpha", 32),
-        lora_dropout=cfg.get("lora_dropout", 0.05),
+        r=16,
+        target_modules=[
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+        ],
+        lora_alpha=16,
+        lora_dropout=0,
         bias="none",
-        use_gradient_checkpointing=True,
+        use_gradient_checkpointing="unsloth",
+        random_state=3407,
     )
 
-    print(f"[unsloth] Loading dataset...")
-    dataset = load_dataset(
-        "json",
-        data_files=cfg["dataset_path"],
-        split="train",
-    )
-    print(f"[unsloth] Dataset size: {len(dataset)} samples")
+    # 3. Process Dataset
+    dataset = load_dataset("json", data_files=args.data, split="train")
 
-    output_dir = cfg["output_dir"]
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    def format_prompts(examples):
+        texts = []
+        for messages in examples["messages"]:
+            texts.append(
+                tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
+            )
+        return {"text": texts}
 
+    dataset = dataset.map(format_prompts, batched=True)
+
+    # 4. Initialize Trainer
     trainer = SFTTrainer(
         model=model,
         tokenizer=tokenizer,
         train_dataset=dataset,
-        dataset_text_field=cfg.get("dataset_text_field", "text"),
-        max_seq_length=cfg.get("max_seq_length", 2048),
+        dataset_text_field="text",
+        max_seq_length=p["max_seq_length"],
+        dataset_num_proc=2,
         args=TrainingArguments(
-            per_device_train_batch_size=cfg.get("per_device_train_batch_size", 4),
-            gradient_accumulation_steps=cfg.get("gradient_accumulation_steps", 4),
-            num_train_epochs=cfg.get("num_epochs", 3),
-            learning_rate=cfg.get("learning_rate", 2e-4),
-            output_dir=output_dir,
-            save_steps=cfg.get("save_steps", 100),
-            logging_steps=cfg.get("logging_steps", 10),
-            fp16=not cfg.get("bf16", False),
-            bf16=cfg.get("bf16", False),
-            report_to="none",
+            per_device_train_batch_size=p["per_device_train_batch_size"],
+            gradient_accumulation_steps=p["gradient_accumulation_steps"],
+            warmup_steps=2,
+            max_steps=p["max_steps"],
+            learning_rate=2e-4,
+            fp16=not is_bfloat16_supported(),
+            bf16=is_bfloat16_supported(),
+            logging_steps=1,
+            optim=p["optim"],
+            weight_decay=0.01,
+            lr_scheduler_type="linear",
+            seed=3407,
+            output_dir="/tmp/outputs",
         ),
     )
 
-    print("[unsloth] Starting training...")
-    stats = trainer.train()
-    print(f"[unsloth] Training stats: {stats}")
+    # 5. Execute Training
+    print(f"🔥 Starting GPU Training kernels (SeqLen: {p['max_seq_length']})...")
+    trainer_stats = trainer.train()
 
-    print(f"[unsloth] Saving model to: {output_dir}")
-    model.save_pretrained(output_dir)
-    tokenizer.save_pretrained(output_dir)
-    print("[unsloth] Done.")
+    # 6. Save Artifacts to Samba Hub
+    print(f"💾 Exporting fine-tuned adapters to {args.out}...")
+    model.save_pretrained(args.out)
+    tokenizer.save_pretrained(args.out)
+
+    print("✨ Training Complete. Weights registered on Samba share.")
 
 
 if __name__ == "__main__":

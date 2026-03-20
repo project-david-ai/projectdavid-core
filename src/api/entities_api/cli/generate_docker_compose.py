@@ -203,20 +203,28 @@ services:
     container_name: training_worker
     restart: unless-stopped
     profiles: ["training"]
+    env_file:
+      - .env
     runtime: nvidia
     environment:
+      - TRAINING_PROFILE=${TRAINING_PROFILE:-standard}
+      - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=redis://redis:6379/0
       - ASSISTANTS_BASE_URL=http://api:9000
       - WORKER_API_KEY=${ADMIN_API_KEY}
       - SHARED_PATH=/mnt/training_data
       - HF_TOKEN=${HF_TOKEN:-}
-      - HF_HOME=/mnt/training_data/.hf_cache
+      # FIX 1: Point HF_HOME to the local host-mounted volume for high-speed IO
+      - HF_HOME=/root/.cache/huggingface
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - PYTHONUNBUFFERED=1
     volumes:
       - ${SHARED_PATH:-./shared_data}:/mnt/training_data
-       - ${HF_CACHE_PATH}:/root/.cache/huggingface
+      # Use the high-speed host cache for base models
+      - ${HF_CACHE_PATH}:/root/.cache/huggingface
+      # FIX 2: Enable live-code sync for the worker and ML scripts
+      - ./src:/app/src
     command: ["python", "src/api/training/worker.py"]
     depends_on:
       - redis
@@ -229,7 +237,6 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-
 
   api:
     build:

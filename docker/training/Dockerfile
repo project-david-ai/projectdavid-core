@@ -1,62 +1,70 @@
 # -------------------------
-# MULTI-STAGE DOCKERFILE (TRAINING API)
+# MULTI-STAGE DOCKERFILE (ProjectDavid Training Stack)
 # -------------------------
 
 # === Stage 0: base layer ============================================
 FROM python:3.11-slim AS base
 
-# Set environment variables for pip globally to prevent timeouts and OOMs.
-# Putting NO_CACHE_DIR here ensures the builder stage actually uses it!
+# Set environment variables for pip globally
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DEFAULT_TIMEOUT=6000 \
-    PIP_RETRIES=30
+    PIP_RETRIES=30 \
+    # Prevent python from buffering logs (crucial for worker visibility)
+    PYTHONUNBUFFERED=1 \
+    # Prevent python from writing .pyc files
+    PYTHONDONTWRITEBYTECODE=1
 
-WORKDIR /install
-
-RUN pip install --upgrade pip setuptools wheel
+WORKDIR /app
 
 # === Stage 1: install packages (Builder Stage) ========================
 FROM base AS builder
 
-# Create a virtual environment. This is MUCH safer for heavy ML
-# libraries like PyTorch/CUDA than using --prefix
-RUN python -m venv /opt/venv
+# Install system build tools needed to compile heavy ML dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    g++ \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
-# Activate the venv for subsequent RUN commands
+# Create a virtual environment for isolation
+RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-COPY training_reqs_unhashed.txt .
+RUN pip install --upgrade pip setuptools wheel
 
-# Install requirements into the venv.
-# We explicitly use --no-cache-dir again just to be 100% sure.
+# Copy requirements and install
+COPY training_reqs_unhashed.txt .
 RUN pip install --no-cache-dir -r training_reqs_unhashed.txt
 
 # === Stage 2: runtime container =======================================
 FROM python:3.11-slim AS runtime
 WORKDIR /app
 
-# PYTHONUNBUFFERED=1: Forces python to print logs immediately
-# PYTHONDONTWRITEBYTECODE=1: Prevents python from writing .pyc files to disk
-# PATH: Activates the virtual environment we copy over
-ENV DEBIAN_FRONTEND=noninteractive \
-    PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONPATH=/app \
-    PATH="/opt/venv/bin:$PATH"
-
+# Required for Triton JIT compilation and basic networking
+# We MUST have gcc/g++ here because Triton compiles kernels at runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    gcc \
+    g++ \
+    build-essential \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-# --- Copy the fully built virtual environment from the builder stage ---
+# Copy the fully built virtual environment
 COPY --from=builder /opt/venv /opt/venv
 
-# --- Copy training app code ---
+# Ensure environment uses the venv
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONPATH=/app
+
+# --- Copy source code ---
+# Note: training-api and training-worker both use this same image
 COPY src/api/training /app/src/api/training
 
+# Expose port for the training-api (worker doesn't need an exposed port)
 EXPOSE 9001
 
-# --- Default command ---
-# Because we added /opt/venv/bin to the PATH above, uvicorn will run directly
+# --- Default command (for training-api) ---
+# The training-worker overrides this in docker-compose.yml
 CMD ["uvicorn", "src.api.training.app:app", "--host", "0.0.0.0", "--port", "9001"]

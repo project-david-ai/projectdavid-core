@@ -2,6 +2,11 @@
 
 --extra-index-url https://download.pytorch.org/whl/cu121
 
+# --- Core ML Runtime ---
+torch
+xformers
+unsloth
+
 # --- HuggingFace & ML stack ---
 huggingface_hub
 transformers>=4.40.0,<5.0.0
@@ -24,16 +29,18 @@ fastapi
 uvicorn[standard]
 python-multipart
 pydantic
-# Fix: Pin bcrypt to 3.2.0 to solve the "AttributeError: module 'bcrypt' has no attribute '__about__'"
+# Fix: JWT Authentication
+python-jose[cryptography]
+# Fix: Pin bcrypt to 3.2.0
 passlib[bcrypt]
 bcrypt==3.2.0
 
 # --- Internal Dependencies ---
-projectdavid-common==0.55.0
-#<--has projectdavid-common-->
-projectdavid-orm==1.1.9
-#<--Depends on projectdavid-orm-->
-projectdavid-services==1.0.8
+# projectdavid-common==0.55.1
+projectdavid-common==0.55.1
+# projectdavid-orm==1.1.9
+projectdavid-orm==1.1.10
+projectdavid-services==1.0.9
 
 # --- DB ---
 SQLAlchemy>=2.0.0
