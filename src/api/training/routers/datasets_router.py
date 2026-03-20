@@ -20,9 +20,8 @@ logging_utility = UtilsInterface.LoggingUtility()
 
 router = APIRouter()
 
-API_BASE_URL = os.getenv("ASSISTANTS_BASE_URL", "http://api:9000")
-WORKER_API_KEY = os.getenv("WORKER_API_KEY", "")
-
+# Note: API_BASE_URL and WORKER_API_KEY removed as they are no longer
+# needed by the router for internal file fetching.
 
 # ---------------------------------------------------------------------------
 # POST /v1/datasets
@@ -125,12 +124,14 @@ async def prepare_dataset_endpoint(
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
+    """
+    Trigger background preparation.
+    Service logic now uses direct Samba/Shared DB access.
+    """
     return prepare_dataset(
         db=db,
         dataset_id=dataset_id,
         user_id=user_id,
-        api_base_url=API_BASE_URL,
-        api_key=WORKER_API_KEY,
     )
 
 

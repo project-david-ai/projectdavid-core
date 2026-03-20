@@ -1,54 +1,31 @@
-# src/api/training/app.py
-#
-# Training Service — FastAPI application entry point.
-#
-# Architecture:
-#   - Direct DB access via its own SQLAlchemy engine (shared MySQL instance).
-#   - No local auth logic — JWT ticket method (wired when routers are added).
-#   - No observability yet — circle back once the pipeline is functional.
-#
-# Run locally:
-#   uvicorn src.api.training.app:app --host 0.0.0.0 --port 9001 --reload
-
-from contextlib import asynccontextmanager
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from projectdavid_common import UtilsInterface
+from projectdavid_orm.projectdavid_orm.base import Base
+from sqlalchemy import text
 
-from src.api.training.constants.banner import BANNER
-from src.api.training.db.database import wait_for_db
+# Training-specific imports
+from src.api.training.db.database import engine, wait_for_db
+from src.api.training.routers import training_router
 
 logging_utility = UtilsInterface.LoggingUtility()
 
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Print the neon green graphic right as the server spins up
-    print(BANNER)
-    logging_utility.info("Training Service ready.")
-    yield
-    # Any future cleanup/shutdown logic goes here
-    logging_utility.info("Training Service shutting down.")
-
-
-# Initialize DB Connection
+# Block until MySQL is ready
 wait_for_db()
 
 
-def create_app() -> FastAPI:
-    logging_utility.info("Creating Training Service FastAPI app")
+def create_app(init_db: bool = True) -> FastAPI:
+    logging_utility.info("Creating Training API app")
 
     app = FastAPI(
         title="ProjectDavid — Training Service",
-        description="API-driven fine-tuning pipeline: datasets, training jobs, and fine-tuned model registry.",
+        description="Private OpenAI-in-a-box Fine-Tuning Pipeline",
         version="1.0.0",
         docs_url="/docs",
-        redoc_url="/redoc",
         openapi_url="/openapi.json",
-        lifespan=lifespan,  # <--- Injected lifespan manager here
     )
 
+    # CORS — allows SDK and UI to interact with the API
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -57,28 +34,23 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # ---------------------------------------------------------------------------
-    # Routers — Active
-    # ---------------------------------------------------------------------------
-    from src.api.training.routers.datasets_router import \
-        router as datasets_router
+    # Inject the aggregated router with the version prefix
+    # Result: /v1/datasets and /v1/training-jobs
+    app.include_router(training_router, prefix="/v1")
 
-    # from src.api.training.routers.training_jobs_router import router as training_jobs_router
-    # from src.api.training.routers.fine_tuned_models_router import router as fine_tuned_models_router
-    # This injects the /v1/datasets prefix.
-    # So if your router has `@router.post("")`, it becomes `POST /v1/datasets`
-    app.include_router(datasets_router, prefix="/v1/datasets", tags=["Datasets"])
-
-    # app.include_router(training_jobs_router,     prefix="/v1/training-jobs",     tags=["Training Jobs"])
-    # app.include_router(fine_tuned_models_router, prefix="/v1/fine-tuned-models", tags=["Fine-Tuned Models"])
-
-    @app.get("/", tags=["Health"])
+    @app.get("/")
     def read_root():
+        logging_utility.info("Training Root endpoint accessed")
         return {"service": "training", "status": "online"}
 
-    @app.get("/health", tags=["Health"])
+    @app.get("/health")
     def health_check():
         return {"status": "ok"}
+
+    if init_db:
+        logging_utility.info("Initializing Training database schema...")
+        # This creates the datasets, training_jobs, and fine_tuned_models tables
+        Base.metadata.create_all(bind=engine)
 
     return app
 

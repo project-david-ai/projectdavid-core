@@ -12,7 +12,8 @@ from src.api.training.dependencies import get_current_user_id
 from src.api.training.services.training_service import (cancel_training_job,
                                                         create_training_job,
                                                         get_training_job,
-                                                        list_training_jobs)
+                                                        list_training_jobs,
+                                                        peek_training_queue)
 
 router = APIRouter()
 
@@ -91,3 +92,18 @@ def cancel_training_job_endpoint(
     db: Session = Depends(get_db),
 ):
     return cancel_training_job(db=db, job_id=job_id, user_id=user_id)
+
+
+@router.get(
+    "/queue/peek",
+    response_model=ValidationInterface.TrainingQueueList,  # Use the new schema
+    summary="Diagnostic: See pending jobs in the Redis queue for this user",
+)
+def peek_queue_endpoint(
+    user_id: str = Depends(get_current_user_id),
+):
+    items = peek_training_queue(user_id=user_id)
+    return ValidationInterface.TrainingQueueList(
+        total_in_queue=len(items),
+        data=[ValidationInterface.TrainingQueueItem(**item) for item in items],
+    )

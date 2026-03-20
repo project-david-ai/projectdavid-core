@@ -18,5 +18,9 @@ docker compose exec api alembic revision --autogenerate -m "Remove training data
 
 docker compose exec api alembic revision --autogenerate -m "Add training data to training.models2"
 
-
 docker compose exec api alembic revision --autogenerate -m "Add fine tuning tables"
+
+
+
+
+docker compose exec api alembic revision --autogenerate -m "updated_at column to match other models"

@@ -156,8 +156,6 @@ services:
       --max-model-len 4096
     networks:
       - my_custom_network
-
-
   # ---------------------------------------------------------------------------
   # training-api — Fine-tuning REST API (no GPU required)
   # Opt-in: docker compose --profile training up training-api
@@ -186,6 +184,7 @@ services:
       - "9001:9001"
     volumes:
       - ${SHARED_PATH:-./shared_data}:/mnt/training_data
+      - ./src:/app/src
     depends_on:
       - redis
     networks:
@@ -217,6 +216,7 @@ services:
       - PYTHONUNBUFFERED=1
     volumes:
       - ${SHARED_PATH:-./shared_data}:/mnt/training_data
+       - ${HF_CACHE_PATH}:/root/.cache/huggingface
     command: ["python", "src/api/training/worker.py"]
     depends_on:
       - redis

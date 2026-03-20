@@ -29,9 +29,11 @@ passlib[bcrypt]
 bcrypt==3.2.0
 
 # --- Internal Dependencies ---
-projectdavid-common
-projectdavid-orm==1.1.5
-projectdavid-services==1.0.4
+projectdavid-common==0.55.0
+#<--has projectdavid-common-->
+projectdavid-orm==1.1.9
+#<--Depends on projectdavid-orm-->
+projectdavid-services==1.0.8
 
 # --- DB ---
 SQLAlchemy>=2.0.0

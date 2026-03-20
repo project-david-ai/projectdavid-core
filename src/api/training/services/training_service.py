@@ -32,10 +32,16 @@ def create_training_job(
 ) -> TrainingJob:
     # 1. Verify dataset exists and is ready for training
     dataset = get_dataset(db, dataset_id, user_id)
-    if dataset.status != StatusEnum.active:
+
+    # IMPROVED: Coerce to string or compare values to avoid Enum vs String mismatch
+    current_status = (
+        dataset.status.value if hasattr(dataset.status, 'value') else str(dataset.status)
+    )
+
+    if current_status != StatusEnum.active.value:
         raise HTTPException(
             status_code=400,
-            detail=f"Dataset {dataset_id} is not ready. Current status: {dataset.status.value}",
+            detail=f"Dataset {dataset_id} is not ready. Current status: {current_status}",
         )
 
     # 2. Create TrainingJob record
@@ -131,3 +137,36 @@ def cancel_training_job(db: Session, job_id: str, user_id: str) -> dict:
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
     return {"status": "cancelling", "job_id": job_id}
+
+
+def get_redis_client() -> redis.Redis:
+    redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
+    # Added decode_responses=True to handle strings instead of bytes automatically
+    return redis.from_url(redis_url, decode_responses=True)
+
+
+def peek_training_queue(user_id: str, limit: int = 10) -> List[dict]:
+    r = get_redis_client()
+    try:
+        # Fetch the first 100 items
+        items = r.lrange("training_jobs", 0, 100)
+    except redis.exceptions.ResponseError:
+        # This happens if 'training_jobs' key exists as a String instead of a List
+        logging_utility.error("Redis key 'training_jobs' is the wrong type. Flushing it.")
+        r.delete("training_jobs")
+        return []
+
+    user_jobs = []
+    for item in items:
+        try:
+            # item is already a string because of decode_responses=True
+            payload = json.loads(item)
+            # Ensure it's a dict and matches our expected keys
+            if isinstance(payload, dict) and payload.get("user_id") == user_id:
+                user_jobs.append(payload)
+                if len(user_jobs) >= limit:
+                    break
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+    return user_jobs

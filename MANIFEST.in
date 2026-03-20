@@ -1,3 +1,7 @@
 include README.md
-include requirements.txt
+include api_unhashed_reqs.txt
+include api_unhashed_reqs.txt
+include sandbox_reqs_unhashed.txt
+include sandbox_reqs_hashed.txt
+include training_reqs_unhashed.txt
 recursive-include entities_api *
