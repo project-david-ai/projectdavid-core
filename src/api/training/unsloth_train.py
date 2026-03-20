@@ -1,21 +1,21 @@
+# 1. CRITICAL: Unsloth MUST be imported before everything else for the 4060 kernels
 import argparse
+import json
 import os
 
 import torch
 from datasets import load_dataset
-from transformers import TrainingArguments
-from trl import SFTTrainer
+from trl import SFTConfig, SFTTrainer
 from unsloth import FastLanguageModel, is_bfloat16_supported
 
 # ─── PROFILE DEFINITIONS ──────────────────────────────────────────────────
-# Add new profiles here to handle different hardware targets.
 PROFILES = {
     "laptop": {
-        "max_seq_length": 1024,  # Massive VRAM saver
-        "per_device_train_batch_size": 1,  # Minimal VRAM footprint
-        "gradient_accumulation_steps": 8,  # Compels batch size 1 to act like 8
-        "max_steps": 20,  # Quick smoke test / Small GPU safe
-        "optim": "adamw_8bit",  # Essential for laptop GPUs
+        "max_seq_length": 1024,
+        "per_device_train_batch_size": 1,
+        "gradient_accumulation_steps": 8,
+        "max_steps": 20,
+        "optim": "adamw_8bit",
     },
     "standard": {
         "max_seq_length": 2048,
@@ -29,25 +29,18 @@ PROFILES = {
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", required=True, help="HuggingFace Base Model ID")
-    parser.add_argument("--data", required=True, help="Path to local staged JSONL dataset")
-    parser.add_argument("--out", required=True, help="Samba path to save fine-tuned adapters")
-    parser.add_argument(
-        "--profile",
-        default="standard",
-        choices=["standard", "laptop"],
-        help="Hardware profile to use",
-    )
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--data", required=True)
+    parser.add_argument("--out", required=True)
+    parser.add_argument("--profile", default="standard", choices=["standard", "laptop"])
     args = parser.parse_args()
 
-    # Load parameters from the selected profile
     p = PROFILES[args.profile]
 
     print(f"🚀 Initializing Unsloth Fine-Tuning [Profile: {args.profile.upper()}]")
-    print(f"📦 Base Model: {args.model}")
-    print(f"📂 Dataset: {args.data}")
 
-    # 1. Load Model and Tokenizer
+    # 2. Load Model & Tokenizer
+    # We set the sequence length here; the trainer will inherit it automatically
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=args.model,
         max_seq_length=p["max_seq_length"],
@@ -55,7 +48,7 @@ def main():
         token=os.getenv("HF_TOKEN"),
     )
 
-    # 2. Add LoRA Adapters
+    # 3. Add LoRA Adapters
     model = FastLanguageModel.get_peft_model(
         model,
         r=16,
@@ -75,7 +68,7 @@ def main():
         random_state=3407,
     )
 
-    # 3. Process Dataset
+    # 4. Process Dataset (THE VERSION-PROOF WAY)
     dataset = load_dataset("json", data_files=args.data, split="train")
 
     def format_prompts(examples):
@@ -86,17 +79,21 @@ def main():
             )
         return {"text": texts}
 
-    dataset = dataset.map(format_prompts, batched=True)
+    # By removing all columns except 'text', the SFTTrainer
+    # needs zero configuration to find the right data.
+    dataset = dataset.map(
+        format_prompts, batched=True, num_proc=2, remove_columns=dataset.column_names
+    )
 
-    # 4. Initialize Trainer
+    # 5. Initialize Trainer (Minimalist Signature)
+    # This avoids the 'max_seq_length' and 'dataset_text_field' TypeErrors
+    # by relying on the model and dataset defaults.
     trainer = SFTTrainer(
         model=model,
-        tokenizer=tokenizer,
         train_dataset=dataset,
-        dataset_text_field="text",
-        max_seq_length=p["max_seq_length"],
-        dataset_num_proc=2,
-        args=TrainingArguments(
+        processing_class=tokenizer,  # Required for TRL 0.24.0+
+        args=SFTConfig(
+            # Standard Training parameters
             per_device_train_batch_size=p["per_device_train_batch_size"],
             gradient_accumulation_steps=p["gradient_accumulation_steps"],
             warmup_steps=2,
@@ -110,14 +107,16 @@ def main():
             lr_scheduler_type="linear",
             seed=3407,
             output_dir="/tmp/outputs",
+            report_to="none",
+            packing=False,
         ),
     )
 
-    # 5. Execute Training
-    print(f"🔥 Starting GPU Training kernels (SeqLen: {p['max_seq_length']})...")
-    trainer_stats = trainer.train()
+    # 6. Execute Training
+    print(f"🔥 Starting GPU Training kernels (Laptop Mode: {p['max_seq_length']} ctx)...")
+    trainer.train()
 
-    # 6. Save Artifacts to Samba Hub
+    # 7. Save Artifacts
     print(f"💾 Exporting fine-tuned adapters to {args.out}...")
     model.save_pretrained(args.out)
     tokenizer.save_pretrained(args.out)
