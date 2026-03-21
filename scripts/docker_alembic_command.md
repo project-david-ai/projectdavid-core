@@ -26,3 +26,7 @@ docker compose exec api alembic revision --autogenerate -m "Add fine tuning tabl
 docker compose exec api alembic revision --autogenerate -m "updated_at column to match other models"
 
 docker compose exec api alembic revision --autogenerate -m "adding updated_at and deleted_at to the TrainingJobRead"
+
+
+
+docker compose exec api alembic revision --autogenerate -m "Add cluster management tables and fields"

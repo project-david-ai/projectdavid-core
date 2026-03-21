@@ -28,12 +28,21 @@ Import map
     training.models.models.FineTunedModel  → projectdavid_orm.ormInterface.FineTunedModel
 """
 
+from projectdavid_orm.ormInterface import BaseModel as BaseModel
+from projectdavid_orm.ormInterface import ComputeNode as ComputeNode
 from projectdavid_orm.ormInterface import Dataset as Dataset
 from projectdavid_orm.ormInterface import FineTunedModel as FineTunedModel
+from projectdavid_orm.ormInterface import GPUAllocation as GPUAllocation
+from projectdavid_orm.ormInterface import \
+    InferenceDeployment as InferenceDeployment
 from projectdavid_orm.ormInterface import TrainingJob as TrainingJob
 
 __all__ = [
     "Dataset",
     "TrainingJob",
     "FineTunedModel",
+    "GPUAllocation",
+    "ComputeNode",
+    "InferenceDeployment",
+    "BaseModel",
 ]

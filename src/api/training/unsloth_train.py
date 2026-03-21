@@ -1,4 +1,4 @@
-# 1. CRITICAL: Unsloth MUST be imported before everything else for the 4060 kernels
+# 1. CRITICAL: Unsloth MUST be imported before everything else
 import argparse
 import json
 import os
@@ -40,13 +40,22 @@ def main():
     print(f"🚀 Initializing Unsloth Fine-Tuning [Profile: {args.profile.upper()}]")
 
     # 2. Load Model & Tokenizer
-    # We set the sequence length here; the trainer will inherit it automatically
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=args.model,
         max_seq_length=p["max_seq_length"],
         load_in_4bit=True,
         token=os.getenv("HF_TOKEN"),
+        fix_tokenizer=True,  # Tells Unsloth to repair common tokenizer bugs
     )
+
+    # ─── QWEN/TRL COMPATIBILITY FIX ──────────────────────────────────────────
+    # TRL 0.24.0+ requires that the pad_token and eos_token exist in the vocab.
+    # We force the tokenizer to use its own native EOS for padding.
+    if tokenizer.eos_token is None:
+        tokenizer.eos_token = "<|endoftext|>"
+
+    tokenizer.pad_token = tokenizer.eos_token
+    # ──────────────────────────────────────────────────────────────────────────
 
     # 3. Add LoRA Adapters
     model = FastLanguageModel.get_peft_model(
@@ -68,32 +77,33 @@ def main():
         random_state=3407,
     )
 
-    # 4. Process Dataset (THE VERSION-PROOF WAY)
+    # 4. Process Dataset
     dataset = load_dataset("json", data_files=args.data, split="train")
 
     def format_prompts(examples):
         texts = []
         for messages in examples["messages"]:
+            # Standardizing to the 'text' field
             texts.append(
                 tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
             )
         return {"text": texts}
 
-    # By removing all columns except 'text', the SFTTrainer
-    # needs zero configuration to find the right data.
+    # Clean the dataset to have ONLY the 'text' column for SFTTrainer
     dataset = dataset.map(
         format_prompts, batched=True, num_proc=2, remove_columns=dataset.column_names
     )
 
-    # 5. Initialize Trainer (Minimalist Signature)
-    # This avoids the 'max_seq_length' and 'dataset_text_field' TypeErrors
-    # by relying on the model and dataset defaults.
+    # 5. Initialize Trainer (THE STRICT SIGNATURE)
+    # Using SFTConfig with special dataset_kwargs to prevent TRL from
+    # trying to append tokens it doesn't recognize.
     trainer = SFTTrainer(
         model=model,
         train_dataset=dataset,
-        processing_class=tokenizer,  # Required for TRL 0.24.0+
+        processing_class=tokenizer,
         args=SFTConfig(
-            # Standard Training parameters
+            dataset_text_field="text",
+            max_seq_length=p["max_seq_length"],
             per_device_train_batch_size=p["per_device_train_batch_size"],
             gradient_accumulation_steps=p["gradient_accumulation_steps"],
             warmup_steps=2,
@@ -109,6 +119,11 @@ def main():
             output_dir="/tmp/outputs",
             report_to="none",
             packing=False,
+            # This is the secret sauce: tells TRL not to touch the tokens
+            dataset_kwargs={
+                "add_special_tokens": False,
+                "append_concat_token": False,
+            },
         ),
     )
 

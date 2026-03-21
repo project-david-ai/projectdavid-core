@@ -52,3 +52,10 @@ def activate_model_endpoint(
     db: Session = Depends(get_db),
 ):
     return model_registry_service.activate_model(db, model_id, user_id)
+
+
+@router.post("/deactivate-all")
+def deactivate_all_endpoint(
+    user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)
+):
+    return model_registry_service.deactivate_all_models(db, user_id)
