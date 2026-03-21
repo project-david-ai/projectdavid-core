@@ -39,7 +39,11 @@ API_KEY = os.getenv("DEV_PROJECT_DAVID_CORE_TEST_USER_KEY")
 ASSISTANT_ID = os.getenv("DEV_PROJECT_DAVID_CORE_TEST_ASSISTANT_ID")
 
 # Target the LoRA adapter name defined in the orchestrator/vllm config
-MODEL_ID = "vllm/david-ft"
+# MODEL_ID = "vllm/david-ft"
+
+MODEL_ID = "vllm/unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit"
+
+
 VLLM_BASE_URL = os.getenv("VLLM_BASE_URL", "http://vllm_server:8000")
 
 TEST_PROMPT = "Hello Assistant! Can you confirm you are currently utilizing your new fine-tuned weights ('david-ft') to answer me?"

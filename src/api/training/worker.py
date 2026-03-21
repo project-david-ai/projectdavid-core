@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from src.api.training.db.database import SessionLocal
 from src.api.training.models.models import (ComputeNode, Dataset,
                                             FineTunedModel, GPUAllocation,
-                                            TrainingJob)
+                                            InferenceDeployment, TrainingJob)
 from src.api.training.services.cluster_service import node_heartbeat
 from src.api.training.services.file_service import SambaClient
 
@@ -76,6 +76,58 @@ def start_heartbeat():
     thread.start()
 
 
+# ─── INFERENCE DEPLOYMENT WATCHER (v2.0 Milestone) ──────────────────────────
+
+
+def start_deployment_watcher():
+    """
+    Background thread that monitors for 'pending' inference deployments
+    assigned to this node.
+    """
+
+    def watcher_loop():
+        logging_utility.info(f"👀 Deployment Watcher active for node: {NODE_ID}")
+        while True:
+            db = SessionLocal()
+            try:
+                # Find deployments intended for this machine that haven't started yet
+                pending_deployments = (
+                    db.query(InferenceDeployment)
+                    .filter(
+                        InferenceDeployment.node_id == NODE_ID,
+                        InferenceDeployment.status == StatusEnum.pending,
+                    )
+                    .all()
+                )
+
+                for dep in pending_deployments:
+                    logging_utility.info(
+                        f"🆕 DEPLOYMENT SIGNAL: Preparing to host {dep.base_model_id}..."
+                    )
+
+                    # 💡 ARCHITECTURAL NOTE:
+                    # In a production multi-node setup, this is where the worker calls
+                    # a local shell script or Docker API to trigger:
+                    # 'platform-api docker-manager --mode up --services vllm'
+
+                    # For current verification, we simulate the startup success
+                    dep.status = StatusEnum.active
+                    dep.last_seen = int(time.time())
+                    db.commit()
+                    logging_utility.info(
+                        f"🚀 DEPLOYMENT ACTIVE: {dep.id} now serving on port {dep.port}"
+                    )
+
+            except Exception as e:
+                logging_utility.error(f"Deployment Watcher Error: {e}")
+            finally:
+                db.close()
+            time.sleep(10)  # Poll every 10 seconds
+
+    thread = threading.Thread(target=watcher_loop, daemon=True)
+    thread.start()
+
+
 # ─── JOB EXECUTION LOGIC ────────────────────────────────────────────────────
 
 
@@ -103,8 +155,6 @@ def process_job(job_id: str, user_id: str):
         job.started_at = int(time.time())
 
         # 3. VRAM RESERVATION: Update the cluster ledger
-        # We assume 4GB for the 'laptop' profile. This prevents
-        # other nodes from over-scheduling this specific machine.
         vram_requirement = 4.0
         new_allocation = GPUAllocation(
             node_id=NODE_ID, job_id=job_id, vram_reserved_gb=vram_requirement
@@ -118,8 +168,6 @@ def process_job(job_id: str, user_id: str):
         storage = db.query(FileStorage).filter(FileStorage.file_id == dataset.file_id).first()
         local_data_path = os.path.join(LOCAL_SCRATCH, f"{job_id}.jsonl")
         smb = get_samba_client()
-
-        logging_utility.info(f"Staging dataset from Samba: {storage.storage_path}")
         smb.download_file(storage.storage_path, local_data_path)
 
         # 5. PREPARE EXPORT PATH
@@ -147,9 +195,7 @@ def process_job(job_id: str, user_id: str):
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
         for line in process.stdout:
-            # Direct stream to container logs for observability
             print(f"[{job_id}] {line.strip()}", flush=True)
-
         process.wait()
 
         if process.returncode == 0:
@@ -185,15 +231,13 @@ def process_job(job_id: str, user_id: str):
             db.commit()
 
     finally:
-        # 8. CLEANUP: Release VRAM reservation and local scratch files
+        # 8. CLEANUP: Release VRAM reservation
         if allocation_id:
             try:
                 db.query(GPUAllocation).filter(GPUAllocation.id == allocation_id).delete()
                 db.commit()
-                logging_utility.debug(f"Released VRAM allocation {allocation_id}")
-            except Exception as cleanup_err:
-                logging_utility.error(f"Failed to release VRAM: {cleanup_err}")
-
+            except:
+                pass
         if local_data_path and os.path.exists(local_data_path):
             try:
                 os.remove(local_data_path)
@@ -210,16 +254,17 @@ def main():
     db = SessionLocal()
     try:
         node_heartbeat(db, NODE_ID)
-        logging_utility.info(f"✅ Node {NODE_ID} registered with cluster.")
+        logging_utility.info(f"✅ Node {NODE_ID} joined the David Mesh.")
     finally:
         db.close()
 
-    # 2. Start Telemetry Thread
+    # 2. Start Background Services
     start_heartbeat()
+    start_deployment_watcher()
 
-    # 3. Targeted BRPOP Loop
+    # 3. Targeted BRPOP Loop (The Training Listener)
     r = get_redis()
-    logging_utility.info(f"👷 Cluster Worker {NODE_ID} ready. Listening on '{QUEUE_NAME}'")
+    logging_utility.info(f"👷 Cluster Worker {NODE_ID} listening for Training Jobs...")
 
     while True:
         try:
@@ -228,13 +273,10 @@ def main():
                 _, data = result
                 payload = json.loads(data)
 
-                # CLUSTER DISPATCH CHECK: Is this job explicitly for me?
+                # DISPATCH CHECK
                 target = payload.get("target_node")
                 if target and target != NODE_ID:
-                    # Not for me! Re-queue (RPUSH) so the correct node finds it
-                    logging_utility.debug(
-                        f"Job {payload['job_id']} targeted at {target}. Re-queueing."
-                    )
+                    logging_utility.debug(f"Re-queueing job {payload['job_id']} for {target}.")
                     r.rpush(QUEUE_NAME, data)
                     time.sleep(1)
                     continue

@@ -9,6 +9,7 @@ import platform
 import re
 import secrets
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -137,11 +138,13 @@ class DockerManager:
         "DOWNLOAD_BASE_URL": "http://localhost:9000/v1/files/download",
         "HYPERBOLIC_BASE_URL": "https://api.hyperbolic.xyz/v1",
         "TOGETHER_BASE_URL": "https://api.together.xyz/v1",
+        "VLLM_BASE_URL": "http://vllm_server:8000",
         "OLLAMA_BASE_URL": "http://ollama:11434",
         "HF_TOKEN": "",
         "HF_CACHE_PATH": "",
         "VLLM_MODEL": "Qwen/Qwen2.5-1.5B-Instruct",
         "TRAINING_PROFILE": "laptop",  # Default for local box
+        "NODE_ID": f"node_{socket.gethostname()}",  # Default node name
         "TOGETHER_API_KEY": "",
         "HYPERBOLIC_API_KEY": "",
         "ADMIN_API_KEY": "",
@@ -172,12 +175,14 @@ class DockerManager:
     }
 
     _ENV_STRUCTURE = {
+        "Mesh Configuration": ["NODE_ID", "TRAINING_PROFILE", "SHARED_PATH"],
         "Base URLs": [
             "ASSISTANTS_BASE_URL",
             "SANDBOX_SERVER_URL",
             "DOWNLOAD_BASE_URL",
             "HYPERBOLIC_BASE_URL",
             "TOGETHER_BASE_URL",
+            "VLLM_BASE_URL",
             "OLLAMA_BASE_URL",
         ],
         "AI Model Configuration": ["HF_TOKEN", "HF_CACHE_PATH", "VLLM_MODEL", "TRAINING_PROFILE"],
@@ -248,6 +253,72 @@ class DockerManager:
         self._configure_shared_path()
         self._configure_hf_cache_path()
         self._ensure_dockerignore()
+
+        # Ensure Mesh Identity is loaded
+        self.node_id = os.getenv("NODE_ID", f"node_{socket.gethostname()}")
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # MESH RESOLUTION LOGIC (v2.0 Cluster Implementation)
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _get_all_active_deployments_for_node(self) -> List[Dict[str, str]]:
+        """
+        Interrogates the Mesh Ledger (MySQL) to find ALL models this physical node
+        is assigned to run. Supports concurrent loading of multiple LoRA adapters.
+        """
+        raw_db_url = os.getenv("DATABASE_URL")
+        if not raw_db_url:
+            return []
+
+        try:
+            import pymysql
+
+            # Match: mysql+pymysql://user:pass@host:port/db
+            pattern = re.compile(
+                r"mysql\+pymysql://(?P<user>[^:]+):(?P<password>[^@]+)@(?P<host>[^:/]+)(?::(?P<port>\d+))?/(?P<db>.*)"
+            )
+            match = pattern.match(raw_db_url)
+            if not match:
+                return []
+
+            connection = pymysql.connect(
+                host="localhost",
+                port=int(DEFAULT_DB_HOST_PORT),  # 3307
+                user=match.group("user"),
+                password=match.group("password"),
+                database=match.group("db"),
+                connect_timeout=5,
+            )
+
+            deployments = []
+            with connection.cursor() as cursor:
+                # 🎯 THE MULTI-LORA MESH QUERY:
+                # Fetches every model assigned to THIS node ID.
+                # ftm_id is required so vLLM can name the LoRA module correctly.
+                sql = """
+                      SELECT d.base_model_id, f.storage_path, d.fine_tuned_model_id
+                      FROM inference_deployments d
+                               LEFT JOIN fine_tuned_models f ON d.fine_tuned_model_id = f.id
+                      WHERE d.node_id = %s AND d.status = 'active' \
+                      """
+                cursor.execute(sql, (self.node_id,))
+                rows = cursor.fetchall()
+
+                for row in rows:
+                    deployments.append(
+                        {
+                            "base_model": row[0],
+                            # Map relative DB path to internal vLLM mount path
+                            "adapter_path": f"/mnt/training_data/{row[1]}" if row[1] else None,
+                            "ftm_id": row[2],  # Used as the name in --lora-modules name=path
+                        }
+                    )
+
+            connection.close()
+            return deployments
+        except Exception as e:
+            self.log.debug("Mesh Ledger lookup failed or skipped: %s", e)
+        return []
 
     # ──────────────────────────────────────────────────────────────────────────
     # Hot-Fire Dynamic Activation Logic
@@ -746,20 +817,15 @@ class DockerManager:
         self._validate_secrets()
 
         all_services = self.compose_config.get("services", {})
-        service_to_profiles: Dict[str, List[str]] = {}
-        for name, cfg in all_services.items():
-            p = cfg.get("profiles")
-            if p:
-                service_to_profiles[name] = p
+        requested = set(self.args.services or [])
+        excluded = set(self.args.exclude or [])
 
-        profile_services = set(service_to_profiles.keys())
+        # 1. Resolve targeted services
+        profile_services = {name for name, cfg in all_services.items() if cfg.get("profiles")}
         if "nginx" in profile_services:
             profile_services.remove("nginx")
 
         default_services = [name for name in all_services.keys() if name not in profile_services]
-
-        requested = set(self.args.services or [])
-        excluded = set(self.args.exclude or [])
 
         if requested:
             final_services = requested - excluded
@@ -772,21 +838,46 @@ class DockerManager:
             self.log.error("No services resolved to start.")
             raise SystemExit(1)
 
-        # 🎯 HOT-FIRE OVERRIDE: Check for active Fine-Tuned Model in DB
+        # 🎯 STAGE 6: DYNAMIC MULTI-LORA GENERATION
+        # Construct vLLM flags based on the Mesh Ledger (MySQL)
         if "vllm" in final_services_list:
-            model_metadata = self._get_active_model_override()
-            if model_metadata and isinstance(model_metadata, dict):
-                self.log.info(
-                    "🎯 Found active fine-tuned model: %s", model_metadata['adapter_path']
-                )
-                # We inject both the base model backbone and the specific LoRA path
-                os.environ["VLLM_MODEL"] = model_metadata['base_model']
-                os.environ["VLLM_LORA_PATH"] = model_metadata['adapter_path']
-            else:
-                self.log.info("ℹ️ Using base model from .env (no active fine-tuned model found).")
-                os.environ["VLLM_LORA_PATH"] = ""
+            # Helper to fetch all rows for THIS node from inference_deployments
+            deployments = self._get_all_active_deployments_for_node()
 
+            if deployments:
+                # Use the first deployment's base model as the backbone
+                base_model = deployments[0]['base_model']
+                self.log.info(
+                    "🌐 MESH RESOLVED: Node '%s' running backbone %s", self.node_id, base_model
+                )
+                os.environ["VLLM_MODEL"] = base_model
+
+                lora_bundles = []
+                for dep in deployments:
+                    if dep['ftm_id'] and dep['adapter_path']:
+                        # vLLM mapping: name=path
+                        # We use the DB ID as the name so the SDK can target it
+                        lora_bundles.append(f"{dep['ftm_id']}={dep['adapter_path']}")
+
+                if lora_bundles:
+                    self.log.info("🧠 MESH: Attaching %d LoRA adapters...", len(lora_bundles))
+                    modules_string = " ".join(lora_bundles)
+                    # Construct the EXACT flags vLLM requires
+                    os.environ["VLLM_EXTRA_FLAGS"] = (
+                        f"--enable-lora --lora-modules {modules_string}"
+                    )
+                else:
+                    self.log.info("✨ MESH: Standard Mode (No adapters assigned)")
+                    os.environ["VLLM_EXTRA_FLAGS"] = ""
+            else:
+                self.log.info("ℹ️ Node '%s' idle in Mesh. Using .env defaults.", self.node_id)
+                os.environ["VLLM_EXTRA_FLAGS"] = ""
+
+        # 2. Determine Profiles to Activate
         active_profiles: Set[str] = set()
+        service_to_profiles: Dict[str, List[str]] = {
+            name: cfg.get("profiles") for name, cfg in all_services.items() if cfg.get("profiles")
+        }
         for svc in final_services_list:
             if svc in service_to_profiles:
                 active_profiles.update(service_to_profiles[svc])
@@ -797,6 +888,7 @@ class DockerManager:
 
         base_compose_cmd = ["docker", "compose", *self._get_compose_flags(), *profile_flags]
 
+        # 3. Execution Sequence (Nginx First)
         if "nginx" in final_services_list:
             self.log.info("Starting 'nginx' container first...")
             nginx_cmd = [*base_compose_cmd, "up", "-d"]
@@ -822,12 +914,13 @@ class DockerManager:
             up_cmd.extend(final_services_list)
 
             self.log.info(
-                "Starting services (Profiles: %s): %s",
+                "Starting remaining services (Profiles: %s): %s",
                 list(active_profiles) if active_profiles else "None",
                 ", ".join(final_services_list),
             )
 
             try:
+                # We suppress logs only if 'attached' is True (so user sees vLLM/Worker output)
                 self._run_command(up_cmd, check=True, suppress_logs=self.args.attached)
             except subprocess.CalledProcessError:
                 raise SystemExit(1)
