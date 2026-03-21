@@ -3,6 +3,7 @@ from typing import List, Optional
 
 from fastapi import HTTPException
 from projectdavid_common.schemas.enums import StatusEnum
+from projectdavid_common.utilities.identifier_service import IdentifierService
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -43,14 +44,6 @@ def get_fine_tuned_model(db: Session, model_id: str, user_id: str) -> FineTunedM
     return model
 
 
-def soft_delete_model(db: Session, model_id: str, user_id: str) -> bool:
-    model = get_fine_tuned_model(db, model_id, user_id)
-    model.deleted_at = int(time.time())
-    model.status = StatusEnum.deleted
-    db.commit()
-    return True
-
-
 # ---------------------------------------------------------------------------
 # Cluster Resource Management & Scheduling
 # ---------------------------------------------------------------------------
@@ -58,181 +51,148 @@ def soft_delete_model(db: Session, model_id: str, user_id: str) -> bool:
 
 def find_available_node(db: Session, required_vram: float = 4.0) -> str:
     """
-    Finds the active node with the most free VRAM.
-    Formula: total_vram - current_vram_usage
+    STRICT SCHEDULER: Calculates free VRAM via the Ledger (GPUAllocation).
     """
-    node = (
+    heartbeat_cutoff = int(time.time()) - 60
+    nodes = (
         db.query(ComputeNode)
         .filter(
-            ComputeNode.status == StatusEnum.active,
-            (ComputeNode.total_vram_gb - ComputeNode.current_vram_usage_gb) >= required_vram,
+            ComputeNode.status == StatusEnum.active, ComputeNode.last_heartbeat > heartbeat_cutoff
         )
-        .order_by((ComputeNode.total_vram_gb - ComputeNode.current_vram_usage_gb).desc())
-        .first()
+        .all()
     )
 
-    if not node:
-        raise HTTPException(
-            status_code=503,
-            detail="Resource Exhausted: No GPU nodes with sufficient VRAM available.",
+    best_node = None
+    max_logical_free = -1.0
+
+    for node in nodes:
+        total_reserved = (
+            db.query(func.sum(GPUAllocation.vram_reserved_gb))
+            .filter(GPUAllocation.node_id == node.id)
+            .scalar()
+            or 0.0
         )
-    return node.id
+
+        logical_free = node.total_vram_gb - total_reserved
+
+        if logical_free >= required_vram:
+            if logical_free > max_logical_free:
+                max_logical_free = logical_free
+                best_node = node
+
+    if not best_node:
+        raise HTTPException(
+            status_code=507,
+            detail=f"Insufficient GPU resources. Cluster requires {required_vram}GB free VRAM.",
+        )
+    return best_node.id
 
 
-def activate_model(db: Session, model_id: str, user_id: str) -> dict:
+# ---------------------------------------------------------------------------
+# Deployment Logic (The Mesh Implementation)
+# ---------------------------------------------------------------------------
+
+
+def deactivate_all_models(db: Session, user_id: str) -> dict:
     """
-    v2.0 Cluster Activation Logic:
-    1. Identifies the best physical node via the Scheduler.
-    2. Mutex: Sets existing deployments for this user to 'offline'.
-    3. Creates a 'Deployment Ticket' (Status: pending) for the Node Watcher.
-    4. Reserves VRAM in the Cluster Ledger.
+    CLEAN SLATE: Physically removes deployments and allocations to
+    satisfy UniqueConstraints and free up hardware ports.
     """
-    # 1. Fetch Model and Base Model metadata
+    # 1. Reset Metadata flags for the user
+    db.query(FineTunedModel).filter(
+        FineTunedModel.user_id == user_id, FineTunedModel.is_active == True
+    ).update({"is_active": False, "node_id": None}, synchronize_session=False)
+
+    # 2. HARD DELETE Deployments: This clears the uq_node_port_deployment constraint
+    # so we can insert new models on the same port immediately.
+    db.query(InferenceDeployment).filter(InferenceDeployment.node_id != None).delete(
+        synchronize_session=False
+    )
+
+    # 3. Release VRAM allocations physically
+    db.query(GPUAllocation).delete(synchronize_session=False)
+
+    db.commit()
+    return {"status": "success", "message": "Cluster resources released."}
+
+
+def activate_model(
+    db: Session, model_id: str, user_id: str, target_node_id: Optional[str] = None
+) -> dict:
+    """
+    DEPLOYS A FINE-TUNED MODEL (Base + LoRA).
+    """
     model = get_fine_tuned_model(db, model_id, user_id)
 
-    # 2. Mutex: Deactivate all other fine-tuned models and deployments for this user
-    db.query(FineTunedModel).filter(
-        FineTunedModel.user_id == user_id, FineTunedModel.id != model_id
-    ).update({"is_active": False})
+    # 1. Clear existing slots first
+    deactivate_all_models(db, user_id)
 
-    db.query(InferenceDeployment).filter(
-        InferenceDeployment.fine_tuned_model_id.in_(
-            db.query(FineTunedModel.id).filter(FineTunedModel.user_id == user_id)
-        )
-    ).update({"status": StatusEnum.offline})
+    # 2. Schedule
+    node_id = target_node_id or find_available_node(db, required_vram=5.0)
 
-    # 3. Scheduling: Find a home (Assume 5GB required for 1B model + LoRA overhead)
-    node_id = find_available_node(db, required_vram=5.0)
-
-    # 4. Create the Deployment Ticket (Signal to the physical Node)
-    deployment_id = f"dep_{model.id[4:]}"
+    # 3. Create Ticket
+    deployment_id = IdentifierService.generate_prefixed_id("dep")
     deployment = InferenceDeployment(
         id=deployment_id,
         node_id=node_id,
         base_model_id=model.base_model,
         fine_tuned_model_id=model.id,
-        port=8001,  # Standard port; could be made dynamic in v3.0
-        status=StatusEnum.pending,  # Worker 'start_deployment_watcher' picks this up
+        port=8001,
+        status=StatusEnum.pending,
         last_seen=int(time.time()),
     )
 
-    # 5. Lock VRAM in Ledger (The Accounting Layer)
+    # 4. Lock VRAM
     allocation = GPUAllocation(node_id=node_id, model_id=model.id, vram_reserved_gb=5.0)
 
-    # 6. Persist changes
+    # 5. Persist
     model.is_active = True
     model.node_id = node_id
-
-    db.merge(deployment)  # Merge handles potential existing record updates
-    db.add(allocation)
-
-    db.commit()
-
-    return {
-        "activated": model.id,
-        "deployment_id": deployment_id,
-        "target_node": node_id,
-        "url": f"http://{node_id}:8001",
-        "next_step": "DEPLOY_SIGNAL_SENT",
-    }
-
-
-def deactivate_all_models(db: Session, user_id: str) -> dict:
-    """
-    Resets the system to the standard base model.
-    Clears all active flags and releases cluster deployments.
-    """
-    # Clear model flags
-    db.query(FineTunedModel).filter(
-        FineTunedModel.user_id == user_id, FineTunedModel.is_active == True
-    ).update({"is_active": False, "node_id": None})
-
-    # Clear deployment ledger
-    db.query(InferenceDeployment).filter(
-        InferenceDeployment.fine_tuned_model_id.in_(
-            db.query(FineTunedModel.id).filter(FineTunedModel.user_id == user_id)
-        )
-    ).update({"status": StatusEnum.offline})
-
-    # Release VRAM allocations
-    db.query(GPUAllocation).filter(
-        GPUAllocation.model_id.in_(
-            db.query(FineTunedModel.id).filter(FineTunedModel.user_id == user_id)
-        )
-    ).delete(synchronize_session=False)
-
-    db.commit()
-    return {
-        "status": "success",
-        "message": "All fine-tuned models deactivated. System reset to base model.",
-    }
-
-
-# ---------------------------------------------------------------------------
-# Utility Helpers
-# ---------------------------------------------------------------------------
-
-
-def register_deployment(
-    db: Session, node_id: str, base_model_id: str, ftm_id: Optional[str] = None
-) -> InferenceDeployment:
-    """
-    Manually record a live vLLM process in the cluster ledger.
-    Used by internal agents to sync physical state to the DB.
-    """
-    from projectdavid_common.utilities.identifier_service import \
-        IdentifierService
-
-    deployment_id = IdentifierService.generate_prefixed_id("dep")
-
-    deployment = InferenceDeployment(
-        id=deployment_id,
-        node_id=node_id,
-        base_model_id=base_model_id,
-        fine_tuned_model_id=ftm_id,
-        status=StatusEnum.active,
-        last_seen=int(time.time()),
-    )
     db.add(deployment)
+    db.add(allocation)
     db.commit()
-    return deployment
+
+    return {
+        "status": "deploying",
+        "model_id": model.id,
+        "node": node_id,
+        "next_step": "Worker is provisioning LoRA weights.",
+    }
 
 
-def activate_base_model(db: Session, base_model_id: str, user_id: str) -> dict:
+def activate_base_model(
+    db: Session, base_model_id: str, user_id: str, target_node_id: Optional[str] = None
+) -> dict:
     """
-    v2.0 Cluster Logic for Standard Models:
-    1. Finds the model in the catalog (base_models table).
-    2. Schedules it to the healthiest node.
-    3. Creates a 'Deployment Ticket' with NO adapter path.
+    DEPLOYS A STANDARD MODEL (Backbone only).
     """
     # 1. Verify model exists in our seeded catalog
     base = db.query(BaseModel).filter(BaseModel.id == base_model_id).first()
     if not base:
-        raise HTTPException(
-            status_code=404, detail=f"Base model {base_model_id} not found in catalog."
-        )
+        raise HTTPException(status_code=404, detail=f"Base model {base_model_id} not found.")
 
-    # 2. Mutex: Set other active deployments for this user to offline
-    db.query(InferenceDeployment).filter(
-        InferenceDeployment.node_id == ComputeNode.id  # Optional: scope to user if needed
-    ).update({"status": StatusEnum.offline})
+    # 2. Mutex: Clear existing deployments to free Node Port 8001
+    deactivate_all_models(db, user_id)
 
-    # 3. Scheduler: Find hardware (Assume 4GB for base 1.5B model)
-    node_id = find_available_node(db, required_vram=4.0)
+    # 3. Scheduler: Find hardware
+    node_id = target_node_id or find_available_node(db, required_vram=4.0)
 
-    # 4. Create the Deployment Ticket (NULL fine_tuned_model_id = Standard Mode)
+    # 4. Create the Deployment Ticket (fine_tuned_model_id=None signals Standard Mode)
     deployment_id = IdentifierService.generate_prefixed_id("dep")
     deployment = InferenceDeployment(
         id=deployment_id,
         node_id=node_id,
         base_model_id=base.id,
-        fine_tuned_model_id=None,  # <--- THIS makes it a standard model
-        port=8000,
+        fine_tuned_model_id=None,
+        port=8001,
         status=StatusEnum.pending,
+        last_seen=int(time.time()),
     )
 
-    # 5. Lock VRAM
-    allocation = GPUAllocation(node_id=node_id, vram_reserved_gb=4.0)
+    # 5. Lock VRAM (Standard backbone)
+    allocation = GPUAllocation(
+        node_id=node_id, model_id=None, vram_reserved_gb=4.0  # Indicates base model lock
+    )
 
     db.add(deployment)
     db.add(allocation)
@@ -240,7 +200,7 @@ def activate_base_model(db: Session, base_model_id: str, user_id: str) -> dict:
 
     return {
         "status": "deploying_standard",
-        "model": base.id,
+        "model_id": base.id,
         "node": node_id,
-        "next_step": f"platform-api --node {node_id} up --services vllm",
+        "next_step": f"Standard backbone {base.id} is being provisioned.",
     }

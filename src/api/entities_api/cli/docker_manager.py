@@ -814,6 +814,10 @@ class DockerManager:
         self._run_command(logs_cmd, check=False)
 
     def _handle_up(self):
+        """
+        Orchestrates service startup with strict Mesh Ledger enforcement.
+        REQUIREMENT: No fallbacks. DB state is the only valid configuration source.
+        """
         self._validate_secrets()
 
         all_services = self.compose_config.get("services", {})
@@ -838,40 +842,55 @@ class DockerManager:
             self.log.error("No services resolved to start.")
             raise SystemExit(1)
 
-        # 🎯 STAGE 6: DYNAMIC MULTI-LORA GENERATION
-        # Construct vLLM flags based on the Mesh Ledger (MySQL)
+        # ──────────────────────────────────────────────────────────────────────
+        # 🎯 STAGE 6: STRICT MESH ENFORCEMENT (NO FALLBACKS)
+        # ──────────────────────────────────────────────────────────────────────
         if "vllm" in final_services_list:
-            # Helper to fetch all rows for THIS node from inference_deployments
+            # We use the multi-LoRA helper to get the full node assignment
             deployments = self._get_all_active_deployments_for_node()
 
             if deployments:
-                # Use the first deployment's base model as the backbone
+                # Use the backbone assigned in the ledger
                 base_model = deployments[0]['base_model']
                 self.log.info(
-                    "🌐 MESH RESOLVED: Node '%s' running backbone %s", self.node_id, base_model
+                    "🌐 MESH RESOLVED: Node '%s' -> Backbone: %s", self.node_id, base_model
                 )
                 os.environ["VLLM_MODEL"] = base_model
 
                 lora_bundles = []
                 for dep in deployments:
-                    if dep['ftm_id'] and dep['adapter_path']:
-                        # vLLM mapping: name=path
-                        # We use the DB ID as the name so the SDK can target it
+                    if dep.get('ftm_id') and dep.get('adapter_path'):
                         lora_bundles.append(f"{dep['ftm_id']}={dep['adapter_path']}")
 
                 if lora_bundles:
-                    self.log.info("🧠 MESH: Attaching %d LoRA adapters...", len(lora_bundles))
+                    self.log.info("🧠 MESH: Mounting %d LoRA adapters.", len(lora_bundles))
                     modules_string = " ".join(lora_bundles)
-                    # Construct the EXACT flags vLLM requires
                     os.environ["VLLM_EXTRA_FLAGS"] = (
                         f"--enable-lora --lora-modules {modules_string}"
                     )
                 else:
-                    self.log.info("✨ MESH: Standard Mode (No adapters assigned)")
+                    self.log.info("✨ MESH: Running Standard backbone (No adapters).")
                     os.environ["VLLM_EXTRA_FLAGS"] = ""
             else:
-                self.log.info("ℹ️ Node '%s' idle in Mesh. Using .env defaults.", self.node_id)
-                os.environ["VLLM_EXTRA_FLAGS"] = ""
+                # ⛔ THE "STRICT" GATE: No record found for this physical ID.
+                self.log.critical(
+                    "❌ MESH ACCESS DENIED: Node '%s' is not authorized for inference.",
+                    self.node_id,
+                )
+                self.log.error(
+                    "No active deployment found in MySQL 'inference_deployments' for this node."
+                )
+                self.log.info(
+                    "Physical hardware will remain IDLE. Use the SDK to activate a model first."
+                )
+
+                # Surgically remove vllm from the startup queue
+                final_services_list.remove("vllm")
+
+                # If vllm was the only goal, exit now
+                if not final_services_list:
+                    self.log.warning("Exiting: No authorized services to start.")
+                    raise SystemExit(1)
 
         # 2. Determine Profiles to Activate
         active_profiles: Set[str] = set()
@@ -886,44 +905,16 @@ class DockerManager:
         for profile in sorted(list(active_profiles)):
             profile_flags.extend(["--profile", profile])
 
-        base_compose_cmd = ["docker", "compose", *self._get_compose_flags(), *profile_flags]
-
-        # 3. Execution Sequence (Nginx First)
-        if "nginx" in final_services_list:
-            self.log.info("Starting 'nginx' container first...")
-            nginx_cmd = [*base_compose_cmd, "up", "-d"]
-            if self.args.build_before_up:
-                nginx_cmd.append("--build")
-            if self.args.force_recreate:
-                nginx_cmd.append("--force-recreate")
-            nginx_cmd.append("nginx")
-            try:
-                self._run_command(nginx_cmd, check=True)
-            except subprocess.CalledProcessError:
-                raise SystemExit(1)
-            final_services_list.remove("nginx")
+        # 3. Final Command Assembly
+        base_compose_cmd = ["docker", "compose", *self._get_compose_flags(), *profile_flags, "up"]
+        if not self.args.attached:
+            base_compose_cmd.append("-d")
+        if self.args.force_recreate:
+            base_compose_cmd.append("--force-recreate")
 
         if final_services_list:
-            up_cmd = [*base_compose_cmd, "up"]
-            if not self.args.attached:
-                up_cmd.append("-d")
-            if self.args.build_before_up:
-                up_cmd.append("--build")
-            if self.args.force_recreate:
-                up_cmd.append("--force-recreate")
-            up_cmd.extend(final_services_list)
-
-            self.log.info(
-                "Starting remaining services (Profiles: %s): %s",
-                list(active_profiles) if active_profiles else "None",
-                ", ".join(final_services_list),
-            )
-
-            try:
-                # We suppress logs only if 'attached' is True (so user sees vLLM/Worker output)
-                self._run_command(up_cmd, check=True, suppress_logs=self.args.attached)
-            except subprocess.CalledProcessError:
-                raise SystemExit(1)
+            base_compose_cmd.extend(final_services_list)
+            self._run_command(base_compose_cmd)
 
     def _is_service_running(self, service_name: str) -> bool:
         if not self._has_docker():

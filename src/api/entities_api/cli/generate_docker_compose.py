@@ -220,6 +220,7 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - PYTHONUNBUFFERED=1
     volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
       - ${SHARED_PATH:-./shared_data}:/mnt/training_data
       # Use the high-speed host cache for base models
       - ${HF_CACHE_PATH}:/root/.cache/huggingface

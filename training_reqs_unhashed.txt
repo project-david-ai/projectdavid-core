@@ -43,3 +43,6 @@ projectdavid-services==1.0.10
 # --- DB ---
 SQLAlchemy>=2.0.0
 pymysql
+#--------------------------------------------------docker
+docker>=7.0.0
+pynvml>=11.5.0

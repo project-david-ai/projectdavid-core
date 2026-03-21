@@ -62,21 +62,33 @@ def node_heartbeat(db: Session, node_id: str):
 
 def select_best_node(db: Session, required_vram_gb: float = 4.0) -> Optional[str]:
     """
-    Finds the active node with the most free VRAM.
+    SCHEDULER LOGIC:
+    Uses 'Logical Free Space' (Total - Sum of Ledger Allocations)
+    This is safer than nvidia-smi telemetry for rapid-fire requests.
     """
-    # Nodes must have checked in within the last 60 seconds to be considered 'online'
-    heartbeat_cutoff = int(time.time()) - 60
+    from src.api.training.models.models import ComputeNode, GPUAllocation
 
-    best_node = (
-        db.query(ComputeNode)
-        .filter(
-            ComputeNode.status == StatusEnum.active,
-            ComputeNode.last_heartbeat > heartbeat_cutoff,
-            (ComputeNode.total_vram_gb - ComputeNode.current_vram_usage_gb) >= required_vram_gb,
+    # 1. Get all active nodes
+    nodes = db.query(ComputeNode).filter(ComputeNode.status == StatusEnum.active).all()
+
+    best_node = None
+    max_logical_free = -1.0
+
+    for node in nodes:
+        # 2. Calculate what we've ALREADY promised on this node
+        reserved = (
+            db.query(func.sum(GPUAllocation.vram_reserved_gb))
+            .filter(GPUAllocation.node_id == node.id)
+            .scalar()
+            or 0.0
         )
-        .order_by((ComputeNode.total_vram_gb - ComputeNode.current_vram_usage_gb).desc())
-        .first()
-    )
+
+        logical_free = node.total_vram_gb - reserved
+
+        if logical_free >= required_vram_gb:
+            if logical_free > max_logical_free:
+                max_logical_free = logical_free
+                best_node = node
 
     return best_node.id if best_node else None
 

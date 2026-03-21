@@ -1,43 +1,39 @@
 import os
 
+from projectdavid_common.schemas.enums import StatusEnum
+from projectdavid_orm.projectdavid_orm.models import (ComputeNode,
+                                                      InferenceDeployment)
 from sqlalchemy.orm import Session
-
-from src.api.training.models.models import (ComputeNode, InferenceDeployment,
-                                            StatusEnum)
 
 
 class InferenceResolver:
     @staticmethod
-    def resolve_vllm_url(db: Session, model_tag: str) -> str:
+    def resolve_vllm_url(db: Session, model_tag: str) -> str | None:
         """
-        STAGE 6: Dynamic Mesh Resolution.
-        Finds the physical URL (IP:Port) for a requested model.
+        STAGE 6: Global Mesh Resolver.
+        Finds the healthiest physical endpoint for a specific model ID.
         """
-        # 1. Strip 'vllm/' prefix if present in the tag
-        search_id = model_tag.replace("vllm/", "")
+        # 1. Standardize the ID (Strip vllm/ prefix)
+        target_id = model_tag.replace("vllm/", "")
 
-        # 2. Query the Deployment Ledger
-        # We join with ComputeNode to ensure we only route to ONLINE hardware
+        # 2. Find Active Deployments on Active Nodes
+        # We sort by (Total VRAM - Usage) descending to pick the least-loaded node.
         deployment = (
             db.query(InferenceDeployment)
-            .join(ComputeNode)
+            .join(ComputeNode, InferenceDeployment.node_id == ComputeNode.id)
             .filter(
                 InferenceDeployment.status == StatusEnum.active,
                 ComputeNode.status == StatusEnum.active,
-                # Resolve by either Base Model ID or Fine-Tuned ID
-                (InferenceDeployment.fine_tuned_model_id == search_id)
-                | (InferenceDeployment.base_model_id == search_id),
+                (InferenceDeployment.fine_tuned_model_id == target_id)
+                | (InferenceDeployment.base_model_id == target_id),
             )
-            # Simple Load Balancing: Route to the node with the least throughput
-            .order_by(InferenceDeployment.current_throughput.asc())
+            .order_by((ComputeNode.total_vram_gb - ComputeNode.current_vram_usage_gb).desc())
             .first()
         )
 
-        if deployment:
-            host = deployment.node.ip_address or deployment.node.hostname
-            target = f"http://{host}:{deployment.port}"
-            return target
+        if not deployment:
+            return None
 
-        # 3. Fallback: If no deployment found in Mesh, use legacy ENV default
-        fallback = os.getenv("VLLM_BASE_URL", "http://vllm_server:8000")
-        return fallback
+        # 3. Construct physical URL
+        host = deployment.node.ip_address or deployment.node.hostname
+        return f"http://{host}:{deployment.port}"

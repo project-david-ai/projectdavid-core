@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1000" viewBox="0 0 900 1000">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <style>
+      .bg { fill: #f8f9fc; }
+      .title { font-family: Georgia, serif; font-size: 22px; font-weight: 600; fill: #1e293b; }
+      .tagline { font-family: Georgia, serif; font-size: 13px; fill: #64748b; }
+      .tier-label { font-family: Georgia, serif; font-size: 11px; font-weight: 600; fill: #94a3b8; letter-spacing: 0.08em; }
+
+      /* Control Plane Tier */
+      .master-box { fill: #eeedfe; stroke: #534ab7; stroke-width: 1.5px; stroke-dasharray: 5 3; }
+      .svc-api    { fill: #dbeafe; stroke: #185fa5; stroke-width: 0.75px; }
+      .svc-data   { fill: #ede9fe; stroke: #534ab7; stroke-width: 0.75px; }
+
+      /* Storage Tier */
+      .svc-files  { fill: #dcfce7; stroke: #22c55e; stroke-width: 0.75px; }
+
+      /* Compute Mesh Tier */
+      .mesh-box   { fill: #f1efe8; stroke: #5f5e5a; stroke-width: 1.5px; stroke-dasharray: 5 3; }
+      .node-box   { fill: #ffffff; stroke: #888780; stroke-width: 1px; }
+      .svc-worker { fill: #fdf2f8; stroke: #ec4899; stroke-width: 0.75px; }
+      .svc-vllm   { fill: #f1efe8; stroke: #5f5e5a; stroke-width: 0.75px; }
+
+      .label      { font-family: Georgia, serif; font-size: 11px; font-weight: 600; fill: #1e293b; }
+      .subtext    { font-family: Georgia, serif; font-size: 10px; fill: #64748b; }
+      .conn       { stroke: #94a3b8; stroke-width: 1px; fill: none; }
+      .conn-label { font-family: Georgia, serif; font-size: 10px; fill: #94a3b8; font-style: italic; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="1000" class="bg" rx="16"/>
+
+  <!-- Header -->
+  <text x="450" y="44" text-anchor="middle" class="title">Project David: Distributed GPU Mesh</text>
+  <text x="450" y="64" text-anchor="middle" class="tagline">Resource-Aware Fine-Tuning &amp; Autonomous Inference Deployment</text>
+
+  <!-- ── TIER 1: MASTER CONTROL PLANE ────────────────────── -->
+  <text x="50" y="98" class="tier-label">1. MASTER CONTROL PLANE (SINGLETON)</text>
+  <rect x="50" y="108" width="800" height="180" rx="12" class="master-box"/>
+
+  <!-- Master API -->
+  <rect x="70" y="128" width="230" height="60" rx="6" class="svc-api"/>
+  <text x="185" y="148" text-anchor="middle" class="label">Training API (Singleton)</text>
+  <text x="185" y="164" text-anchor="middle" class="subtext">Redis Master Lease Holder</text>
+  <text x="185" y="176" text-anchor="middle" class="subtext">Job Scheduler · Deployment Dispatcher</text>
+
+  <!-- Redis -->
+  <rect x="335" y="128" width="230" height="60" rx="6" class="svc-data"/>
+  <text x="450" y="148" text-anchor="middle" class="label">Redis Broker</text>
+  <text x="450" y="164" text-anchor="middle" class="subtext">training_jobs queue</text>
+  <text x="450" y="176" text-anchor="middle" class="subtext">Master Lease Lock: cluster:active_api</text>
+
+  <!-- MySQL -->
+  <rect x="600" y="128" width="230" height="60" rx="6" class="svc-data"/>
+  <text x="715" y="148" text-anchor="middle" class="label">MySQL (The Global Ledger)</text>
+  <text x="715" y="164" text-anchor="middle" class="subtext">Compute Node Registry</text>
+  <text x="715" y="176" text-anchor="middle" class="subtext">VRAM Allocation Ledger</text>
+
+  <!-- Reaper Block -->
+  <rect x="70" y="210" width="760" height="50" rx="6" style="fill: #fee2e2; stroke: #ef4444; stroke-width: 0.5px;"/>
+  <text x="450" y="232" text-anchor="middle" class="label" style="fill: #991b1b;">Cluster Reaper Daemon</text>
+  <text x="450" y="248" text-anchor="middle" class="subtext" style="fill: #b91c1c;">Monitors Heartbeats · Clears Stale VRAM · Fails Abandoned Jobs</text>
+
+  <!-- ── TIER 2: SHARED STORAGE ─────────────────────────── -->
+  <text x="50" y="320" class="tier-label">2. SHARED DATA HUB</text>
+  <rect x="50" y="330" width="800" height="70" rx="10" class="svc-files"/>
+  <text x="450" y="360" text-anchor="middle" class="label">Samba Adapter Hub</text>
+  <text x="450" y="380" text-anchor="middle" class="subtext">/datasets (Source JSONL)  ·  /models (Fine-Tuned LoRA Adapters)  ·  /.hf_cache (Base Backbones)</text>
+
+  <!-- ── TIER 3: COMPUTE MESH ────────────────────────────── -->
+  <text x="50" y="430" class="tier-label">3. DISTRIBUTED COMPUTE MESH (GPU NODES)</text>
+  <rect x="50" y="440" width="800" height="520" rx="12" class="mesh-box"/>
+
+  <!-- NODE 1 (Laptop) -->
+  <rect x="75" y="465" width="350" height="470" rx="10" class="node-box"/>
+  <text x="250" y="485" text-anchor="middle" class="label">NODE: rtx4060_laptop_main</text>
+
+  <!-- Node Agent -->
+  <rect x="95" y="505" width="310" height="100" rx="6" class="svc-worker"/>
+  <text x="250" y="525" text-anchor="middle" class="label">Worker Agent</text>
+  <text x="250" y="545" text-anchor="middle" class="subtext">💓 Heartbeat (nvidia-smi Telemetry)</text>
+  <text x="250" y="565" text-anchor="middle" class="subtext">👀 Inference Supervisor (Deployment Watcher)</text>
+  <text x="250" y="585" text-anchor="middle" class="subtext">👷 Job Consumer (Competitive BRPOP)</text>
+
+  <!-- Training Process -->
+  <rect x="95" y="625" width="310" height="110" rx="6" style="fill: #fff; stroke: #ec4899; stroke-dasharray: 4 2;"/>
+  <text x="250" y="645" text-anchor="middle" class="label" style="fill: #ec4899;">Unsloth Training Subprocess</text>
+  <text x="250" y="665" text-anchor="middle" class="subtext">Profile: LAPTOP (SeqLen 1024 / Batch 1)</text>
+  <text x="250" y="685" text-anchor="middle" class="subtext">Staging: Samba → /tmp/training</text>
+  <text x="250" y="705" text-anchor="middle" class="subtext">Artifact: Export to /models/ftm_*</text>
+
+  <!-- Inference Process -->
+  <rect x="95" y="755" width="310" height="100" rx="6" class="svc-vllm"/>
+  <text x="250" y="775" text-anchor="middle" class="label">vLLM Inference Server</text>
+  <text x="250" y="795" text-anchor="middle" class="subtext">Status: ACTIVE | Port: 8001</text>
+  <text x="250" y="815" text-anchor="middle" class="subtext">Backbone: Llama-3.2-1B</text>
+  <text x="250" y="835" text-anchor="middle" class="label" style="fill: #534ab7;">+ LoRA: david-ft</text>
+
+  <!-- Telemetry Line -->
+  <path d="M250 505 Q 250 300 650 190" class="conn" stroke-dasharray="4 2" marker-end="url(#arrow)"/>
+  <text x="260" y="320" class="conn-label" transform="rotate(-15 260 320)">Heartbeat / VRAM Telemetry</text>
+
+  <!-- NODE 2 (Generic Server Placeholder) -->
+  <rect x="475" y="465" width="350" height="230" rx="10" class="node-box" style="stroke-dasharray: 3 3; opacity: 0.6;"/>
+  <text x="650" y="485" text-anchor="middle" class="label">NODE: gpu_server_01 (Offline/Scaling)</text>
+  <text x="650" y="580" text-anchor="middle" class="subtext">Waiting for Agent startup...</text>
+
+  <!-- Resolver Path (Stage 6) -->
+  <rect x="475" y="720" width="350" height="215" rx="10" class="svc-api" style="fill: #f0f7ff;"/>
+  <text x="650" y="745" text-anchor="middle" class="label">Stage 6: Global Load Balancer</text>
+  <text x="650" y="770" text-anchor="middle" class="subtext">Called by: Core API Orchestrator</text>
+
+  <rect x="500" y="790" width="300" height="100" rx="6" style="fill: #ffffff; stroke: #185fa5; stroke-width: 0.5px;"/>
+  <text x="650" y="810" text-anchor="middle" class="label">InferenceResolver.resolve_vllm_url()</text>
+  <text x="650" y="835" text-anchor="middle" class="subtext">1. Check 'inference_deployments'</text>
+  <text x="650" y="855" text-anchor="middle" class="subtext">2. Filter by Healthy Node Heartbeat</text>
+  <text x="650" y="875" text-anchor="middle" class="subtext">3. Route request to Node IP:Port</text>
+
+  <!-- Routing Arrow -->
+  <path d="M500 840 L405 840" class="conn" marker-end="url(#arrow)"/>
+  <text x="415" y="835" class="conn-label">Forward Chat</text>
+
+</svg>

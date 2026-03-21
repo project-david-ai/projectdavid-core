@@ -13,6 +13,7 @@ from projectdavid_common.utilities.identifier_service import IdentifierService
 from projectdavid_orm.projectdavid_orm.models import FileStorage
 from sqlalchemy.orm import Session
 
+import docker  # Required: pip install docker
 from src.api.training.db.database import SessionLocal
 from src.api.training.models.models import (ComputeNode, Dataset,
                                             FineTunedModel, GPUAllocation,
@@ -27,11 +28,19 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 QUEUE_NAME = "training_jobs"
 LOCAL_SCRATCH = "/tmp/training"
 SHARED_PATH = os.getenv("SHARED_PATH", "/mnt/training_data")
+HF_CACHE_PATH = os.getenv("HF_CACHE_PATH", "/root/.cache/huggingface")
 
-# Unique ID for this physical machine (e.g., node_rtx4060_laptop)
+# Unique ID for this physical machine
 NODE_ID = os.getenv("NODE_ID", f"node_{socket.gethostname()}")
 
 os.makedirs(LOCAL_SCRATCH, exist_ok=True)
+
+# Initialize Docker client to manage inference containers on the host
+try:
+    docker_client = docker.from_env()
+except Exception as e:
+    logging_utility.error(f"Failed to initialize Docker SDK: {e}")
+    docker_client = None
 
 # ─── INFRASTRUCTURE HELPERS ─────────────────────────────────────────────────
 
@@ -57,7 +66,6 @@ def get_samba_client():
 def start_heartbeat():
     """
     Background thread to keep this node's telemetry fresh in the DB.
-    Allows the API Scheduler to see real-time VRAM availability.
     """
 
     def heartbeat_loop():
@@ -70,114 +78,197 @@ def start_heartbeat():
                 logging_utility.error(f"Heartbeat failed for {NODE_ID}: {e}")
             finally:
                 db.close()
-            time.sleep(15)  # Update cluster registry every 15 seconds
+            time.sleep(15)
 
     thread = threading.Thread(target=heartbeat_loop, daemon=True)
     thread.start()
 
 
-# ─── INFERENCE DEPLOYMENT WATCHER (v2.0 Milestone) ──────────────────────────
+# ─── INFERENCE CLUSTER LOGIC (v2.0 Milestone) ───────────────────────────────
 
 
-def start_deployment_watcher():
+def manage_vllm_container(deployment: InferenceDeployment, action: str = "start"):
     """
-    Background thread that monitors for 'pending' inference deployments
-    assigned to this node.
+    Physically manages the vLLM container lifecycle on the host machine.
+    Uses the Docker SDK to spawn containers with NVIDIA runtime.
+    """
+    if not docker_client:
+        logging_utility.error("Docker client not available. Cannot manage containers.")
+        return False
+
+    # Name is based on the deployment ID to allow multiple instances on one node
+    container_name = f"pd_vllm_{deployment.id}"
+
+    if action == "stop":
+        try:
+            container = docker_client.containers.get(container_name)
+            container.remove(force=True)
+            logging_utility.info(f"🛑 Stopped vLLM container: {container_name}")
+            return True
+        except docker.errors.NotFound:
+            return True
+        except Exception as e:
+            logging_utility.error(f"Error stopping container {container_name}: {e}")
+            return False
+
+    # 1. Prepare Environment
+    env = {
+        "HF_TOKEN": os.getenv("HF_TOKEN"),
+        "NVIDIA_VISIBLE_DEVICES": "all",
+        # 🎯 BYPASS: Tells the NVIDIA driver to ignore the 'CUDA >= 12.9' requirement
+        "NVIDIA_DISABLE_REQUIRE": "true",
+        "PYTORCH_ALLOC_CONF": "expandable_segments:True",
+    }
+
+    # 2. Construct Command
+    # We use the specific deployment metadata from the Mesh Ledger
+    cmd = f"--model {deployment.base_model_id} --dtype float16 --max-model-len 2048 --gpu-memory-utilization 0.5"
+    if deployment.fine_tuned_model_id:
+        adapter_path = f"/mnt/training_data/{deployment.fine_tuned_model.storage_path}"
+        cmd += f" --enable-lora --lora-modules {deployment.fine_tuned_model_id}={adapter_path}"
+
+    try:
+        # Cleanup any existing container with this name
+        manage_vllm_container(deployment, action="stop")
+
+        # 🎯 HARDENED GPU REQUEST: Explicitly request compute/utility for WSL2
+        gpu_config = docker.types.DeviceRequest(
+            count=-1, capabilities=[['gpu', 'compute', 'utility']]
+        )
+
+        logging_utility.info(
+            f"🚢 Spawning vLLM: {container_name} for model {deployment.base_model_id}"
+        )
+        docker_client.containers.run(
+            "vllm/vllm-openai:latest",
+            name=container_name,
+            command=cmd,
+            environment=env,
+            detach=True,
+            device_requests=[gpu_config],
+            runtime="nvidia",  # Required for GPU passthrough
+            network="projectdavid-core_my_custom_network",
+            ports={f"8000/tcp": deployment.port},
+            volumes={
+                HF_CACHE_PATH: {"bind": "/root/.cache/huggingface", "mode": "rw"},
+                SHARED_PATH: {"bind": "/mnt/training_data", "mode": "rw"},
+            },
+        )
+        return True
+    except Exception as e:
+        logging_utility.error(f"Docker spawn failed for {container_name}: {e}")
+        return False
+
+
+def start_deployment_supervisor():
+    """
+    Background thread that ensures physical vLLM state matches the DB ledger.
+    Actively heals the node if a container crashes.
     """
 
-    def watcher_loop():
-        logging_utility.info(f"👀 Deployment Watcher active for node: {NODE_ID}")
+    def supervisor_loop():
+        logging_utility.info(f"👀 Inference Supervisor active for node: {NODE_ID}")
         while True:
             db = SessionLocal()
             try:
-                # Find deployments intended for this machine that haven't started yet
-                pending_deployments = (
+                # 1. Fetch active assignments for this node from the Global Ledger
+                active_deployments = (
                     db.query(InferenceDeployment)
                     .filter(
                         InferenceDeployment.node_id == NODE_ID,
-                        InferenceDeployment.status == StatusEnum.pending,
+                        InferenceDeployment.status.in_([StatusEnum.pending, StatusEnum.active]),
                     )
                     .all()
                 )
 
-                for dep in pending_deployments:
-                    logging_utility.info(
-                        f"🆕 DEPLOYMENT SIGNAL: Preparing to host {dep.base_model_id}..."
-                    )
+                for dep in active_deployments:
+                    # 2. Check physical container state
+                    container_name = f"pd_vllm_{dep.id}"
+                    is_running = False
+                    try:
+                        c = docker_client.containers.get(container_name)
+                        is_running = c.status == "running"
+                    except:
+                        pass
 
-                    # 💡 ARCHITECTURAL NOTE:
-                    # In a production multi-node setup, this is where the worker calls
-                    # a local shell script or Docker API to trigger:
-                    # 'platform-api docker-manager --mode up --services vllm'
+                    # 3. Synchronize: Start if pending or crashed
+                    if dep.status == StatusEnum.pending or not is_running:
+                        logging_utility.warning(f"🚨 Deployment drift! Syncing {container_name}")
+                        if manage_vllm_container(dep, action="start"):
+                            dep.status = StatusEnum.active
+                            # Ensure VRAM is locked in the ledger
+                            existing_alloc = (
+                                db.query(GPUAllocation)
+                                .filter(
+                                    GPUAllocation.node_id == NODE_ID,
+                                    (
+                                        (GPUAllocation.model_id == dep.fine_tuned_model_id)
+                                        if dep.fine_tuned_model_id
+                                        else (GPUAllocation.job_id == None)
+                                    ),
+                                )
+                                .first()
+                            )
 
-                    # For current verification, we simulate the startup success
-                    dep.status = StatusEnum.active
-                    dep.last_seen = int(time.time())
-                    db.commit()
-                    logging_utility.info(
-                        f"🚀 DEPLOYMENT ACTIVE: {dep.id} now serving on port {dep.port}"
-                    )
+                            if not existing_alloc:
+                                db.add(
+                                    GPUAllocation(
+                                        node_id=NODE_ID,
+                                        model_id=dep.fine_tuned_model_id,
+                                        vram_reserved_gb=4.0,
+                                    )
+                                )
+                            db.commit()
 
             except Exception as e:
-                logging_utility.error(f"Deployment Watcher Error: {e}")
+                logging_utility.error(f"Supervisor Loop Error: {e}")
             finally:
                 db.close()
-            time.sleep(10)  # Poll every 10 seconds
+            time.sleep(20)
 
-    thread = threading.Thread(target=watcher_loop, daemon=True)
+    thread = threading.Thread(target=supervisor_loop, daemon=True)
     thread.start()
 
 
-# ─── JOB EXECUTION LOGIC ────────────────────────────────────────────────────
+# ─── TRAINING JOB LOGIC ─────────────────────────────────────────────────────
 
 
 def process_job(job_id: str, user_id: str):
     """
-    Claims the job, reserves VRAM, stages data, and executes Unsloth.
+    Standard LoRA training path. Reserved VRAM is released on completion.
     """
     db: Session = SessionLocal()
     local_data_path = None
     allocation_id = None
 
     try:
-        # 1. Hydrate Metadata
         job = db.query(TrainingJob).filter(TrainingJob.id == job_id).first()
-        if not job:
-            logging_utility.error(f"Worker Error: Job {job_id} not found.")
-            return
-
         dataset = db.query(Dataset).filter(Dataset.id == job.dataset_id).first()
 
-        # 2. CLUSTER CLAIM: Link job to this physical node
-        logging_utility.info(f"🚀 Node {NODE_ID} claiming Job: {job_id}")
+        logging_utility.info(f"🚀 Node {NODE_ID} claiming Training Job: {job_id}")
         job.status = StatusEnum.in_progress
         job.node_id = NODE_ID
         job.started_at = int(time.time())
 
-        # 3. VRAM RESERVATION: Update the cluster ledger
-        vram_requirement = 4.0
-        new_allocation = GPUAllocation(
-            node_id=NODE_ID, job_id=job_id, vram_reserved_gb=vram_requirement
-        )
+        # VRAM Ledger Lock (5GB for Training)
+        new_allocation = GPUAllocation(node_id=NODE_ID, job_id=job_id, vram_reserved_gb=5.0)
         db.add(new_allocation)
         db.commit()
         db.refresh(new_allocation)
         allocation_id = new_allocation.id
 
-        # 4. DATA STAGING: Samba Hub -> Local NVMe Scratch
+        # Data Staging
         storage = db.query(FileStorage).filter(FileStorage.file_id == dataset.file_id).first()
         local_data_path = os.path.join(LOCAL_SCRATCH, f"{job_id}.jsonl")
         smb = get_samba_client()
         smb.download_file(storage.storage_path, local_data_path)
 
-        # 5. PREPARE EXPORT PATH
+        # Output Artifact Dir
         model_uuid = IdentifierService.generate_prefixed_id("ftm")
         model_rel_path = f"models/{model_uuid}"
         full_output_path = os.path.join(SHARED_PATH, model_rel_path)
         os.makedirs(full_output_path, exist_ok=True)
 
-        # 6. EXECUTE ML SUBPROCESS
-        training_profile = os.getenv("TRAINING_PROFILE", "standard")
         cmd = [
             "python",
             "src/api/training/unsloth_train.py",
@@ -188,18 +279,15 @@ def process_job(job_id: str, user_id: str):
             "--out",
             full_output_path,
             "--profile",
-            training_profile,
+            os.getenv("TRAINING_PROFILE", "laptop"),
         ]
 
-        logging_utility.info(f"Spawning training subprocess [Profile: {training_profile}]")
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-
         for line in process.stdout:
             print(f"[{job_id}] {line.strip()}", flush=True)
         process.wait()
 
         if process.returncode == 0:
-            # 7. REGISTRATION: Finalize the result in the Registry
             new_ftm = FineTunedModel(
                 id=model_uuid,
                 user_id=user_id,
@@ -209,7 +297,6 @@ def process_job(job_id: str, user_id: str):
                 storage_path=model_rel_path,
                 node_id=NODE_ID,
                 status=StatusEnum.active,
-                is_active=False,
                 created_at=int(time.time()),
                 updated_at=int(time.time()),
             )
@@ -222,22 +309,16 @@ def process_job(job_id: str, user_id: str):
             raise subprocess.CalledProcessError(process.returncode, cmd)
 
     except Exception as e:
-        error_msg = str(e)
-        logging_utility.error(f"❌ Node {NODE_ID} Job Failure ({job_id}): {error_msg}")
+        logging_utility.error(f"❌ Training Failure ({job_id}): {e}")
         if job:
             job.status = StatusEnum.failed
-            job.failed_at = int(time.time())
-            job.last_error = error_msg
+            job.last_error = str(e)
             db.commit()
-
     finally:
-        # 8. CLEANUP: Release VRAM reservation
+        # Atomic release of VRAM Ledger
         if allocation_id:
-            try:
-                db.query(GPUAllocation).filter(GPUAllocation.id == allocation_id).delete()
-                db.commit()
-            except:
-                pass
+            db.query(GPUAllocation).filter(GPUAllocation.id == allocation_id).delete()
+            db.commit()
         if local_data_path and os.path.exists(local_data_path):
             try:
                 os.remove(local_data_path)
@@ -246,11 +327,10 @@ def process_job(job_id: str, user_id: str):
         db.close()
 
 
-# ─── MAIN LISTENER LOOP ─────────────────────────────────────────────────────
+# ─── MAIN ───────────────────────────────────────────────────────────────────
 
 
 def main():
-    # 1. Initial Node Registration
     db = SessionLocal()
     try:
         node_heartbeat(db, NODE_ID)
@@ -258,13 +338,13 @@ def main():
     finally:
         db.close()
 
-    # 2. Start Background Services
+    # Launch Cluster Daemons
     start_heartbeat()
-    start_deployment_watcher()
+    start_deployment_supervisor()
 
-    # 3. Targeted BRPOP Loop (The Training Listener)
+    # Handoff Loop
     r = get_redis()
-    logging_utility.info(f"👷 Cluster Worker {NODE_ID} listening for Training Jobs...")
+    logging_utility.info(f"👷 Cluster Worker {NODE_ID} listening for jobs...")
 
     while True:
         try:
@@ -273,17 +353,15 @@ def main():
                 _, data = result
                 payload = json.loads(data)
 
-                # DISPATCH CHECK
-                target = payload.get("target_node")
-                if target and target != NODE_ID:
-                    logging_utility.debug(f"Re-queueing job {payload['job_id']} for {target}.")
+                # Targeted Dispatch Check
+                if payload.get("target_node") and payload.get("target_node") != NODE_ID:
                     r.rpush(QUEUE_NAME, data)
                     time.sleep(1)
                     continue
 
                 process_job(payload["job_id"], payload["user_id"])
         except Exception as e:
-            logging_utility.error(f"Worker Loop Critical Error: {e}")
+            logging_utility.error(f"Critical Loop Error: {e}")
             time.sleep(5)
 
 
