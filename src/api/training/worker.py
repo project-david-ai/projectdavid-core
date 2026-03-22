@@ -149,7 +149,8 @@ def manage_vllm_container(deployment: InferenceDeployment, action: str = "start"
             container.remove(force=True)
             logging_utility.info(f"🛑 Stopped vLLM container: {container_name}")
             return container_name
-        except:
+        except Exception as e:
+            logging_utility.warning(f"⚠️  Could not stop container {container_name}: {e}")
             return container_name
 
     # ── 1. Prepare Environment & Command ─────────────────────────────────
@@ -243,7 +244,7 @@ def start_deployment_supervisor():
                     try:
                         c = docker_client.containers.get(container_name)
                         is_running = c.status == "running"
-                    except:
+                    except Exception:
                         pass
 
                     if dep.status == StatusEnum.pending or not is_running:
@@ -265,7 +266,7 @@ def start_deployment_supervisor():
                                     (
                                         (GPUAllocation.model_id == dep.fine_tuned_model_id)
                                         if dep.fine_tuned_model_id
-                                        else (GPUAllocation.job_id == None)
+                                        else (GPUAllocation.job_id.is_(None))
                                     ),
                                 )
                                 .first()

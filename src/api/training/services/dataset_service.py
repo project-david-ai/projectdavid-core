@@ -53,7 +53,7 @@ def _split_and_validate(
     """
     import json
 
-    lines = [l.strip() for l in file_bytes.decode("utf-8").splitlines() if l.strip()]
+    lines = [line.strip() for line in file_bytes.decode("utf-8").splitlines() if line.strip()]
 
     if not lines:
         raise ValueError("Dataset file is empty.")

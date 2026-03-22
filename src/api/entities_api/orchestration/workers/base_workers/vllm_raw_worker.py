@@ -148,8 +148,6 @@ class VLLMDefaultBaseWorker(
 
         _original_assistant_id = assistant_id
 
-        redis = self.redis
-        stream_key = f"stream:{run_id}"
         stop_event = self.start_cancellation_monitor(run_id)
 
         accumulated: str = ""
