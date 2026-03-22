@@ -27,12 +27,6 @@ router = APIRouter(
 )
 
 
-@router.get("/auth/validate-key")
-async def validate_key(auth_key: ApiKey = Depends(get_api_key)):
-    """Internal endpoint for service-to-service API key validation."""
-    return {"user_id": auth_key.user_id, "valid": True}
-
-
 def verify_user_access(
     requested_user_id: str,
     authenticated_key: ApiKeyModel,

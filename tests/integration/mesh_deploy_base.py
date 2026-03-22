@@ -40,7 +40,7 @@ def run_base_deployment():
     for i in range(20):
         # We check the actual deployment list
         # Note: We look for the deployment where fine_tuned_model_id is None
-        models = client.models.list()
+
         # In a real setup, we'd add a 'client.models.list_deployments()' method
         # For now, we verify the node heartbeat and status via the worker logs
         print(f"   - Polling cluster state (Attempt {i+1})...", end="\r")

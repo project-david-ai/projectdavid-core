@@ -83,14 +83,15 @@ def deactivate_all_models(db: Session, user_id: str) -> dict:
     CLEAN SLATE: Physically removes deployments and allocations to
     satisfy UniqueConstraints and free up hardware ports.
     """
-    # 1. Reset Metadata flags for the user
+    # 1. Reset Metadata flags for the user — E712 fix: use is_active directly
     db.query(FineTunedModel).filter(
-        FineTunedModel.user_id == user_id, FineTunedModel.is_active == True
+        FineTunedModel.user_id == user_id, FineTunedModel.is_active
     ).update({"is_active": False, "node_id": None}, synchronize_session=False)
 
     # 2. HARD DELETE Deployments: This clears the uq_node_port_deployment constraint
     # so we can insert new models on the same port immediately.
-    db.query(InferenceDeployment).filter(InferenceDeployment.node_id != None).delete(
+    # E711 fix: use is_not(None) instead of != None
+    db.query(InferenceDeployment).filter(InferenceDeployment.node_id.is_not(None)).delete(
         synchronize_session=False
     )
 
