@@ -1,28 +1,11 @@
-#!src/api/entities_api/cli/generate_docker_compose.py
-"""
-Generate a development-friendly docker-compose.yml.
-
-All sensitive values (DB passwords, secret keys, etc.) are expressed as
-${ENV_VAR:?message} placeholders — Docker Compose will refuse to start and
-print a clear error if any required variable is missing or empty, rather
-than silently using an insecure default.
-
-The docker_manager orchestration script generates real secrets and writes
-them into .env on first run, so the :? guard should never fire in normal use.
-It exists as a last line of defence if someone runs `docker compose up`
-directly without going through the manager.
-"""
 from pathlib import Path
 
 
-# --------------------------------------------------------------------------- #
-# main generator
-# --------------------------------------------------------------------------- #
 def generate_dev_docker_compose() -> None:
-    # project root — file lives at src/api/entities_api/cli/generate_docker_compose.py
-    # so we must walk up 5 levels: cli → entities_api → api → src → repo root
-    project_root = Path(__file__).resolve().parents[4]
-    output_path = project_root / "docker-compose.yml"
+
+    # Use the current working directory (where the user runs the command)
+    # This ensures it drops into the project root regardless of where the package is installed.
+    output_path = Path.cwd() / "docker-compose.yml"
 
     if output_path.exists():
         print(f"⚠️  {output_path.name} already exists – generation skipped.")
@@ -30,15 +13,16 @@ def generate_dev_docker_compose() -> None:
 
     compose_yaml = """\
 services:
+
   db:
     image: mysql:8.0
     container_name: my_mysql_cosmic_catalyst
     restart: always
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is not set. Run the docker-manager to generate secrets.}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: entities_db
       MYSQL_USER: api_user
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is not set. Run the docker-manager to generate secrets.}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
     volumes:
       - mysql_data:/var/lib/mysql
     ports:
@@ -100,9 +84,21 @@ services:
       - ./docker/searxng:/etc/searxng
     environment:
       - SEARXNG_BASE_URL=http://localhost:8080/
-      - SEARXNG_SECRET_KEY=${SEARXNG_SECRET_KEY:?SEARXNG_SECRET_KEY is not set. Run the docker-manager to generate secrets.}
+      - SEARXNG_SECRET_KEY=${SEARXNG_SECRET_KEY}
     depends_on:
       - redis
+    networks:
+      - my_custom_network
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger_ui
+    restart: always
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"
+      - "14250:14250"
     networks:
       - my_custom_network
 
@@ -121,22 +117,11 @@ services:
     networks:
       - my_custom_network
 
-  jaeger:
-    image: jaegertracing/all-in-one:latest
-    container_name: jaeger_ui
-    restart: always
-    environment:
-      - COLLECTOR_OTLP_ENABLED=true
-    ports:
-      - "16686:16686"
-      - "14250:14250"
-    networks:
-      - my_custom_network
-
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
     restart: unless-stopped
+    profiles: ["ai"]
     ports:
       - "11434:11434"
     volumes:
@@ -148,20 +133,99 @@ services:
     image: vllm/vllm-openai:latest
     container_name: vllm_server
     restart: unless-stopped
+    profiles: [ "ai" ]
     runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - HF_TOKEN=${HF_TOKEN}
+      - PYTORCH_ALLOC_CONF=expandable_segments:True
     volumes:
-      - ${HF_CACHE_PATH:?HF_CACHE_PATH is not set. Run the docker-manager to configure it.}:/root/.cache/huggingface
+      - ${HF_CACHE_PATH}:/root/.cache/huggingface
+      - ${SHARED_PATH}:/mnt/training_data
     ports:
       - "8001:8000"
+    # The command now dynamically expands the flags provided by the Manager
     command: >
-      --model ${VLLM_MODEL:?VLLM_MODEL is not set. Run the docker-manager to configure it.}
+      --model ${VLLM_MODEL}
+      ${VLLM_EXTRA_FLAGS}
       --dtype float16
-      --quantization fp8
-      --max-model-len 4096
-      --gpu-memory-utilization 0.85
+      --max-model-len 2048
+      --gpu-memory-utilization 0.5
+    networks:
+      - my_custom_network
+
+  # ---------------------------------------------------------------------------
+  # training-api — Fine-tuning REST API (no GPU required)
+  # Opt-in: docker compose --profile training up training-api
+  # ---------------------------------------------------------------------------
+  training-api:
+    image: thanosprime/projectdavid-core-training-api:latest
+    build:
+      context: .
+      dockerfile: docker/training/Dockerfile
+    container_name: training_api
+    restart: unless-stopped
+    profiles: ["training"]
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - SECRET_KEY=${SECRET_KEY}
+      - DEFAULT_SECRET_KEY=${DEFAULT_SECRET_KEY}
+      - REDIS_URL=redis://redis:6379/0
+      - ASSISTANTS_BASE_URL=http://api:9000
+      - WORKER_API_KEY=${ADMIN_API_KEY}
+      - SANDBOX_AUTH_SECRET=${SANDBOX_AUTH_SECRET}
+      - SHARED_PATH=/mnt/training_data
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "9001:9001"
+    volumes:
+      - ${SHARED_PATH:-./shared_data}:/mnt/training_data
+      - ./src:/app/src
+    depends_on:
+      - redis
+    networks:
+      - my_custom_network
+
+  # ---------------------------------------------------------------------------
+  # training-worker — GPU training runner (requires nvidia-container-toolkit)
+  # Opt-in: docker compose --profile training up training-worker
+  # ---------------------------------------------------------------------------
+  training-worker:
+    image: thanosprime/projectdavid-core-training-worker:latest
+    build:
+      context: .
+      dockerfile: docker/training/Dockerfile
+    container_name: training_worker
+    restart: unless-stopped
+    profiles: [ "training" ]
+    env_file:
+      - .env
+    runtime: nvidia
+    environment:
+      - TRAINING_PROFILE=${TRAINING_PROFILE:-standard}
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379/0
+      - ASSISTANTS_BASE_URL=http://api:9000
+      - WORKER_API_KEY=${ADMIN_API_KEY}
+      - SHARED_PATH=/mnt/training_data
+      - HF_TOKEN=${HF_TOKEN:-}
+      # FIX 1: Point HF_HOME to the local host-mounted volume for high-speed IO
+      - HF_HOME=/root/.cache/huggingface
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${SHARED_PATH:-./shared_data}:/mnt/training_data
+      # Use the high-speed host cache for base models
+      - ${HF_CACHE_PATH}:/root/.cache/huggingface
+      # FIX 2: Enable live-code sync for the worker and ML scripts
+      - ./src:/app/src
+    command: [ "python", "src/api/training/worker.py" ]
+    depends_on:
+      - redis
     networks:
       - my_custom_network
     deploy:
@@ -170,7 +234,7 @@ services:
           devices:
             - driver: nvidia
               count: all
-              capabilities: [gpu]
+              capabilities: [ gpu ]
 
   api:
     build:
@@ -200,8 +264,6 @@ services:
       - SHARED_PATH=/app/shared_data
       - ASSISTANTS_BASE_URL=http://localhost:80
       - DOWNLOAD_BASE_URL=http://localhost:80/v1/files/download
-    # Port 9000 kept open in dev for direct access / debugging.
-    # In production traffic flows through nginx on port 80.
     ports:
       - "9000:9000"
     volumes:
@@ -223,10 +285,6 @@ services:
       searxng:
         condition: service_started
       otel-collector:
-        condition: service_started
-      ollama:
-        condition: service_started
-      vllm:
         condition: service_started
     networks:
       - my_custom_network
@@ -264,7 +322,7 @@ services:
       USERID: ${SAMBA_USERID:-1000}
       GROUPID: ${SAMBA_GROUPID:-1000}
       TZ: UTC
-      USER: "samba_user;${SMBCLIENT_PASSWORD:?SMBCLIENT_PASSWORD is not set. Run the docker-manager to generate secrets.}"
+      USER: "samba_user;${SMBCLIENT_PASSWORD}"
       SHARE: "cosmic_share;/samba/share;yes;no;no;samba_user"
       GLOBAL: "server min protocol = NT1\\nserver max protocol = SMB3"
     ports:
@@ -281,12 +339,8 @@ services:
     restart: always
     ports:
       - "80:80"
-      # Uncomment when TLS certs are available:
-      # - "443:443"
     volumes:
       - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      # Uncomment when TLS certs are available:
-      # - ./docker/nginx/certs:/etc/nginx/certs:ro
     depends_on:
       - api
     networks:
@@ -303,10 +357,9 @@ networks:
     driver: bridge
 """
 
-    output_path.write_text(compose_yaml, encoding="utf-8")
-    print(f"✅  Development docker-compose.yml written → {output_path}")
+    output_path.write_text(compose_yaml)
+    print("✅ FULL docker-compose generated (AI + training are opt-in profiles).")
 
 
-# --------------------------------------------------------------------------- #
 if __name__ == "__main__":
     generate_dev_docker_compose()

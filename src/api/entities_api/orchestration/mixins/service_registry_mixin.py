@@ -34,7 +34,44 @@ class MissingParameterError(ValueError):
     pass
 
 
-class ServiceRegistryMixin(ClientFactoryMixin):
+class ServiceRegistryMixin:
+    """
+    Runtime DI container. Lazy-instantiates internal service classes and
+    caches them in self._services.
+
+    Owns:
+        _services                — dict cache of instantiated services
+        _get_service()           — instantiate-or-retrieve by class
+        _invalidate_service_cache() — force re-instantiation of a service
+        _resolve_init_parameters() — introspects __init__ sig, resolves from self
+        project_david_client     — lazily-cached Entity SDK handle (ADMIN_API_KEY)
+        conversation_truncator   — ConversationTruncator singleton
+        code_execution_client    — StreamOutput singleton
+        assistant_cache          — AssistantCache via _get_service (legacy path)
+        user_client, assistant_service, thread_service, message_service,
+        run_service, action_client, vector_store_service, files — SDK client
+                                   singletons resolved on first access
+
+    Requires on self (resolved at instantiation time via _resolve_init_parameters):
+        Any attribute matching a constructor parameter name of a registered
+        service class. Missing required params raise MissingParameterError.
+
+    Inherits from:
+        ClientFactoryMixin       — provides _get_project_david_client()
+
+    Contract:
+        ServiceRegistryMixin is the base of the MRO stack and must appear
+        first in _ProviderMixins and OrchestratorCore. AssistantCacheMixin
+        uses _get_service() as its path-2 fallback — ServiceRegistryMixin
+        must therefore be resolved before AssistantCacheMixin in the MRO.
+        Do NOT redefine _get_service() or project_david_client downstream.
+
+    Note on assistant_cache property:
+        ServiceRegistryMixin exposes assistant_cache via _get_service().
+        AssistantCacheMixin overrides this property with a four-level
+        resolution chain. AssistantCacheMixin must appear after
+        ServiceRegistryMixin in the MRO so its property wins.
+    """
 
     def _get_service(self, service_cls, *, custom_params=None):
         if not hasattr(self, "_services"):

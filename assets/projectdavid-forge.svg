@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="900" viewBox="0 0 900 900">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <style>
+      .bg { fill: #f8f9fc; }
+      .title { font-family: Georgia, serif; font-size: 22px; font-weight: 600; fill: #1e293b; }
+      .tagline { font-family: Georgia, serif; font-size: 13px; fill: #64748b; }
+      .tier-label { font-family: Georgia, serif; font-size: 11px; font-weight: 600; fill: #94a3b8; letter-spacing: 0.08em; }
+
+      /* Styles from Reference */
+      .sdk-box { fill: #e1f5ee; stroke: #0f6e56; stroke-width: 1px; }
+      .api-box { fill: #dbeafe; stroke: #185fa5; stroke-width: 1px; }
+      .infra-box { fill: #eeedfe; stroke: #534ab7; stroke-width: 1px; }
+      .worker-box { fill: #fdf2f8; stroke: #ec4899; stroke-width: 1px; stroke-dasharray: 4 2; }
+      .storage-box { fill: #dcfce7; stroke: #22c55e; stroke-width: 1px; }
+
+      .label { font-family: Georgia, serif; font-size: 13px; font-weight: 600; fill: #1e293b; }
+      .subtext { font-family: Georgia, serif; font-size: 10px; fill: #64748b; }
+      .conn-text { font-family: Georgia, serif; font-size: 10px; fill: #94a3b8; font-style: italic; }
+      .conn { stroke: #94a3b8; stroke-width: 1px; fill: none; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="900" class="bg" rx="16"/>
+
+  <!-- Header -->
+  <text x="450" y="44" text-anchor="middle" class="title">Fine-Tuning Pipeline Architecture</text>
+  <text x="450" y="64" text-anchor="middle" class="tagline">Data Ingestion · Async Preparation · GPU Orchestration · Model Registry</text>
+
+  <!-- ── PHASE 1: INGESTION (SDK) ────────────────────────── -->
+  <text x="50" y="100" class="tier-label">1. CLIENT INGESTION LAYER</text>
+  <rect x="50" y="110" width="800" height="80" rx="10" class="sdk-box"/>
+  <text x="450" y="135" text-anchor="middle" class="label">projectdavid SDK</text>
+  <text x="450" y="155" text-anchor="middle" class="subtext">datasets.create(file_path, fmt="jsonl")  →  datasets.prepare(ds_id)  →  training.create(config)</text>
+
+  <!-- Path A: File Upload -->
+  <path d="M250 190 L250 250" class="conn" marker-end="url(#arrow)"/>
+  <text x="160" y="225" class="conn-text">A. Upload Bytes</text>
+
+  <!-- Path B: Metadata Register -->
+  <path d="M650 190 L650 250" class="conn" marker-end="url(#arrow)"/>
+  <text x="660" y="225" class="conn-text">B. Register Metadata</text>
+
+  <!-- ── PHASE 2: API SERVICES ───────────────────────────── -->
+  <text x="50" y="280" class="tier-label">2. ORCHESTRATION &amp; PREPARATION</text>
+
+  <!-- Core API -->
+  <rect x="50" y="290" width="380" height="120" rx="8" class="api-box"/>
+  <text x="240" y="315" text-anchor="middle" class="label">Core API (Port 9000)</text>
+  <text x="240" y="335" text-anchor="middle" class="subtext">Endpoint: /v1/uploads</text>
+  <text x="240" y="355" text-anchor="middle" class="subtext">Action: Persist to Samba share</text>
+  <text x="240" y="375" text-anchor="middle" class="subtext">Naming: {file_id}_{filename}</text>
+
+  <!-- Training API -->
+  <rect x="470" y="290" width="380" height="120" rx="8" class="api-box"/>
+  <text x="660" y="315" text-anchor="middle" class="label">Training API (Port 9001)</text>
+  <text x="660" y="335" text-anchor="middle" class="subtext">Endpoint: /v1/datasets/prepare (Async)</text>
+  <text x="660" y="355" text-anchor="middle" class="subtext">Logic: Direct Samba Read → Validate Format</text>
+  <text x="660" y="375" text-anchor="middle" class="subtext">Status: Pending → Active</text>
+
+  <!-- Preparation Connector (Training API to Samba) -->
+  <path d="M660 410 L660 460 L750 460 L750 540" class="conn" marker-end="url(#arrow)"/>
+  <text x="670" y="450" class="conn-text">Direct SMB Read</text>
+
+  <!-- ── PHASE 3: INFRASTRUCTURE (THE HUB) ───────────────── -->
+  <text x="50" y="530" class="tier-label">3. PERSISTENCE &amp; MESSAGING HUB</text>
+
+  <!-- Database -->
+  <rect x="50" y="540" width="250" height="80" rx="8" class="infra-box"/>
+  <text x="175" y="565" text-anchor="middle" class="label">MySQL (Shared DB)</text>
+  <text x="175" y="585" text-anchor="middle" class="subtext">Tables: datasets, jobs, models</text>
+  <text x="175" y="600" text-anchor="middle" class="subtext">Source of Truth</text>
+
+  <!-- Redis -->
+  <rect x="325" y="540" width="250" height="80" rx="8" class="infra-box"/>
+  <text x="450" y="565" text-anchor="middle" class="label">Redis Queue</text>
+  <text x="450" y="585" text-anchor="middle" class="subtext">Key: "training_jobs"</text>
+  <text x="450" y="600" text-anchor="middle" class="subtext">Pattern: LPUSH / BRPOP</text>
+
+  <!-- Samba -->
+  <rect x="600" y="540" width="250" height="80" rx="8" class="storage-box"/>
+  <text x="725" y="565" text-anchor="middle" class="label">Samba (Shared Path)</text>
+  <text x="725" y="585" text-anchor="middle" class="subtext">/datasets/{file_id}*</text>
+  <text x="725" y="600" text-anchor="middle" class="subtext">/models/{ftm_id}/adapters</text>
+
+  <!-- Job Submission Flow -->
+  <path d="M660 410 L660 480 L450 480 L450 540" class="conn" marker-end="url(#arrow)"/>
+  <text x="455" y="500" class="conn-text">training.create → LPUSH</text>
+
+  <!-- ── PHASE 4: EXECUTION (WORKER) ─────────────────────── -->
+  <text x="50" y="720" class="tier-label">4. GPU EXECUTION LAYER</text>
+
+  <rect x="50" y="730" width="800" height="120" rx="12" class="worker-box"/>
+  <text x="450" y="755" text-anchor="middle" class="label">training-worker (GPU Node)</text>
+  <text x="450" y="775" text-anchor="middle" class="subtext">Redis BRPOP → Fetch Config from MySQL → Stage Dataset from Samba to Local Scratch (/tmp)</text>
+
+  <!-- Subprocess Loop -->
+  <rect x="250" y="790" width="400" height="40" rx="6" style="fill: #fff; stroke: #ec4899; stroke-width: 0.5px;"/>
+  <text x="450" y="815" text-anchor="middle" class="label" style="fill: #ec4899; font-size: 11px;">Subprocess: python unsloth_train.py --config config.yaml</text>
+
+  <!-- Worker Pull from Redis -->
+  <path d="M450 620 L450 730" class="conn" marker-end="url(#arrow)"/>
+  <text x="455" y="680" class="conn-text">BRPOP</text>
+
+  <!-- Worker Save Weights to Samba -->
+  <path d="M800 730 L800 620" class="conn" marker-end="url(#arrow)"/>
+  <text x="805" y="680" class="conn-text">Export Artifacts</text>
+
+  <!-- Worker Update DB -->
+  <path d="M100 730 L100 620" class="conn" marker-end="url(#arrow)"/>
+  <text x="25" y="680" class="conn-text">Update Status/Register FTM</text>
+
+</svg>

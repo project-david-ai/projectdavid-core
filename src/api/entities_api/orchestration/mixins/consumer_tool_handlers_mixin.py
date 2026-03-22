@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 from typing import Any, AsyncGenerator, Dict, Optional
 
 from dotenv import load_dotenv
@@ -12,8 +11,6 @@ from projectdavid_common.validation import StatusEnum
 
 from src.api.entities_api.constants.platform import ERROR_NO_CONTENT
 from src.api.entities_api.services.logging_service import LoggingUtility
-from src.api.entities_api.services.native_execution_service import \
-    NativeExecutionService
 
 load_dotenv()
 LOG = LoggingUtility()
@@ -22,8 +19,41 @@ logger = logging.getLogger(__name__)
 
 class ConsumerToolHandlersMixin:
     """
-    Level 2 Refactored Mixin: Server-side Tool Logic.
-    Shifted error orchestration logic to the SDK to support agentic self-correction.
+    Server-side tool output persistence and run lifecycle management.
+    Level 2 refactor: all SDK client calls replaced with self._native_exec.
+
+    Owns:
+        submit_tool_output()      — async, persists tool result to thread and
+                                    updates Action status
+        _submit_fallback_error()  — async, last-resort error persistence
+        _handover_to_consumer()   — async generator, records Action and yields
+                                    tool_call_manifest for SDK-managed tools
+        finalize_conversation()   — async, saves assistant reply and marks run
+                                    complete via asyncio.to_thread
+        handle_error()            — async, saves terminal error and marks run failed
+        _save_assistant_message() — sync internal helper called via to_thread,
+                                    uses _native_exec.message_svc and run_svc
+                                    directly to avoid async context issues
+
+    Requires on self:
+        self._native_exec         — NativeExecMixin, used throughout for all
+                                    DB operations (submit_tool_output,
+                                    update_action_status, create_action,
+                                    update_run_status, message_svc, run_svc)
+
+    Called by:
+        PlatformToolHandlersMixin — via _submit_platform_tool_output()
+                                    (explicit isinstance guard enforced)
+        ToolRoutingMixin          — via _handover_to_consumer()
+        DelegationMixin           — via submit_tool_output() directly
+        CodeInterpreterMixin      — finalisation path
+
+    Contract:
+        submit_tool_output() tolerates action=None — tool output is still
+        persisted to the thread but action status update is skipped with a
+        warning. This handles the case where create_action() failed upstream
+        (e.g. during delegation). Do NOT redefine submit_tool_output() or
+        finalize_conversation() on any subclass.
     """
 
     async def submit_tool_output(

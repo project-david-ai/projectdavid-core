@@ -1,0 +1,129 @@
+# src/api/training/routers/fine_tuned_models_router.py
+
+from typing import Optional
+
+from fastapi import APIRouter, Depends
+from projectdavid_common import ValidationInterface
+from sqlalchemy.orm import Session
+
+from src.api.training.db.database import get_db
+from src.api.training.dependencies import get_current_user_id
+from src.api.training.services import model_registry_service
+
+router = APIRouter()
+
+# ──────────────────────────────────────────────────────────────────────────────
+# REGISTRY MANAGEMENT (CRUD)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+@router.get("/", response_model=ValidationInterface.FineTunedModelList)
+def list_models_endpoint(
+    limit: int = 50,
+    offset: int = 0,
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """List all fine-tuned models belonging to the user."""
+    models = model_registry_service.list_fine_tuned_models(db, user_id, limit, offset)
+    return ValidationInterface.FineTunedModelList(
+        data=[ValidationInterface.FineTunedModelRead.model_validate(m) for m in models],
+        total=len(models),
+    )
+
+
+@router.get("/{model_id}", response_model=ValidationInterface.FineTunedModelRead)
+def get_model_endpoint(
+    model_id: str,
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Retrieve metadata for a specific fine-tuned model."""
+    model = model_registry_service.get_fine_tuned_model(db, model_id, user_id)
+    return ValidationInterface.FineTunedModelRead.model_validate(model)
+
+
+@router.delete("/{model_id}", response_model=ValidationInterface.FineTunedModelDeleted)
+def delete_model_endpoint(
+    model_id: str,
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Soft-delete a model from the registry."""
+    model_registry_service.soft_delete_model(db, model_id, user_id)
+    return ValidationInterface.FineTunedModelDeleted(deleted=True, model_id=model_id)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# FINE-TUNED MODEL LIFECYCLE (LoRA)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+@router.post("/{model_id}/activate", response_model=ValidationInterface.ActivateModelResponse)
+def activate_model_endpoint(
+    model_id: str,
+    node_id: Optional[str] = None,  # Optional: Pin to a specific hardware node
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Promote a fine-tuned model to 'Active' status.
+    Triggers the Node Agent to provision vLLM with the LoRA adapters.
+    """
+    return model_registry_service.activate_model(db, model_id, user_id, target_node_id=node_id)
+
+
+@router.post("/{model_id}/deactivate")
+def deactivate_model_endpoint(
+    model_id: str, user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)
+):
+    """
+    Surgically shutdown a specific fine-tuned model deployment.
+    Releases VRAM on the associated node.
+    """
+    return model_registry_service.deactivate_model(db, model_id, user_id)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# BASE MODEL LIFECYCLE (Factory Models)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+# Change from {base_model_id} to {base_model_id:path}
+@router.post("/base/{base_model_id:path}/activate")
+def activate_base_model_endpoint(
+    base_model_id: str,
+    node_id: Optional[str] = None,
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Deploy a standard backbone model from the catalog (no LoRA).
+    Schedules the model to the healthiest available GPU node.
+    """
+    # Now base_model_id will correctly capture 'Qwen/Qwen2.5-1.5B-Instruct'
+    return model_registry_service.activate_base_model(
+        db, base_model_id, user_id, target_node_id=node_id
+    )
+
+
+@router.post("/base/{base_model_id}/deactivate")
+def deactivate_base_model_endpoint(base_model_id: str, db: Session = Depends(get_db)):
+    """Shutdown a specific standard backbone deployment."""
+    return model_registry_service.deactivate_base_model(db, base_model_id)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# GLOBAL CLUSTER RESET
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+@router.post("/deactivate-all")
+def deactivate_all_endpoint(
+    user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)
+):
+    """
+    Emergency Stop: Deactivates ALL deployments for the user.
+    Reverts the cluster to an idle/clean state.
+    """
+    return model_registry_service.deactivate_all_models(db, user_id)

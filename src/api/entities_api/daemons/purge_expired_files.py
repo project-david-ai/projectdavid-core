@@ -103,9 +103,7 @@ def delete_physical_file(path: Path) -> bool:
 def purge_expired(session) -> tuple[int, int]:
     """
     Find all File rows whose expires_at has passed, delete the physical files,
-    then remove the DB rows.
-
-    Returns (files_attempted, files_deleted).
+    then remove the DB rows. Excludes training datasets and models.
     """
     now = datetime.utcnow()
 
@@ -115,6 +113,7 @@ def purge_expired(session) -> tuple[int, int]:
             SELECT f.id             AS file_id,
                    f.filename       AS filename,
                    f.expires_at     AS expires_at,
+                   f.purpose        AS purpose,
                    fs.storage_path  AS storage_path
             FROM   files f
             JOIN   file_storage fs ON fs.file_id = f.id
@@ -139,6 +138,19 @@ def purge_expired(session) -> tuple[int, int]:
         filename = row.filename
         storage_path = row.storage_path
         expires_at = row.expires_at
+        purpose = row.purpose
+
+        # ─── PROTECTION GUARD ──────────────────────────────────────────
+        # Skip files explicitly marked for training or located in the models dir
+        if purpose == "training" or "models/" in (storage_path or ""):
+            log.info(
+                "Skipping protected file | id=%s | purpose=%s | path=%s",
+                file_id,
+                purpose,
+                storage_path,
+            )
+            continue
+        # ───────────────────────────────────────────────────────────────
 
         log.info(
             "Processing | id=%s | name=%s | expired=%s",

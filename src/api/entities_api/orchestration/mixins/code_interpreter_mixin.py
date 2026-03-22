@@ -14,8 +14,6 @@ from projectdavid_common import ToolValidator
 from projectdavid_common.validation import StatusEnum
 
 from src.api.entities_api.services.logging_service import LoggingUtility
-from src.api.entities_api.services.native_execution_service import \
-    NativeExecutionService
 
 LOG = LoggingUtility()
 
@@ -75,8 +73,6 @@ class CodeInterpreterMixin:
         # 1. Notify start
         yield self._code_status("Preparing code interpreter...", "in_progress", run_id)
 
-        native_svc = NativeExecutionService()
-
         # --- VALIDATION ---
         validator = ToolValidator()
         validator.schema_registry = {"code_interpreter": ["code"]}
@@ -89,7 +85,7 @@ class CodeInterpreterMixin:
             yield self._code_status(f"Validation failed: {validation_error}", "error", run_id)
 
             # Native execution for failed validation (creates action, marks failed, submits output)
-            await native_svc.submit_failed_tool_execution(
+            await self._native_exec.submit_failed_tool_execution(
                 tool_name="code_interpreter",
                 run_id=run_id,
                 thread_id=thread_id,
@@ -104,7 +100,7 @@ class CodeInterpreterMixin:
         # 2. Create Action Natively
         action = None
         try:
-            action = await native_svc.create_action(
+            action = await self._native_exec.create_action(
                 tool_name="code_interpreter",
                 run_id=run_id,
                 tool_call_id=tool_call_id,
@@ -369,7 +365,7 @@ class CodeInterpreterMixin:
 
         # 7. Submit Result Natively (LLM receives llm_content with recovery instructions)
         try:
-            await native_svc.submit_tool_output(
+            await self._native_exec.submit_tool_output(
                 thread_id=thread_id,
                 assistant_id=assistant_id,
                 tool_call_id=tool_call_id,
@@ -382,7 +378,7 @@ class CodeInterpreterMixin:
                 status_val = (
                     StatusEnum.failed.value if execution_had_error else StatusEnum.completed.value
                 )
-                await native_svc.update_action_status(action.id, status_val)
+                await self._native_exec.update_action_status(action.id, status_val)
 
         except Exception as e:
             LOG.error(f"CodeInterpreter ▸ Submission failure: {e}")

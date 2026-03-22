@@ -1,0 +1,48 @@
+# docker/training/requirements.txt
+
+--extra-index-url https://download.pytorch.org/whl/cu121
+
+# --- Core ML Runtime ---
+torch
+xformers
+unsloth
+
+# --- HuggingFace & ML stack ---
+huggingface_hub
+transformers>=4.40.0,<5.0.0
+datasets>=2.18.0
+tokenizers>=0.19.0
+sentencepiece
+accelerate>=0.29.0
+peft>=0.10.0
+trl>=0.8.0
+bitsandbytes>=0.43.0
+
+# --- Worker & Utilities ---
+redis>=5.0.0
+httpx>=0.27.0
+PyYAML>=6.0
+rich>=13.0.0
+
+# --- FastAPI & Direct Auth ---
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic
+# Fix: JWT Authentication
+python-jose[cryptography]
+# Fix: Pin bcrypt to 3.2.0
+passlib[bcrypt]
+bcrypt==3.2.0
+
+# --- Internal Dependencies ---
+projectdavid-common==0.58.0
+projectdavid-orm==1.2.0
+projectdavid-services==1.0.11
+
+# --- DB ---
+SQLAlchemy>=2.0.0
+pymysql
+#--------------------------------------------------docker
+docker>=7.0.0
+pynvml>=11.5.0

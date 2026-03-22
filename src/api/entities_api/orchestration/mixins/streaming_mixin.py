@@ -25,6 +25,42 @@ LOG = LoggingUtility()
 
 
 class StreamingMixin:
+    """
+    Shared streaming infrastructure used by all provider workers.
+
+    Owns:
+        start_cancellation_monitor() — spawns a daemon thread that polls
+                                       run status and sets a stop Event
+                                       when the run is cancelled or terminal
+        check_cancellation_flag()    — returns self._cancelled (legacy sync flag)
+        _shunt_to_redis_stream()     — async mirror of a chunk to a Redis Stream
+                                       key with TTL management
+        _process_code_interpreter_chunks() — line-wise buffer splitter for
+                                             hot_code preview streaming
+        stream_function_call_output() — sync generator that injects a reminder
+                                        message, proxies the provider stream,
+                                        and fire-and-forgets Redis shunting
+
+    Requires on self:
+        self.redis                   — sync redis.Redis instance, set in
+                                       OrchestratorCore.__init__ before first use
+        self._native_exec            — NativeExecMixin, used by cancellation
+                                       monitor to poll run status
+        self.project_david_client    — ServiceRegistryMixin, used by
+                                       stream_function_call_output to inject
+                                       reminder messages
+        self.finalize_conversation() — ConsumerToolHandlersMixin, called at
+                                       end of stream_function_call_output
+
+    Contract:
+        StreamingMixin is intentionally excluded from _ProviderMixins and
+        composed directly on OrchestratorCore. This is deliberate — streaming
+        infrastructure is orchestrator-level, not provider-level. Do not add
+        StreamingMixin to _ProviderMixins. The cancellation monitor calls
+        asyncio.run() inside a daemon thread — it must never be called from
+        within an already-running event loop context.
+    """
+
     redis: redis_py.Redis
     _cancelled: bool = False
     project_david_client: Any  # Type hint for IDE support

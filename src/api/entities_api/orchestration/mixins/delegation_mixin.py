@@ -23,6 +23,63 @@ _WORKER_POLL_INTERVAL = 2.0
 
 
 class DelegationMixin:
+    """
+    Ephemeral worker lifecycle management for multi-agent delegation flows.
+    Handles research delegation and engineer delegation via spawned ephemeral
+    assistants running on isolated threads and runs.
+
+    Owns:
+        __init__()                        — cooperative, calls super().__init__().
+                                            Only mixin in the stack with __init__
+                                            participation. Initialises delegation
+                                            state attributes.
+        _stream_sync_generator()          — bridges a blocking sync generator into
+                                            an async generator via a daemon thread
+                                            and asyncio.Queue
+        _wait_for_run_completion()        — async poller with configurable timeout
+        _ephemeral_clean_up()             — deletes ephemeral assistant and
+                                            optionally the ephemeral thread
+        _capture_tool_outputs()           — async context manager that intercepts
+                                            submit_tool_output calls into a dict
+        create_ephemeral_worker_assistant()
+        create_ephemeral_junior_engineer()
+        create_ephemeral_thread()
+        create_ephemeral_message()
+        create_ephemeral_run()            — factory helpers, all require
+                                            self._run_user_id to be set first
+        _fetch_worker_final_report()      — fallback message retrieval, retained
+                                            for other components
+        handle_delegate_research_task()   — async generator, full research
+                                            delegation lifecycle
+        handle_delegate_engineer_task()   — async generator (implied by symmetry)
+
+    Requires on self:
+        self._native_exec                 — NativeExecMixin
+        self._run_user_id                 — set in QwenBaseWorker.stream() before
+                                            delegation is triggered
+        self.submit_tool_output()         — ConsumerToolHandlersMixin
+        self.project_david_client         — ServiceRegistryMixin, used for
+                                            synchronous_inference_stream
+        self._assistant_manager           — lazy property, self-initialising
+                                            via AssistantManager()
+
+    Instance state (set in __init__):
+        self._delete_ephemeral_thread     — bool, controls thread cleanup
+        self._delegation_model            — model string for delegated inference
+        self._research_worker_thread      — ephemeral thread id for research flow
+        self._run_user_id                 — owner resolved from run at stream time
+
+    Contract:
+        DelegationMixin is the only mixin in _ProviderMixins that calls
+        super().__init__(). All other mixins are stateless at construction.
+        Do not add __init__ to other mixins without updating the _ProviderMixins
+        and OrchestratorCore contract comments.
+        All factory methods guard on self._run_user_id via getattr and raise
+        RuntimeError explicitly — this is the correct pattern for cross-mixin
+        state access and should be followed in any new factory methods added here.
+        The api_key scrub at the end of handle_delegate_research_task()
+        (meta_data={"api_key": "***"}) is a security requirement — do not remove.
+    """
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

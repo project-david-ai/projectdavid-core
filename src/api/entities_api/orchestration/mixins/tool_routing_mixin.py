@@ -14,9 +14,48 @@ LOG = LoggingUtility()
 
 class ToolRoutingMixin:
     """
-    High-level routing of tool-calls.
-    Level 3 Refactor: Supports batch extraction, plan isolation,
-    and ID propagation for parallel self-correction.
+    High-level routing and dispatch of tool call batches.
+    Level 3 refactor: batch extraction, plan isolation, ID propagation.
+
+    Owns:
+        _tool_response           — bool flag, True when tool calls are pending
+        _function_calls          — List[Dict] of parsed tool calls for current turn
+        _tools_called            — List[str] of tool names dispatched this turn
+        FC_REGEX                 — compiled <fc>...</fc> tag parser
+        set/get_tool_response_state()
+        set/get_function_call_state()
+        reset/get_tools_called()
+        parse_and_set_function_calls() — L3 parser, primary + loose fallback
+        process_tool_calls()     — async generator, batch dispatcher
+
+    Requires on self:
+        self.ensure_valid_json()              — JsonUtilsMixin (explicit
+                                               isinstance guard enforced)
+        self.extract_function_calls_within_body_of_text() — JsonUtilsMixin
+        self._batfish_owner_user_id           — set in DelegationMixin.__init__
+                                               or QwenBaseWorker.stream()
+        self.handle_code_interpreter_action() — CodeInterpreterMixin
+        self.handle_shell_action()            — ShellExecutionMixin
+        self.handle_file_search()             — FileSearchMixin
+        self.handle_read_web_page()
+        self.handle_scroll_web_page()
+        self.handle_search_web_page()
+        self.handle_perform_web_search()      — WebSearchMixin
+        self.handle_delegate_research_task()
+        self.handle_delegate_engineer_task()  — DelegationMixin
+        self.handle_read_scratchpad()
+        self.handle_update_scratchpad()
+        self.handle_append_scratchpad()       — ScratchpadMixin
+        self._handover_to_consumer()          — ConsumerToolHandlersMixin
+
+    Contract:
+        parse_and_set_function_calls() raises TypeError if JsonUtilsMixin is
+        not in the MRO — this is intentional and is the gold-standard pattern
+        for explicit cross-mixin dependency enforcement in this codebase.
+        All other handler dependencies are resolved implicitly via _ProviderMixins
+        composition. Turn state (_tool_response, _function_calls, _tools_called)
+        must be reset at the start of each orchestration turn via
+        OrchestratorCore.process_conversation() — do not reset inside this mixin.
     """
 
     FC_REGEX = re.compile(r"<fc>\s*(?P<payload>\{.*?\})\s*</fc>", re.DOTALL | re.I)

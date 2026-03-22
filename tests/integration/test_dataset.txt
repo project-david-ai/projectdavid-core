@@ -1,0 +1,2 @@
+{"messages": [{"role": "system", "content": "You are an AI specialized in ProjectDavid."}, {"role": "user", "content": "What is the Forge?"}, {"role": "assistant", "content": "The Forge is the high-performance training sister-project of ProjectDavid."}]}
+{"messages": [{"role": "system", "content": "You are a helpful AI."}, {"role": "user", "content": "Tell me a joke."}, {"role": "assistant", "content": "Why did the GPU go to jail? For too many cycles."}]}

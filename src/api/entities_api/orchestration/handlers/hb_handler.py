@@ -12,7 +12,7 @@ from src.api.entities_api.orchestration.workers.hyperbolic.hb_gpt_oss import \
     HyperbolicGptOssWorker
 from src.api.entities_api.orchestration.workers.hyperbolic.hb_llama import \
     HyperbolicLlamaWorker
-from src.api.entities_api.orchestration.workers.hyperbolic.hb_quen import \
+from src.api.entities_api.orchestration.workers.hyperbolic.hb_qwen import \
     HyperbolicQwenWorker
 
 LOG = LoggingUtility()

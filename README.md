@@ -187,25 +187,10 @@ client = Entity(api_key=os.getenv("USER_API_KEY"))
 
 ## Architecture
 
-[![Network Diagram](https://github.com/project-david-ai/platform/raw/master/assets/docker_containers.png)](https://github.com/project-david-ai/platform/blob/master/assets/docker_containers.png)
-
+![Project David Stack](https://raw.githubusercontent.com/project-david-ai/projectdavid-platform/master/assets/svg/projectdavid-stack.svg)
 ---
 
-## Project Uni5 — Roadmap
 
-The next major milestone extends Project David to every model deployment scenario:
-
-```
-Got freshly trained weights?     →  transformers adapter     (Phase 1)
-Got a quantized GGUF model?      →  GGUF / llama.cpp adapter (Phase 2)
-Got a GPU cluster?               →  vLLM adapter             (Phase 3)
-Want a hosted provider?          →  already works
-Running Ollama locally?          →  already works
-```
-
-Five scenarios. One platform. **From the lab to enterprise grade orchestration — instantly.**
-
----
 
 ## Documentation
 

@@ -1,10 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from projectdavid_common import UtilsInterface
+from projectdavid_orm.projectdavid_orm.base import Base
 from sqlalchemy import text
 
 from src.api.entities_api.db.database import engine, wait_for_databases
-from src.api.entities_api.models.models import Base
 from src.api.entities_api.observability.tracing import setup_tracing
 from src.api.entities_api.routers import api_router
 

@@ -1,9 +1,11 @@
+# __init__.py
 from fastapi import APIRouter
 
 from src.api.entities_api.routers.actions_router import \
     router as actions_router
 from src.api.entities_api.routers.admin_router import \
     admin_router as admin_router
+from src.api.entities_api.routers.api_key_router import auth_router
 from src.api.entities_api.routers.api_key_router import \
     router as api_key_router
 from src.api.entities_api.routers.assistants_router import \
@@ -34,6 +36,9 @@ api_router.include_router(actions_router, tags=["Actions"])
 api_router.include_router(files_router, tags=["Files"])
 api_router.include_router(vectors_router, tags=["Vector Stores"])
 api_router.include_router(api_key_router, tags=["API Keys"])
+api_router.include_router(auth_router)  # no prefix — mounts at /v1/auth/validate-key
+api_router.include_router(api_key_router, tags=["API Keys"])
+
 api_router.include_router(admin_router, tags=["Admin"])
 api_router.include_router(tools_router, tags=["Tools: Web Browsing"])
 api_router.include_router(sandbox_auth_router, tags=["Tools: Sandbox Authorization"])

@@ -26,9 +26,7 @@ jinja2
 mypy
 mypy-extensions
 numpy
-
 packaging
-pdfplumber~=0.11.6
 pluggy
 pycparser
 PyMySQL
@@ -42,7 +40,6 @@ sse_starlette
 starlette
 sympy
 tenacity
-together
 typing
 typing_extensions
 validators~=0.34.0
@@ -63,9 +60,7 @@ pywin32==310 ; sys_platform == "win32"
 # openai
 # ------------------------------------------------------------------
 # Samba
-
 pysmb
-
 # ------------------------------------------------------------------
 # Security
 bcrypt==4.0.1
