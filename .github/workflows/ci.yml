@@ -149,7 +149,9 @@ jobs:
           cache-from: type=gha,scope=sandbox
           cache-to: type=gha,mode=max,scope=sandbox
 
-      - name: "🏗️ Build Training Image (No Push)"
+      # training-api and training-worker share the same Dockerfile.
+      # A single dry-run build is sufficient to verify both.
+      - name: "🏗️ Build Training Image (No Push — covers training-api & training-worker)"
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -247,11 +249,24 @@ jobs:
             type=sha,prefix=sha-
 
       # ---------------- Training image metadata -----------
-      - name: "🔧 Define Training Image Metadata"
-        id: meta_training
+      # training-api and training-worker share one Dockerfile but are published
+      # as two separate Docker Hub repositories so each service can be pulled
+      # independently via its own image name in docker-compose.
+      - name: "🔧 Define Training API Image Metadata"
+        id: meta_training_api
         uses: docker/metadata-action@v5
         with:
-          images: thanosprime/projectdavid-core-training
+          images: thanosprime/projectdavid-core-training-api
+          tags: |
+            type=semver,pattern={{version}},value=${{ steps.get_version.outputs.VERSION }}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+
+      - name: "🔧 Define Training Worker Image Metadata"
+        id: meta_training_worker
+        uses: docker/metadata-action@v5
+        with:
+          images: thanosprime/projectdavid-core-training-worker
           tags: |
             type=semver,pattern={{version}},value=${{ steps.get_version.outputs.VERSION }}
             type=raw,value=latest,enable={{is_default_branch}}
@@ -283,15 +298,21 @@ jobs:
           cache-from: type=gha,scope=sandbox
           cache-to: type=gha,mode=max,scope=sandbox
 
-      # ---------------- Build / Push Training -------------
-      - name: "🏗️ Build & Push Training Image"
+      # ---------------- Build / Push Training (single build, two repos) ----
+      # The training Dockerfile is built ONCE and pushed simultaneously to
+      # both thanosprime/projectdavid-core-training-api and
+      # thanosprime/projectdavid-core-training-worker by combining the tag
+      # lists from both metadata steps. This avoids a double compile.
+      - name: "🏗️ Build & Push Training Images (training-api + training-worker)"
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./docker/training/Dockerfile
           push: true
-          tags: ${{ steps.meta_training.outputs.tags }}
-          labels: ${{ steps.meta_training.outputs.labels }}
+          tags: |
+            ${{ steps.meta_training_api.outputs.tags }}
+            ${{ steps.meta_training_worker.outputs.tags }}
+          labels: ${{ steps.meta_training_api.outputs.labels }}
           platforms: linux/amd64
           cache-from: type=gha,scope=training
           cache-to: type=gha,mode=max,scope=training
