@@ -28,13 +28,12 @@ services:
     ports:
       - "3307:3306"
     healthcheck:
-      test: ["CMD","mysqladmin","ping","-h","localhost"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
       - my_custom_network
-
 
   qdrant:
     image: qdrant/qdrant:latest
@@ -52,7 +51,6 @@ services:
     networks:
       - my_custom_network
 
-
   redis:
     image: redis:7
     container_name: redis
@@ -63,7 +61,6 @@ services:
       - redis_data:/data
     networks:
       - my_custom_network
-
 
   browser:
     image: ghcr.io/browserless/chromium:latest
@@ -76,7 +73,6 @@ services:
       - CONNECTION_TIMEOUT=60000
     networks:
       - my_custom_network
-
 
   searxng:
     image: searxng/searxng:latest
@@ -94,7 +90,6 @@ services:
     networks:
       - my_custom_network
 
-
   jaeger:
     image: jaegertracing/all-in-one:latest
     container_name: jaeger_ui
@@ -106,7 +101,6 @@ services:
       - "14250:14250"
     networks:
       - my_custom_network
-
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:latest
@@ -123,7 +117,6 @@ services:
     networks:
       - my_custom_network
 
-
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
@@ -136,26 +129,31 @@ services:
     networks:
       - my_custom_network
 
-
   vllm:
     image: vllm/vllm-openai:latest
     container_name: vllm_server
     restart: unless-stopped
-    profiles: ["ai"]
+    profiles: [ "ai" ]
     runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - HF_TOKEN=${HF_TOKEN}
+      - PYTORCH_ALLOC_CONF=expandable_segments:True
     volumes:
       - ${HF_CACHE_PATH}:/root/.cache/huggingface
+      - ${SHARED_PATH}:/mnt/training_data
     ports:
       - "8001:8000"
+    # The command now dynamically expands the flags provided by the Manager
     command: >
       --model ${VLLM_MODEL}
+      ${VLLM_EXTRA_FLAGS}
       --dtype float16
-      --max-model-len 4096
+      --max-model-len 2048
+      --gpu-memory-utilization 0.5
     networks:
       - my_custom_network
+
   # ---------------------------------------------------------------------------
   # training-api — Fine-tuning REST API (no GPU required)
   # Opt-in: docker compose --profile training up training-api
@@ -190,7 +188,6 @@ services:
     networks:
       - my_custom_network
 
-
   # ---------------------------------------------------------------------------
   # training-worker — GPU training runner (requires nvidia-container-toolkit)
   # Opt-in: docker compose --profile training up training-worker
@@ -202,7 +199,7 @@ services:
       dockerfile: docker/training/Dockerfile
     container_name: training_worker
     restart: unless-stopped
-    profiles: ["training"]
+    profiles: [ "training" ]
     env_file:
       - .env
     runtime: nvidia
@@ -226,7 +223,7 @@ services:
       - ${HF_CACHE_PATH}:/root/.cache/huggingface
       # FIX 2: Enable live-code sync for the worker and ML scripts
       - ./src:/app/src
-    command: ["python", "src/api/training/worker.py"]
+    command: [ "python", "src/api/training/worker.py" ]
     depends_on:
       - redis
     networks:
@@ -237,7 +234,7 @@ services:
           devices:
             - driver: nvidia
               count: all
-              capabilities: [gpu]
+              capabilities: [ gpu ]
 
   api:
     build:
@@ -292,7 +289,6 @@ services:
     networks:
       - my_custom_network
 
-
   sandbox:
     build:
       context: .
@@ -318,7 +314,6 @@ services:
     networks:
       - my_custom_network
 
-
   samba:
     image: dperson/samba
     container_name: samba_server
@@ -338,7 +333,6 @@ services:
     networks:
       - my_custom_network
 
-
   nginx:
     image: nginx:alpine
     container_name: nginx_proxy
@@ -351,7 +345,6 @@ services:
       - api
     networks:
       - my_custom_network
-
 
 volumes:
   mysql_data:
