@@ -51,41 +51,26 @@ def get_fine_tuned_model(db: Session, model_id: str, user_id: str) -> FineTunedM
 
 def find_available_node(db: Session, required_vram: float = 4.0) -> str:
     """
-    STRICT SCHEDULER: Calculates free VRAM via the Ledger (GPUAllocation).
+    Finds a node by calculating: Total VRAM - SUM(All Active Reservations).
     """
-    heartbeat_cutoff = int(time.time()) - 60
-    nodes = (
-        db.query(ComputeNode)
-        .filter(
-            ComputeNode.status == StatusEnum.active, ComputeNode.last_heartbeat > heartbeat_cutoff
-        )
-        .all()
-    )
-
-    best_node = None
-    max_logical_free = -1.0
+    nodes = db.query(ComputeNode).filter(ComputeNode.status == StatusEnum.active).all()
 
     for node in nodes:
-        total_reserved = (
+        # Calculate current load from the Ledger
+        reserved = (
             db.query(func.sum(GPUAllocation.vram_reserved_gb))
             .filter(GPUAllocation.node_id == node.id)
             .scalar()
             or 0.0
         )
 
-        logical_free = node.total_vram_gb - total_reserved
+        if (node.total_vram_gb - reserved) >= required_vram:
+            return node.id
 
-        if logical_free >= required_vram:
-            if logical_free > max_logical_free:
-                max_logical_free = logical_free
-                best_node = node
-
-    if not best_node:
-        raise HTTPException(
-            status_code=507,
-            detail=f"Insufficient GPU resources. Cluster requires {required_vram}GB free VRAM.",
-        )
-    return best_node.id
+    # 🎯 REQUIREMENT 2: Graceful feedback
+    raise HTTPException(
+        status_code=507, detail=f"Insufficient VRAM in cluster. Required: {required_vram}GB."
+    )
 
 
 # ---------------------------------------------------------------------------

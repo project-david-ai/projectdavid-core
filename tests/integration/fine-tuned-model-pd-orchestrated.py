@@ -43,7 +43,6 @@ ASSISTANT_ID = os.getenv("DEV_PROJECT_DAVID_CORE_TEST_ASSISTANT_ID")
 
 MODEL_ID = "vllm/unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit"
 
-
 VLLM_BASE_URL = os.getenv("VLLM_BASE_URL", "http://vllm_server:8000")
 
 TEST_PROMPT = "Hello Assistant! Can you confirm you are currently utilizing your new fine-tuned weights ('david-ft') to answer me?"
@@ -58,6 +57,11 @@ def run_assistant_ft_test():
     print(f"\n{CYAN}[▶] Initializing Fine-Tuned Assistant Test...{RESET}")
     print(f"{CYAN}[▶] ASSISTANT_ID: {ASSISTANT_ID}{RESET}")
 
+    assistant = client.assistants.create_assistant(
+        name="Sovereign-Forge Test",
+        instructions="You are a helpful assistant that can answer questions about fine-tuned weights.",
+    )
+
     # 1. Setup Thread
     thread = client.threads.create_thread()
 
@@ -66,20 +70,20 @@ def run_assistant_ft_test():
         thread_id=thread.id,
         role="user",
         content=TEST_PROMPT,
-        assistant_id=ASSISTANT_ID,  # Key mapping
+        assistant_id=assistant.id,  # Key mapping
     )
     print(f"{GREEN}[✓] Thread/Message Created: {thread.id}{RESET}")
 
     # 3. Create Run
     # We pass the assistant_id to pull instructions,
     # and override the model to use our specific LoRA adapters.
-    run = client.runs.create_run(assistant_id=ASSISTANT_ID, thread_id=thread.id, model=MODEL_ID)
+    run = client.runs.create_run(assistant_id=assistant.id, thread_id=thread.id, model=MODEL_ID)
 
     # 4. Setup the Stream
     stream = client.synchronous_inference_stream
     stream.setup(
         thread_id=thread.id,
-        assistant_id=ASSISTANT_ID,
+        assistant_id=assistant.id,
         message_id=message.id,
         run_id=run.id,
     )

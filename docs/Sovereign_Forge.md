@@ -21,3 +21,4 @@
 - **Cold Boot to Inference:** < 20 seconds.
 - **Fine-Tuning Payload:** 74MB (LoRA) vs 3GB (Base).
 - **VRAM Idle:** ~1.2GB (Qwen 1.5B 4-bit).
+

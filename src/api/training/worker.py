@@ -30,6 +30,9 @@ LOCAL_SCRATCH = "/tmp/training"
 SHARED_PATH = os.getenv("SHARED_PATH", "/mnt/training_data")
 HF_CACHE_PATH = os.getenv("HF_CACHE_PATH", "/root/.cache/huggingface")
 
+# The Docker network all services share — used to look up the container's real IP
+DOCKER_NETWORK_NAME = os.getenv("DOCKER_NETWORK_NAME", "projectdavid-core_my_custom_network")
+
 # Unique ID for this physical machine
 NODE_ID = os.getenv("NODE_ID", f"node_{socket.gethostname()}")
 
@@ -46,12 +49,10 @@ except Exception as e:
 
 
 def get_redis():
-    """Connect to Redis with response decoding enabled."""
     return redis.from_url(REDIS_URL, decode_responses=True)
 
 
 def get_samba_client():
-    """Initialize SambaClient from environment."""
     return SambaClient(
         server=os.getenv("SMBCLIENT_SERVER", "samba"),
         share=os.getenv("SMBCLIENT_SHARE", "cosmic_share"),
@@ -64,10 +65,6 @@ def get_samba_client():
 
 
 def start_heartbeat():
-    """
-    Background thread to keep this node's telemetry fresh in the DB.
-    """
-
     def heartbeat_loop():
         logging_utility.info(f"💓 Heartbeat started for node: {NODE_ID}")
         while True:
@@ -87,16 +84,63 @@ def start_heartbeat():
 # ─── INFERENCE CLUSTER LOGIC (v2.0 Milestone) ───────────────────────────────
 
 
-def manage_vllm_container(deployment: InferenceDeployment, action: str = "start"):
+def _resolve_container_ip(container, network_name: str) -> Optional[str]:
+    """
+    Inspects a running container and returns its real IP address on the
+    specified Docker network.
+
+    Falls back to the container name only as a last resort, so callers
+    always get something routable rather than None.
+
+    Root cause this fixes:
+      Docker's internal hostname for a container is its 12-char short ID
+      (e.g. '3ee617956d53'). When that value is stored as internal_hostname
+      and used to build http://<hostname>:<port>, it does not resolve
+      reliably inside the overlay network. The actual IPAddress field is
+      always a proper dotted-quad and is unambiguously routable.
+    """
+    try:
+        container.reload()  # Ensure we have post-start network metadata
+        networks = container.attrs.get("NetworkSettings", {}).get("Networks", {})
+
+        # 1. Prefer the known shared project network
+        if network_name in networks:
+            ip = networks[network_name].get("IPAddress")
+            if ip:
+                logging_utility.info(f"🔍 Container {container.name} IP on '{network_name}': {ip}")
+                return ip
+
+        # 2. Fall back to any network that has an IP
+        for net_name, net_cfg in networks.items():
+            ip = net_cfg.get("IPAddress")
+            if ip:
+                logging_utility.warning(
+                    f"⚠️  Network '{network_name}' not found; " f"using IP from '{net_name}': {ip}"
+                )
+                return ip
+
+    except Exception as e:
+        logging_utility.error(f"IP resolution failed for {container.name}: {e}")
+
+    # 3. Last resort — container name (resolvable via Docker DNS within the network)
+    logging_utility.warning(
+        f"⚠️  Could not resolve IP for {container.name}; " f"falling back to container name."
+    )
+    return container.name
+
+
+def manage_vllm_container(deployment: InferenceDeployment, action: str = "start") -> Optional[str]:
     """
     Physically manages the vLLM container lifecycle on the host machine.
-    Uses the Docker SDK to spawn containers with NVIDIA runtime.
+
+    Returns:
+        On 'start': the container's routable IP address on the Docker network
+                    (NOT the container name / short-ID hostname).
+        On 'stop':  the container name that was removed.
     """
     if not docker_client:
-        logging_utility.error("Docker client not available. Cannot manage containers.")
-        return False
+        return None
 
-    # Name is based on the deployment ID to allow multiple instances on one node
     container_name = f"pd_vllm_{deployment.id}"
 
     if action == "stop":
@@ -104,66 +148,79 @@ def manage_vllm_container(deployment: InferenceDeployment, action: str = "start"
             container = docker_client.containers.get(container_name)
             container.remove(force=True)
             logging_utility.info(f"🛑 Stopped vLLM container: {container_name}")
-            return True
-        except docker.errors.NotFound:
-            return True
-        except Exception as e:
-            logging_utility.error(f"Error stopping container {container_name}: {e}")
-            return False
+            return container_name
+        except:
+            return container_name
 
-    # 1. Prepare Environment
+    # ── 1. Prepare Environment & Command ─────────────────────────────────
     env = {
         "HF_TOKEN": os.getenv("HF_TOKEN"),
-        "NVIDIA_VISIBLE_DEVICES": "all",
-        # 🎯 BYPASS: Tells the NVIDIA driver to ignore the 'CUDA >= 12.9' requirement
-        "NVIDIA_DISABLE_REQUIRE": "true",
+        "NVIDIA_DISABLE_REQUIRE": "true",  # Bypasses CUDA driver version gate
         "PYTORCH_ALLOC_CONF": "expandable_segments:True",
+        "NVIDIA_VISIBLE_DEVICES": "all",
     }
 
-    # 2. Construct Command
-    # We use the specific deployment metadata from the Mesh Ledger
     cmd = f"--model {deployment.base_model_id} --dtype float16 --max-model-len 2048 --gpu-memory-utilization 0.5"
     if deployment.fine_tuned_model_id:
         adapter_path = f"/mnt/training_data/{deployment.fine_tuned_model.storage_path}"
         cmd += f" --enable-lora --lora-modules {deployment.fine_tuned_model_id}={adapter_path}"
 
     try:
-        # Cleanup any existing container with this name
-        manage_vllm_container(deployment, action="stop")
+        # ── 2. AGGRESSIVE CLEANUP ─────────────────────────────────────────
+        # Scan ALL containers (not just our own name) for anything already
+        # bound to our target port and evict any squatters before spawning.
+        all_containers = docker_client.containers.list(all=True)
+        for c in all_containers:
+            port_bindings = c.attrs.get('HostConfig', {}).get('PortBindings', {})
+            if f"8000/tcp" in port_bindings:
+                bound_port = port_bindings[f"8000/tcp"][0].get('HostPort')
+                if bound_port == str(deployment.port):
+                    logging_utility.warning(
+                        f"🧹 Port {deployment.port} is hogged by {c.name}. Evicting..."
+                    )
+                    c.remove(force=True)
 
-        # 🎯 HARDENED GPU REQUEST: Explicitly request compute/utility for WSL2
+        # ── 3. Setup GPU and Spawn ────────────────────────────────────────
+        # Hardened GPU Request for WSL2/Windows
         gpu_config = docker.types.DeviceRequest(
             count=-1, capabilities=[['gpu', 'compute', 'utility']]
         )
 
-        logging_utility.info(
-            f"🚢 Spawning vLLM: {container_name} for model {deployment.base_model_id}"
-        )
-        docker_client.containers.run(
+        logging_utility.info(f"🚢 Spawning vLLM: {container_name}")
+        container = docker_client.containers.run(
             "vllm/vllm-openai:latest",
             name=container_name,
             command=cmd,
             environment=env,
             detach=True,
             device_requests=[gpu_config],
-            runtime="nvidia",  # Required for GPU passthrough
-            network="projectdavid-core_my_custom_network",
+            runtime="nvidia",
+            network=DOCKER_NETWORK_NAME,
             ports={f"8000/tcp": deployment.port},
             volumes={
                 HF_CACHE_PATH: {"bind": "/root/.cache/huggingface", "mode": "rw"},
                 SHARED_PATH: {"bind": "/mnt/training_data", "mode": "rw"},
             },
         )
-        return True
+
+        # ── 4. Resolve Real IP — the critical fix ─────────────────────────
+        # We must store the container's actual dotted-quad IP, NOT its name
+        # or short-ID hostname. The InferenceResolver builds the vLLM endpoint
+        # URL directly from this value: http://<internal_hostname>:<port>
+        container_ip = _resolve_container_ip(container, DOCKER_NETWORK_NAME)
+        logging_utility.info(
+            f"✅ vLLM container {container_name} is up — routable IP: {container_ip}"
+        )
+        return container_ip
+
     except Exception as e:
         logging_utility.error(f"Docker spawn failed for {container_name}: {e}")
-        return False
+        return None
 
 
 def start_deployment_supervisor():
     """
     Background thread that ensures physical vLLM state matches the DB ledger.
-    Actively heals the node if a container crashes.
     """
 
     def supervisor_loop():
@@ -171,7 +228,6 @@ def start_deployment_supervisor():
         while True:
             db = SessionLocal()
             try:
-                # 1. Fetch active assignments for this node from the Global Ledger
                 active_deployments = (
                     db.query(InferenceDeployment)
                     .filter(
@@ -182,7 +238,6 @@ def start_deployment_supervisor():
                 )
 
                 for dep in active_deployments:
-                    # 2. Check physical container state
                     container_name = f"pd_vllm_{dep.id}"
                     is_running = False
                     try:
@@ -191,12 +246,18 @@ def start_deployment_supervisor():
                     except:
                         pass
 
-                    # 3. Synchronize: Start if pending or crashed
                     if dep.status == StatusEnum.pending or not is_running:
                         logging_utility.warning(f"🚨 Deployment drift! Syncing {container_name}")
-                        if manage_vllm_container(dep, action="start"):
+
+                        # manage_vllm_container now returns the container's real IP
+                        container_ip = manage_vllm_container(dep, action="start")
+                        if container_ip:
                             dep.status = StatusEnum.active
-                            # Ensure VRAM is locked in the ledger
+                            # Store the real dotted-quad IP so InferenceResolver
+                            # can build a valid http://<ip>:<port> endpoint URL.
+                            dep.internal_hostname = container_ip
+
+                            # Reserve VRAM in the cluster ledger
                             existing_alloc = (
                                 db.query(GPUAllocation)
                                 .filter(
@@ -209,7 +270,6 @@ def start_deployment_supervisor():
                                 )
                                 .first()
                             )
-
                             if not existing_alloc:
                                 db.add(
                                     GPUAllocation(
@@ -218,6 +278,7 @@ def start_deployment_supervisor():
                                         vram_reserved_gb=4.0,
                                     )
                                 )
+
                             db.commit()
 
             except Exception as e:
@@ -234,9 +295,6 @@ def start_deployment_supervisor():
 
 
 def process_job(job_id: str, user_id: str):
-    """
-    Standard LoRA training path. Reserved VRAM is released on completion.
-    """
     db: Session = SessionLocal()
     local_data_path = None
     allocation_id = None
@@ -250,7 +308,7 @@ def process_job(job_id: str, user_id: str):
         job.node_id = NODE_ID
         job.started_at = int(time.time())
 
-        # VRAM Ledger Lock (5GB for Training)
+        # VRAM Ledger Lock
         new_allocation = GPUAllocation(node_id=NODE_ID, job_id=job_id, vram_reserved_gb=5.0)
         db.add(new_allocation)
         db.commit()
@@ -263,7 +321,7 @@ def process_job(job_id: str, user_id: str):
         smb = get_samba_client()
         smb.download_file(storage.storage_path, local_data_path)
 
-        # Output Artifact Dir
+        # Artifact Path
         model_uuid = IdentifierService.generate_prefixed_id("ftm")
         model_rel_path = f"models/{model_uuid}"
         full_output_path = os.path.join(SHARED_PATH, model_rel_path)
@@ -281,8 +339,8 @@ def process_job(job_id: str, user_id: str):
             "--profile",
             os.getenv("TRAINING_PROFILE", "laptop"),
         ]
-
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
         for line in process.stdout:
             print(f"[{job_id}] {line.strip()}", flush=True)
         process.wait()
@@ -304,7 +362,7 @@ def process_job(job_id: str, user_id: str):
             job.status = StatusEnum.completed
             job.completed_at = int(time.time())
             job.output_path = model_rel_path
-            logging_utility.info(f"✨ Job {job_id} finalized successfully on {NODE_ID}")
+            logging_utility.info(f"✨ Job {job_id} finalized successfully.")
         else:
             raise subprocess.CalledProcessError(process.returncode, cmd)
 
@@ -315,15 +373,11 @@ def process_job(job_id: str, user_id: str):
             job.last_error = str(e)
             db.commit()
     finally:
-        # Atomic release of VRAM Ledger
         if allocation_id:
             db.query(GPUAllocation).filter(GPUAllocation.id == allocation_id).delete()
             db.commit()
         if local_data_path and os.path.exists(local_data_path):
-            try:
-                os.remove(local_data_path)
-            except:
-                pass
+            os.remove(local_data_path)
         db.close()
 
 
@@ -334,15 +388,13 @@ def main():
     db = SessionLocal()
     try:
         node_heartbeat(db, NODE_ID)
-        logging_utility.info(f"✅ Node {NODE_ID} joined the David Mesh.")
+        logging_utility.info(f"✅ Node {NODE_ID} mesh heartbeat initialized.")
     finally:
         db.close()
 
-    # Launch Cluster Daemons
     start_heartbeat()
     start_deployment_supervisor()
 
-    # Handoff Loop
     r = get_redis()
     logging_utility.info(f"👷 Cluster Worker {NODE_ID} listening for jobs...")
 
@@ -352,13 +404,10 @@ def main():
             if result:
                 _, data = result
                 payload = json.loads(data)
-
-                # Targeted Dispatch Check
                 if payload.get("target_node") and payload.get("target_node") != NODE_ID:
                     r.rpush(QUEUE_NAME, data)
                     time.sleep(1)
                     continue
-
                 process_job(payload["job_id"], payload["user_id"])
         except Exception as e:
             logging_utility.error(f"Critical Loop Error: {e}")

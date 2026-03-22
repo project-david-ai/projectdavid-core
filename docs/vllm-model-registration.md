@@ -11,7 +11,7 @@ docker exec -it vllm_server huggingface-cli download unsloth/qwen2.5-1.5b-instru
 ````
 
 
-**2. Update the Catalog (SQL)**
+### 2. Update the Catalog (SQL)**
 
 ````sql
 /* Replace <PASSWORD> with your MYSQL_PASSWORD from .env */
@@ -19,8 +19,7 @@ docker exec -it my_mysql_cosmic_catalyst mysql -u api_user -p<PASSWORD> entities
 ````
 
 
-
-3. The Mesh requires an "Inventory Check." You must register the model in the global catalog before the scheduler will allow it to be assigned to a node.
+### 3. The Mesh requires an "Inventory Check." You must register the model in the global catalog before the scheduler will allow it to be assigned to a node.
 
 
 * Replace <PASSWORD> with your MYSQL_PASSWORD from .env 
@@ -31,7 +30,7 @@ docker exec -it my_mysql_cosmic_catalyst mysql -u api_user -p<PASSWORD> entities
 ````
 
 
-**3. Activate via the ProjectDavid SDK**
+### 3. Activate via the ProjectDavid SDK**
 
 Trigger the Smart Scheduler. This chooses the healthiest GPU node, creates a deployment ticket, and locks the required VRAM in the cluster ledger.
 
@@ -61,7 +60,7 @@ This will assign the instance of vllm hosted on this machine
 as a node in the cluster, serving inference for the model.
 
 
-**4. Monitor the Edge Agent (Worker)** 
+### 4. Monitor the Edge Agent (Worker)** 
 
 The training-worker on your local machine acts as a Hypervisor. It will detect the new ticket and physically spawn the vLLM container on your GPU.
 
@@ -106,7 +105,7 @@ APIServer pid=1) INFO 03-21 22:25:05 [launcher.py:47] Route: /v1/completions/ren
 ---
 
 
-## Troubleshooting & "Big Hammer" Commands
+### Troubleshooting & "Big Hammer" Commands
 
 If the Mesh hits a snag, use these verified commands to restore order.
 
@@ -143,3 +142,18 @@ See exactly which models are taking up space in your local "Sovereign Forge."
 ````bash
 docker exec -it vllm_server huggingface-cli scan-cache
 ````
+
+**F. Clear the InferenceDeployment Table**
+
+You have broken node entries in the database.
+
+````sql
+docker exec -it my_mysql_cosmic_catalyst mysql -u api_user -<PASSWORD>  entities_db -e "DELETE FROM inference_deployments; DELETE FROM gpu_allocations;"
+````
+
+**G. Remove stale vLLM Containers**
+
+````bash
+docker ps -a | findstr "pd_vllm" | ForEach-Object { docker rm -f ($_.Split(' ')[0]) }  
+````
+
