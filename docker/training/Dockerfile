@@ -83,6 +83,7 @@ COPY --from=hashed_builder   /install/packages /usr/local
 # --- Resolve known version-collision packages ------------------------
 # charset-normalizer: unhashed and hashed stages can pull different
 # minor versions whose .so and .py files end up mismatched after merge.
+# packaging: required by ray.widgets at import time.
 RUN pip install --force-reinstall --no-cache-dir charset-normalizer packaging
 
 ENV PATH="/usr/local/bin:$PATH" \
@@ -102,6 +103,10 @@ EXPOSE 9001
 EXPOSE 8265
 
 # --- Default command (training-api) ----------------------------------
+# Uses python -m uvicorn instead of the uvicorn script directly.
+# The uvicorn entrypoint script carries a shebang pointing to
+# /opt/venv/bin/python from the builder stage which does not exist
+# in the runtime container — invoking via python -m bypasses this.
 # training-worker overrides this in docker-compose.yml:
 #   command: ["python", "src/api/training/worker.py"]
-CMD ["uvicorn", "src.api.training.app:app", "--host", "0.0.0.0", "--port", "9001"]
+CMD ["python", "-m", "uvicorn", "src.api.training.app:app", "--host", "0.0.0.0", "--port", "9001"]

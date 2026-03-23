@@ -31,15 +31,12 @@ LOCAL_SCRATCH = "/tmp/training"
 SHARED_PATH = os.getenv("SHARED_PATH", "/mnt/training_data")
 HF_CACHE_PATH = os.getenv("HF_CACHE_PATH", "/root/.cache/huggingface")
 
-# The Docker network all services share — used to look up the container's real IP
 DOCKER_NETWORK_NAME = os.getenv("DOCKER_NETWORK_NAME", "projectdavid-core_my_custom_network")
 
-# Unique ID for this physical machine
 NODE_ID = os.getenv("NODE_ID", f"node_{socket.gethostname()}")
 
 os.makedirs(LOCAL_SCRATCH, exist_ok=True)
 
-# Initialize Docker client to manage inference containers on the host
 try:
     docker_client = docker.from_env()
 except Exception as e:
@@ -82,36 +79,20 @@ def start_heartbeat():
     thread.start()
 
 
-# ─── INFERENCE CLUSTER LOGIC (v2.0 Milestone) ───────────────────────────────
+# ─── INFERENCE CLUSTER LOGIC ────────────────────────────────────────────────
 
 
 def _resolve_container_ip(container, network_name: str) -> Optional[str]:
-    """
-    Inspects a running container and returns its real IP address on the
-    specified Docker network.
-
-    Falls back to the container name only as a last resort, so callers
-    always get something routable rather than None.
-
-    Root cause this fixes:
-      Docker's internal hostname for a container is its 12-char short ID
-      (e.g. '3ee617956d53'). When that value is stored as internal_hostname
-      and used to build http://<hostname>:<port>, it does not resolve
-      reliably inside the overlay network. The actual IPAddress field is
-      always a proper dotted-quad and is unambiguously routable.
-    """
     try:
-        container.reload()  # Ensure we have post-start network metadata
+        container.reload()
         networks = container.attrs.get("NetworkSettings", {}).get("Networks", {})
 
-        # 1. Prefer the known shared project network
         if network_name in networks:
             ip = networks[network_name].get("IPAddress")
             if ip:
                 logging_utility.info(f"🔍 Container {container.name} IP on '{network_name}': {ip}")
                 return ip
 
-        # 2. Fall back to any network that has an IP
         for net_name, net_cfg in networks.items():
             ip = net_cfg.get("IPAddress")
             if ip:
@@ -123,7 +104,6 @@ def _resolve_container_ip(container, network_name: str) -> Optional[str]:
     except Exception as e:
         logging_utility.error(f"IP resolution failed for {container.name}: {e}")
 
-    # 3. Last resort — container name (resolvable via Docker DNS within the network)
     logging_utility.warning(
         f"⚠️  Could not resolve IP for {container.name}; " f"falling back to container name."
     )
@@ -131,14 +111,6 @@ def _resolve_container_ip(container, network_name: str) -> Optional[str]:
 
 
 def manage_vllm_container(deployment: InferenceDeployment, action: str = "start") -> Optional[str]:
-    """
-    Physically manages the vLLM container lifecycle on the host machine.
-
-    Returns:
-        On 'start': the container's routable IP address on the Docker network
-                    (NOT the container name / short-ID hostname).
-        On 'stop':  the container name that was removed.
-    """
     if not docker_client:
         return None
 
@@ -154,10 +126,9 @@ def manage_vllm_container(deployment: InferenceDeployment, action: str = "start"
             logging_utility.warning(f"⚠️  Could not stop container {container_name}: {e}")
             return container_name
 
-    # ── 1. Prepare Environment & Command ─────────────────────────────────
     env = {
         "HF_TOKEN": os.getenv("HF_TOKEN"),
-        "NVIDIA_DISABLE_REQUIRE": "true",  # Bypasses CUDA driver version gate
+        "NVIDIA_DISABLE_REQUIRE": "true",
         "PYTORCH_ALLOC_CONF": "expandable_segments:True",
         "NVIDIA_VISIBLE_DEVICES": "all",
     }
@@ -171,9 +142,6 @@ def manage_vllm_container(deployment: InferenceDeployment, action: str = "start"
         cmd += f" --enable-lora --lora-modules {deployment.fine_tuned_model_id}={adapter_path}"
 
     try:
-        # ── 2. AGGRESSIVE CLEANUP ─────────────────────────────────────────
-        # Scan ALL containers (not just our own name) for anything already
-        # bound to our target port and evict any squatters before spawning.
         all_containers = docker_client.containers.list(all=True)
         for c in all_containers:
             port_bindings = c.attrs.get("HostConfig", {}).get("PortBindings", {})
@@ -185,8 +153,6 @@ def manage_vllm_container(deployment: InferenceDeployment, action: str = "start"
                     )
                     c.remove(force=True)
 
-        # ── 3. Setup GPU and Spawn ────────────────────────────────────────
-        # Hardened GPU Request for WSL2/Windows
         gpu_config = docker.types.DeviceRequest(
             count=-1, capabilities=[["gpu", "compute", "utility"]]
         )
@@ -208,10 +174,6 @@ def manage_vllm_container(deployment: InferenceDeployment, action: str = "start"
             },
         )
 
-        # ── 4. Resolve Real IP — the critical fix ─────────────────────────
-        # We must store the container's actual dotted-quad IP, NOT its name
-        # or short-ID hostname. The InferenceResolver builds the vLLM endpoint
-        # URL directly from this value: http://<internal_hostname>:<port>
         container_ip = _resolve_container_ip(container, DOCKER_NETWORK_NAME)
         logging_utility.info(
             f"✅ vLLM container {container_name} is up — routable IP: {container_ip}"
@@ -223,64 +185,177 @@ def manage_vllm_container(deployment: InferenceDeployment, action: str = "start"
         return None
 
 
-def start_deployment_supervisor():
+# ─── PHASE 3B: DEPLOYMENT SUPERVISOR RAY ACTOR ──────────────────────────────
+
+
+@ray.remote
+class DeploymentSupervisor:
     """
-    Background thread that ensures physical vLLM state matches the DB ledger.
+    Phase 3B: Persistent Ray actor replacing the supervisor thread.
+
+    SERIALIZATION: Ray pickles the actor class and all methods it references.
+    Any module-level object with a thread lock or weakref (SQLAlchemy
+    sessionmaker, LoggingUtility, docker client) cannot be pickled.
+
+    Solution: every dependency is imported and instantiated INSIDE __init__
+    or INSIDE the method body where it is used. No module-level globals are
+    referenced from within this class.
     """
 
-    def supervisor_loop():
-        logging_utility.info(f"👀 Inference Supervisor active for node: {NODE_ID}")
-        while True:
-            db = SessionLocal()
+    def __init__(self, node_id: str, docker_network: str, poll_interval: int = 20):
+        self.node_id = node_id
+        self.docker_network = docker_network
+        self.poll_interval = poll_interval
+        self._running = True
+
+    def run(self):
+        # ── All imports are LOCAL to avoid serialization of module globals ──
+        import os as _os
+        import time as _time
+
+        from projectdavid_common import UtilsInterface as _UI
+        from projectdavid_common.schemas.enums import StatusEnum as _Status
+
+        import docker as _docker
+        from src.api.training.db.database import SessionLocal as _SessionLocal
+        from src.api.training.models.models import InferenceDeployment as _Dep
+
+        _log = _UI.LoggingUtility()
+        _network = self.docker_network
+
+        try:
+            _dc = _docker.from_env()
+        except Exception as e:
+            _dc = None
+            _log.error(f"Supervisor: Docker SDK init failed: {e}")
+
+        def _resolve_ip(container):
             try:
-                active_deployments = (
-                    db.query(InferenceDeployment)
+                container.reload()
+                nets = container.attrs.get("NetworkSettings", {}).get("Networks", {})
+                if _network in nets:
+                    ip = nets[_network].get("IPAddress")
+                    if ip:
+                        return ip
+                for _, cfg in nets.items():
+                    ip = cfg.get("IPAddress")
+                    if ip:
+                        return ip
+            except Exception:
+                pass
+            return container.name
+
+        def _spawn(dep):
+            if not _dc:
+                return None
+            container_name = f"pd_vllm_{dep.id}"
+            env = {
+                "HF_TOKEN": _os.getenv("HF_TOKEN"),
+                "NVIDIA_DISABLE_REQUIRE": "true",
+                "PYTORCH_ALLOC_CONF": "expandable_segments:True",
+                "NVIDIA_VISIBLE_DEVICES": "all",
+            }
+            cmd = (
+                f"--model {dep.base_model_id} "
+                f"--dtype float16 --max-model-len 2048 --gpu-memory-utilization 0.5"
+            )
+            if dep.fine_tuned_model_id:
+                adapter_path = f"/mnt/training_data/{dep.fine_tuned_model.storage_path}"
+                cmd += f" --enable-lora " f"--lora-modules {dep.fine_tuned_model_id}={adapter_path}"
+            try:
+                shared = _os.getenv("SHARED_PATH", "/mnt/training_data")
+                hf = _os.getenv("HF_CACHE_PATH", "/root/.cache/huggingface")
+                all_c = _dc.containers.list(all=True)
+                for c in all_c:
+                    pb = c.attrs.get("HostConfig", {}).get("PortBindings", {})
+                    if "8000/tcp" in pb:
+                        bp = pb["8000/tcp"][0].get("HostPort")
+                        if bp == str(dep.port):
+                            _log.warning(f"🧹 Port {dep.port} hogged by {c.name}. Evicting...")
+                            c.remove(force=True)
+                gpu = _docker.types.DeviceRequest(
+                    count=-1, capabilities=[["gpu", "compute", "utility"]]
+                )
+                _log.info(f"🚢 Spawning vLLM: {container_name}")
+                container = _dc.containers.run(
+                    "vllm/vllm-openai:latest",
+                    name=container_name,
+                    command=cmd,
+                    environment=env,
+                    detach=True,
+                    device_requests=[gpu],
+                    runtime="nvidia",
+                    network=_network,
+                    ports={"8000/tcp": dep.port},
+                    volumes={
+                        hf: {"bind": "/root/.cache/huggingface", "mode": "rw"},
+                        shared: {"bind": "/mnt/training_data", "mode": "rw"},
+                    },
+                )
+                ip = _resolve_ip(container)
+                _log.info(f"✅ {container_name} up — IP: {ip}")
+                return ip
+            except Exception as e:
+                _log.error(f"Docker spawn failed for {container_name}: {e}")
+                return None
+
+        _log.info(f"👀 DeploymentSupervisor actor active for node: {self.node_id}")
+
+        while self._running:
+            db = _SessionLocal()
+            try:
+                deployments = (
+                    db.query(_Dep)
                     .filter(
-                        InferenceDeployment.node_id == NODE_ID,
-                        InferenceDeployment.status.in_([StatusEnum.pending, StatusEnum.active]),
+                        _Dep.node_id == self.node_id,
+                        _Dep.status.in_([_Status.pending, _Status.active]),
                     )
                     .all()
                 )
-
-                for dep in active_deployments:
+                for dep in deployments:
                     container_name = f"pd_vllm_{dep.id}"
                     is_running = False
                     try:
-                        c = docker_client.containers.get(container_name)
-                        is_running = c.status == "running"
+                        if _dc:
+                            c = _dc.containers.get(container_name)
+                            is_running = c.status == "running"
                     except Exception:
                         pass
 
-                    if dep.status == StatusEnum.pending or not is_running:
-                        logging_utility.warning(f"🚨 Deployment drift! Syncing {container_name}")
-
-                        container_ip = manage_vllm_container(dep, action="start")
-                        if container_ip:
-                            dep.status = StatusEnum.active
-                            # Store the real dotted-quad IP so InferenceResolver
-                            # can build a valid http://<ip>:<port> endpoint URL.
-                            dep.internal_hostname = container_ip
+                    if dep.status == _Status.pending or not is_running:
+                        _log.warning(f"🚨 Deployment drift! Syncing {container_name}")
+                        ip = _spawn(dep)
+                        if ip:
+                            dep.status = _Status.active
+                            dep.internal_hostname = ip
                             db.commit()
 
             except Exception as e:
-                logging_utility.error(f"Supervisor Loop Error: {e}")
+                _log.error(f"Supervisor Loop Error: {e}")
             finally:
                 db.close()
-            time.sleep(20)
 
-    thread = threading.Thread(target=supervisor_loop, daemon=True)
-    thread.start()
+            _time.sleep(self.poll_interval)
+
+    def stop(self):
+        self._running = False
 
 
-# ─── TRAINING JOB LOGIC ─────────────────────────────────────────────────────
+# ─── PHASE 3A: TRAINING JOB AS RAY REMOTE TASK ──────────────────────────────
+
+
+@ray.remote(num_gpus=1)
+def process_job_remote(job_id: str, user_id: str):
+    """
+    Phase 3A: Wraps process_job as a Ray remote task with num_gpus=1.
+    Ray reserves 1 GPU, tracks the task in the dashboard, and releases
+    the reservation automatically on completion or failure.
+    """
+    process_job(job_id, user_id)
 
 
 def process_job(job_id: str, user_id: str):
-    """
-    Phase 2: GPUAllocation ledger lock removed.
-    Ray tracks resource consumption implicitly via task scheduling —
-    no manual DB reservation or release needed.
-    """
+    """Core training job logic — unchanged from Phase 2."""
     db: Session = SessionLocal()
     local_data_path = None
 
@@ -294,13 +369,11 @@ def process_job(job_id: str, user_id: str):
         job.started_at = int(time.time())
         db.commit()
 
-        # Data Staging
         storage = db.query(FileStorage).filter(FileStorage.file_id == dataset.file_id).first()
         local_data_path = os.path.join(LOCAL_SCRATCH, f"{job_id}.jsonl")
         smb = get_samba_client()
         smb.download_file(storage.storage_path, local_data_path)
 
-        # Artifact Path
         model_uuid = IdentifierService.generate_prefixed_id("ftm")
         model_rel_path = f"models/{model_uuid}"
         full_output_path = os.path.join(SHARED_PATH, model_rel_path)
@@ -363,11 +436,6 @@ def process_job(job_id: str, user_id: str):
 
 def main():
     # ── Phase 1: Ray cluster init ────────────────────────────────────────────
-    # RAY_ADDRESS unset  → this node starts as Ray head (single-node mode).
-    # RAY_ADDRESS set    → this node joins an existing cluster as a worker.
-    #                      e.g. RAY_ADDRESS=ray://192.168.1.10:10001
-    # No other code changes are required for multi-node scale-out — adding
-    # a second machine is purely an env-var and docker-compose change.
     ray_address = os.getenv("RAY_ADDRESS") or None
     ray.init(
         address=ray_address,
@@ -375,7 +443,7 @@ def main():
         include_dashboard=True,
         dashboard_host="0.0.0.0",
         dashboard_port=int(os.getenv("RAY_DASHBOARD_PORT", "8265")),
-        logging_level="WARNING",  # suppress Ray's verbose startup output
+        logging_level="WARNING",
     )
     logging_utility.info(
         f"🌐 Ray cluster online — "
@@ -383,7 +451,7 @@ def main():
     )
     logging_utility.info(f"🔵 Ray resources: {ray.cluster_resources()}")
 
-    # ── Existing startup (unchanged) ─────────────────────────────────────────
+    # ── Existing startup ──────────────────────────────────────────────────────
     db = SessionLocal()
     try:
         node_heartbeat(db, NODE_ID)
@@ -392,8 +460,19 @@ def main():
         db.close()
 
     start_heartbeat()
-    start_deployment_supervisor()
 
+    # ── Phase 3B: DeploymentSupervisor Ray actor ──────────────────────────────
+    supervisor = DeploymentSupervisor.options(
+        name="DeploymentSupervisor",
+        get_if_exists=True,
+    ).remote(
+        node_id=NODE_ID,
+        docker_network=DOCKER_NETWORK_NAME,
+    )
+    supervisor.run.remote()
+    logging_utility.info("👀 DeploymentSupervisor Ray actor started.")
+
+    # ── Phase 3A: Redis intake → Ray task submission ──────────────────────────
     r = get_redis()
     logging_utility.info(f"👷 Cluster Worker {NODE_ID} listening for jobs...")
 
@@ -407,7 +486,12 @@ def main():
                     r.rpush(QUEUE_NAME, data)
                     time.sleep(1)
                     continue
-                process_job(payload["job_id"], payload["user_id"])
+
+                job_id = payload["job_id"]
+                user_id = payload["user_id"]
+                logging_utility.info(f"📬 Submitting job {job_id} to Ray cluster as remote task")
+                process_job_remote.remote(job_id, user_id)
+
         except Exception as e:
             logging_utility.error(f"Critical Loop Error: {e}")
             time.sleep(5)

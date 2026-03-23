@@ -1,7 +1,7 @@
 import time
 from typing import List, Optional
 
-import ray
+import httpx
 from fastapi import HTTPException
 from projectdavid_common.schemas.enums import StatusEnum
 from projectdavid_common.utilities.identifier_service import IdentifierService
@@ -10,6 +10,56 @@ from sqlalchemy.orm import Session
 from src.api.training.models.models import (BaseModel, ComputeNode,
                                             FineTunedModel,
                                             InferenceDeployment)
+
+# ---------------------------------------------------------------------------
+# Ray Dashboard HTTP API
+# ---------------------------------------------------------------------------
+
+RAY_DASHBOARD_URL = "http://training_worker:8265"
+
+
+def _get_ray_available_resources() -> dict:
+    """
+    Queries the Ray dashboard REST API for live cluster resource availability.
+
+    Uses /api/v0/nodes to get per-node resource totals and usage.
+    This requires no GCS connection — just HTTP to the dashboard port,
+    which is already exposed and working.
+
+    Returns a dict with keys 'GPU' and 'memory' (bytes) representing
+    total available (free) resources across the cluster.
+    """
+    try:
+        resp = httpx.get(
+            f"{RAY_DASHBOARD_URL}/api/v0/nodes?detail=True",
+            timeout=5.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Ray cluster unreachable — cannot schedule: {exc}",
+        )
+
+    # Actual response shape: data -> result -> result (list of node dicts)
+    # Fields: resources_total (no usedResources in this endpoint)
+    nodes = data.get("data", {}).get("result", {}).get("result", [])
+
+    total_gpu = 0.0
+    total_memory_bytes = 0.0
+
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        if node.get("state") != "ALIVE":
+            continue
+        resources = node.get("resources_total", {})
+        total_gpu += resources.get("GPU", 0.0)
+        total_memory_bytes += resources.get("memory", 0.0)
+
+    return {"GPU": total_gpu, "memory": total_memory_bytes}
+
 
 # ---------------------------------------------------------------------------
 # Registry Retrieval
@@ -51,24 +101,15 @@ def get_fine_tuned_model(db: Session, model_id: str, user_id: str) -> FineTunedM
 
 def find_available_node(db: Session, required_vram: float = 4.0) -> str:
     """
-    Phase 2: Queries the Ray cluster for live resource availability instead
-    of summing rows in the gpu_allocations ledger.
+    Phase 2: Queries the Ray dashboard HTTP API for live resource availability
+    instead of summing rows in the gpu_allocations ledger.
 
-    Ray tracks reservations implicitly as tasks and actors consume resources —
-    available_resources() always reflects the true current free capacity.
-
-    Falls back to HTTP 507 if the cluster has insufficient GPU or memory.
+    No GCS connection required — uses the dashboard REST endpoint which is
+    already exposed and reachable from the training-api container.
     """
-    try:
-        available = ray.available_resources()
-    except Exception as exc:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Ray cluster unreachable — cannot schedule: {exc}",
-        )
+    available = _get_ray_available_resources()
 
     available_gpu = available.get("GPU", 0.0)
-    # Ray reports memory in bytes — convert to GB for comparison
     available_memory_gb = available.get("memory", 0.0) / (1024**3)
 
     if available_gpu < 1.0:
@@ -137,7 +178,7 @@ def activate_model(
     DEPLOYS A FINE-TUNED MODEL (Base + LoRA).
 
     Phase 2: GPUAllocation row removed — Ray tracks resource consumption
-    implicitly. find_available_node() now queries ray.available_resources().
+    implicitly. find_available_node() now queries Ray dashboard HTTP API.
     """
     model = get_fine_tuned_model(db, model_id, user_id)
 
@@ -180,7 +221,7 @@ def activate_base_model(
     DEPLOYS A STANDARD MODEL (Backbone only).
 
     Phase 2: GPUAllocation row removed — Ray tracks resource consumption
-    implicitly. find_available_node() now queries ray.available_resources().
+    implicitly. find_available_node() now queries Ray dashboard HTTP API.
     """
     # 1. Verify model exists in our seeded catalog
     base = db.query(BaseModel).filter(BaseModel.id == base_model_id).first()

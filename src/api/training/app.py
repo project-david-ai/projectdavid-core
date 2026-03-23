@@ -75,6 +75,12 @@ async def lifespan(app: FastAPI):
         sys.exit(1)
 
     logging_utility.info(f"👑 Instance [{INSTANCE_ID}] claimed Master lease.")
+
+    # Note: training-api does NOT connect to Ray directly.
+    # Resource availability is queried via the Ray dashboard HTTP API
+    # (http://training_worker:8265/api/v0/nodes) in model_registry_service.py.
+    # This avoids GCS port conflicts with Redis and requires no Ray init here.
+
     maintenance_task = asyncio.create_task(cluster_maintenance_loop(r))
 
     yield
