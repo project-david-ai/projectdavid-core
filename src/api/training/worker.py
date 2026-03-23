@@ -6,6 +6,7 @@ import threading
 import time
 from typing import List, Optional
 
+import docker  # Required: pip install docker
 import ray
 import redis
 from projectdavid_common import UtilsInterface
@@ -14,12 +15,13 @@ from projectdavid_common.utilities.identifier_service import IdentifierService
 from projectdavid_orm.projectdavid_orm.models import FileStorage
 from sqlalchemy.orm import Session
 
-import docker  # Required: pip install docker
 from src.api.training.db.database import SessionLocal
-from src.api.training.models.models import (ComputeNode, Dataset,
-                                            FineTunedModel,
-                                            InferenceDeployment, TrainingJob)
-from src.api.training.services.cluster_service import node_heartbeat
+from src.api.training.models.models import (
+    Dataset,
+    FineTunedModel,
+    InferenceDeployment,
+    TrainingJob,
+)
 from src.api.training.services.file_service import SambaClient
 
 logging_utility = UtilsInterface.LoggingUtility()
@@ -33,6 +35,8 @@ HF_CACHE_PATH = os.getenv("HF_CACHE_PATH", "/root/.cache/huggingface")
 
 DOCKER_NETWORK_NAME = os.getenv("DOCKER_NETWORK_NAME", "projectdavid-core_my_custom_network")
 
+# Phase 4: NODE_ID is derived from the Ray node ID at startup rather than
+# a manually configured env var. Kept as a fallback for logging only.
 NODE_ID = os.getenv("NODE_ID", f"node_{socket.gethostname()}")
 
 os.makedirs(LOCAL_SCRATCH, exist_ok=True)
@@ -59,24 +63,27 @@ def get_samba_client():
     )
 
 
-# ─── CLUSTER TELEMETRY (HEARTBEAT) ──────────────────────────────────────────
+# ─── PHASE 4: RAY NODE IDENTITY ──────────────────────────────────────────────
 
 
-def start_heartbeat():
-    def heartbeat_loop():
-        logging_utility.info(f"💓 Heartbeat started for node: {NODE_ID}")
-        while True:
-            db = SessionLocal()
-            try:
-                node_heartbeat(db, NODE_ID)
-            except Exception as e:
-                logging_utility.error(f"Heartbeat failed for {NODE_ID}: {e}")
-            finally:
-                db.close()
-            time.sleep(15)
+def get_ray_node_id() -> str:
+    """
+    Phase 4: Returns the Ray node ID of the current head node.
 
-    thread = threading.Thread(target=heartbeat_loop, daemon=True)
-    thread.start()
+    This replaces the NODE_ID env var / compute_nodes heartbeat pattern.
+    Ray always knows which nodes are alive — we just read that state.
+    The node ID is a stable hex string (e.g. aea109206314b87a...) that
+    uniquely identifies this physical machine in the Ray cluster.
+    """
+    try:
+        nodes = ray.nodes()
+        for node in nodes:
+            if node.get("Alive") and node.get("NodeManagerAddress"):
+                return node["NodeID"]
+    except Exception as e:
+        logging_utility.warning(f"Could not resolve Ray node ID: {e}")
+    # Fallback to env-based ID
+    return NODE_ID
 
 
 # ─── INFERENCE CLUSTER LOGIC ────────────────────────────────────────────────
@@ -193,13 +200,12 @@ class DeploymentSupervisor:
     """
     Phase 3B: Persistent Ray actor replacing the supervisor thread.
 
-    SERIALIZATION: Ray pickles the actor class and all methods it references.
-    Any module-level object with a thread lock or weakref (SQLAlchemy
-    sessionmaker, LoggingUtility, docker client) cannot be pickled.
+    Phase 4 update: node_id is now the Ray node ID (hex string) written to
+    inference_deployments for traceability, instead of the legacy NODE_ID
+    env var / compute_nodes heartbeat value.
 
-    Solution: every dependency is imported and instantiated INSIDE __init__
-    or INSIDE the method body where it is used. No module-level globals are
-    referenced from within this class.
+    SERIALIZATION: all dependencies imported locally inside run() to avoid
+    pickling module-level objects with thread locks or weakrefs.
     """
 
     def __init__(self, node_id: str, docker_network: str, poll_interval: int = 20):
@@ -209,14 +215,11 @@ class DeploymentSupervisor:
         self._running = True
 
     def run(self):
-        # ── All imports are LOCAL to avoid serialization of module globals ──
         import os as _os
         import time as _time
-
+        import docker as _docker
         from projectdavid_common import UtilsInterface as _UI
         from projectdavid_common.schemas.enums import StatusEnum as _Status
-
-        import docker as _docker
         from src.api.training.db.database import SessionLocal as _SessionLocal
         from src.api.training.models.models import InferenceDeployment as _Dep
 
@@ -347,7 +350,7 @@ class DeploymentSupervisor:
 @ray.remote(num_gpus=1)
 def process_job_remote(job_id: str, user_id: str):
     """
-    Phase 3A: Wraps process_job as a Ray remote task with num_gpus=1.
+    Phase 3A: Ray remote task wrapping process_job with num_gpus=1.
     Ray reserves 1 GPU, tracks the task in the dashboard, and releases
     the reservation automatically on completion or failure.
     """
@@ -355,7 +358,7 @@ def process_job_remote(job_id: str, user_id: str):
 
 
 def process_job(job_id: str, user_id: str):
-    """Core training job logic — unchanged from Phase 2."""
+    """Core training job logic."""
     db: Session = SessionLocal()
     local_data_path = None
 
@@ -451,22 +454,22 @@ def main():
     )
     logging_utility.info(f"🔵 Ray resources: {ray.cluster_resources()}")
 
-    # ── Existing startup ──────────────────────────────────────────────────────
-    db = SessionLocal()
-    try:
-        node_heartbeat(db, NODE_ID)
-        logging_utility.info(f"✅ Node {NODE_ID} mesh heartbeat initialized.")
-    finally:
-        db.close()
-
-    start_heartbeat()
+    # ── Phase 4: Resolve node identity from Ray ───────────────────────────────
+    # Replaces the start_heartbeat() thread and node_heartbeat() DB call.
+    # Ray already knows which nodes are alive — we read that state directly.
+    # The Ray node ID (hex string) is written to inference_deployments for
+    # traceability, consistent with what appears in the Ray dashboard.
+    ray_node_id = get_ray_node_id()
+    logging_utility.info(f"✅ Node identity resolved from Ray cluster: {ray_node_id}")
 
     # ── Phase 3B: DeploymentSupervisor Ray actor ──────────────────────────────
+    # Pass the Ray node ID so the supervisor queries deployments by the
+    # same identifier that gets written to inference_deployments.node_id.
     supervisor = DeploymentSupervisor.options(
         name="DeploymentSupervisor",
         get_if_exists=True,
     ).remote(
-        node_id=NODE_ID,
+        node_id=ray_node_id,
         docker_network=DOCKER_NETWORK_NAME,
     )
     supervisor.run.remote()
@@ -474,7 +477,7 @@ def main():
 
     # ── Phase 3A: Redis intake → Ray task submission ──────────────────────────
     r = get_redis()
-    logging_utility.info(f"👷 Cluster Worker {NODE_ID} listening for jobs...")
+    logging_utility.info(f"👷 Cluster Worker {ray_node_id} listening for jobs...")
 
     while True:
         try:
@@ -482,7 +485,7 @@ def main():
             if result:
                 _, data = result
                 payload = json.loads(data)
-                if payload.get("target_node") and payload.get("target_node") != NODE_ID:
+                if payload.get("target_node") and payload.get("target_node") != ray_node_id:
                     r.rpush(QUEUE_NAME, data)
                     time.sleep(1)
                     continue

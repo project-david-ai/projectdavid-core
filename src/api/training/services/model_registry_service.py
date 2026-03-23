@@ -7,9 +7,7 @@ from projectdavid_common.schemas.enums import StatusEnum
 from projectdavid_common.utilities.identifier_service import IdentifierService
 from sqlalchemy.orm import Session
 
-from src.api.training.models.models import (BaseModel, ComputeNode,
-                                            FineTunedModel,
-                                            InferenceDeployment)
+from src.api.training.models.models import BaseModel, FineTunedModel, InferenceDeployment
 
 # ---------------------------------------------------------------------------
 # Ray Dashboard HTTP API
@@ -18,16 +16,16 @@ from src.api.training.models.models import (BaseModel, ComputeNode,
 RAY_DASHBOARD_URL = "http://training_worker:8265"
 
 
-def _get_ray_available_resources() -> dict:
+def _get_ray_nodes() -> list:
     """
-    Queries the Ray dashboard REST API for live cluster resource availability.
+    Phase 4: Queries the Ray dashboard REST API for live node state.
 
-    Uses /api/v0/nodes to get per-node resource totals and usage.
-    This requires no GCS connection — just HTTP to the dashboard port,
-    which is already exposed and working.
+    Returns a list of ALIVE node dicts, each containing:
+      - node_id    : Ray hex node ID (stable identifier for this machine)
+      - node_ip    : dotted-quad IP on the Docker network
+      - resources_total: dict of GPU, CPU, memory (bytes)
 
-    Returns a dict with keys 'GPU' and 'memory' (bytes) representing
-    total available (free) resources across the cluster.
+    No GCS connection required — pure HTTP to the dashboard port.
     """
     try:
         resp = httpx.get(
@@ -42,23 +40,19 @@ def _get_ray_available_resources() -> dict:
             detail=f"Ray cluster unreachable — cannot schedule: {exc}",
         )
 
-    # Actual response shape: data -> result -> result (list of node dicts)
-    # Fields: resources_total (no usedResources in this endpoint)
     nodes = data.get("data", {}).get("result", {}).get("result", [])
+    return [n for n in nodes if isinstance(n, dict) and n.get("state") == "ALIVE"]
 
-    total_gpu = 0.0
-    total_memory_bytes = 0.0
 
-    for node in nodes:
-        if not isinstance(node, dict):
-            continue
-        if node.get("state") != "ALIVE":
-            continue
-        resources = node.get("resources_total", {})
-        total_gpu += resources.get("GPU", 0.0)
-        total_memory_bytes += resources.get("memory", 0.0)
-
-    return {"GPU": total_gpu, "memory": total_memory_bytes}
+def _get_ray_available_resources() -> dict:
+    """
+    Returns aggregated available resources across all ALIVE Ray nodes.
+    Used by find_available_node() for cluster-level capacity checks.
+    """
+    nodes = _get_ray_nodes()
+    total_gpu = sum(n.get("resources_total", {}).get("GPU", 0.0) for n in nodes)
+    total_memory = sum(n.get("resources_total", {}).get("memory", 0.0) for n in nodes)
+    return {"GPU": total_gpu, "memory": total_memory}
 
 
 # ---------------------------------------------------------------------------
@@ -101,46 +95,58 @@ def get_fine_tuned_model(db: Session, model_id: str, user_id: str) -> FineTunedM
 
 def find_available_node(db: Session, required_vram: float = 4.0) -> str:
     """
-    Phase 2: Queries the Ray dashboard HTTP API for live resource availability
-    instead of summing rows in the gpu_allocations ledger.
+    Phase 4: Selects a node entirely from Ray cluster state.
 
-    No GCS connection required — uses the dashboard REST endpoint which is
-    already exposed and reachable from the training-api container.
+    The compute_nodes DB table is no longer queried — Ray is the sole
+    source of truth for node availability and resource capacity.
+
+    Returns the Ray node ID (hex string) of the best available node,
+    ordered by free memory descending for implicit load balancing.
+    The node ID is written to inference_deployments.node_id for
+    traceability and matches what appears in the Ray dashboard.
+
+    Phase 5 will drop the compute_nodes table entirely.
     """
-    available = _get_ray_available_resources()
+    nodes = _get_ray_nodes()
 
-    available_gpu = available.get("GPU", 0.0)
-    available_memory_gb = available.get("memory", 0.0) / (1024**3)
-
-    if available_gpu < 1.0:
-        raise HTTPException(
-            status_code=507,
-            detail=f"No GPU available in Ray cluster. Available: {available_gpu} GPU(s).",
-        )
-
-    if available_memory_gb < required_vram:
-        raise HTTPException(
-            status_code=507,
-            detail=(
-                f"Insufficient memory in Ray cluster. "
-                f"Required: {required_vram:.1f} GB, "
-                f"Available: {available_memory_gb:.1f} GB."
-            ),
-        )
-
-    # Resolve the matching compute_node record.
-    # compute_nodes still drives the deployment ticket (node_id FK).
-    # Phase 4 will drop this table once Ray owns node discovery entirely.
-    nodes = db.query(ComputeNode).filter(ComputeNode.status == StatusEnum.active).all()
     if not nodes:
         raise HTTPException(
             status_code=507,
-            detail="No active compute nodes registered in the ledger.",
+            detail="No active nodes found in Ray cluster.",
         )
 
-    # Return the first active node — Ray has already confirmed resources
-    # are available across the cluster.
-    return nodes[0].id
+    # Sort by available memory descending — pick the least loaded node
+    def _free_memory(node: dict) -> float:
+        return node.get("resources_total", {}).get("memory", 0.0)
+
+    nodes_sorted = sorted(nodes, key=_free_memory, reverse=True)
+
+    for node in nodes_sorted:
+        resources = node.get("resources_total", {})
+        available_gpu = resources.get("GPU", 0.0)
+        available_memory_gb = resources.get("memory", 0.0) / (1024**3)
+
+        if available_gpu < 1.0:
+            continue
+
+        if available_memory_gb < required_vram:
+            continue
+
+        node_id = node.get("node_id", "")
+        node_ip = node.get("node_ip", "unknown")
+
+        if not node_id:
+            continue
+
+        return node_id
+
+    raise HTTPException(
+        status_code=507,
+        detail=(
+            f"No Ray node has sufficient resources. "
+            f"Required: 1 GPU + {required_vram:.1f} GB memory."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -153,16 +159,14 @@ def deactivate_all_models(db: Session, user_id: str) -> dict:
     CLEAN SLATE: Physically removes deployments to satisfy UniqueConstraints
     and free up hardware ports.
 
-    Phase 2: GPUAllocation deletes removed — Ray releases reservations
-    implicitly when tasks/actors complete. No manual ledger cleanup needed.
+    Phase 2+: GPUAllocation deletes removed — Ray releases reservations
+    implicitly when tasks/actors complete.
+    Phase 4: compute_nodes no longer touched.
     """
-    # 1. Reset metadata flags for the user
     db.query(FineTunedModel).filter(
         FineTunedModel.user_id == user_id, FineTunedModel.is_active
     ).update({"is_active": False, "node_id": None}, synchronize_session=False)
 
-    # 2. HARD DELETE deployments — clears the uq_node_port_deployment constraint
-    # so we can insert new models on the same port immediately.
     db.query(InferenceDeployment).filter(InferenceDeployment.node_id.is_not(None)).delete(
         synchronize_session=False
     )
@@ -177,18 +181,15 @@ def activate_model(
     """
     DEPLOYS A FINE-TUNED MODEL (Base + LoRA).
 
-    Phase 2: GPUAllocation row removed — Ray tracks resource consumption
-    implicitly. find_available_node() now queries Ray dashboard HTTP API.
+    Phase 4: node_id written to inference_deployments is now the Ray node ID
+    (hex string) rather than the legacy compute_nodes primary key.
     """
     model = get_fine_tuned_model(db, model_id, user_id)
 
-    # 1. Clear existing slots first
     deactivate_all_models(db, user_id)
 
-    # 2. Schedule — Ray confirms capacity, returns node_id from compute_nodes
     node_id = target_node_id or find_available_node(db, required_vram=5.0)
 
-    # 3. Create deployment ticket
     deployment_id = IdentifierService.generate_prefixed_id("dep")
     deployment = InferenceDeployment(
         id=deployment_id,
@@ -200,7 +201,6 @@ def activate_model(
         last_seen=int(time.time()),
     )
 
-    # 4. Persist — no GPUAllocation row, Ray owns the reservation
     model.is_active = True
     model.node_id = node_id
     db.add(deployment)
@@ -220,21 +220,16 @@ def activate_base_model(
     """
     DEPLOYS A STANDARD MODEL (Backbone only).
 
-    Phase 2: GPUAllocation row removed — Ray tracks resource consumption
-    implicitly. find_available_node() now queries Ray dashboard HTTP API.
+    Phase 4: node_id written to inference_deployments is now the Ray node ID.
     """
-    # 1. Verify model exists in our seeded catalog
     base = db.query(BaseModel).filter(BaseModel.id == base_model_id).first()
     if not base:
         raise HTTPException(status_code=404, detail=f"Base model {base_model_id} not found.")
 
-    # 2. Mutex: clear existing deployments to free Node Port 8001
     deactivate_all_models(db, user_id)
 
-    # 3. Scheduler: Ray confirms capacity
     node_id = target_node_id or find_available_node(db, required_vram=4.0)
 
-    # 4. Create deployment ticket (fine_tuned_model_id=None signals standard mode)
     deployment_id = IdentifierService.generate_prefixed_id("dep")
     deployment = InferenceDeployment(
         id=deployment_id,
@@ -246,7 +241,6 @@ def activate_base_model(
         last_seen=int(time.time()),
     )
 
-    # 5. Persist — no GPUAllocation row, Ray owns the reservation
     db.add(deployment)
     db.commit()
 

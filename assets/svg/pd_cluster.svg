@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="900" height="980" viewBox="0 0 900 980">
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1020" viewBox="0 0 900 1020">
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
       <path d="M2 1L8 5L2 9" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -10,154 +10,167 @@
       .tier-lbl  { font-family: Georgia, serif; font-size: 11px; font-weight: 600; fill: #94a3b8; letter-spacing: 0.08em; }
       .lbl       { font-family: Georgia, serif; font-size: 11px; font-weight: 600; fill: #1e293b; }
       .sub       { font-family: Georgia, serif; font-size: 10px; fill: #64748b; }
-      .sub-pink  { font-family: Georgia, serif; font-size: 10px; fill: #ec4899; }
       .sub-pur   { font-family: Georgia, serif; font-size: 10px; fill: #534ab7; }
+      .sub-gray  { font-family: Georgia, serif; font-size: 10px; fill: #94a3b8; }
       .conn      { stroke: #94a3b8; stroke-width: 1px; fill: none; }
       .conn-dash { stroke: #94a3b8; stroke-width: 0.75px; fill: none; stroke-dasharray: 4 2; }
 
       .box-ctrl  { fill: #eeedfe; stroke: #534ab7; stroke-width: 1.5px; stroke-dasharray: 5 3; }
       .box-api   { fill: #dbeafe; stroke: #185fa5; stroke-width: 0.75px; }
       .box-data  { fill: #ede9fe; stroke: #534ab7; stroke-width: 0.75px; }
+      .box-ray   { fill: #f0fdf4; stroke: #16a34a; stroke-width: 1px; }
       .box-store { fill: #dcfce7; stroke: #22c55e; stroke-width: 0.75px; }
       .box-mesh  { fill: #f1efe8; stroke: #5f5e5a; stroke-width: 1.5px; stroke-dasharray: 5 3; }
       .box-node  { fill: #ffffff; stroke: #888780; stroke-width: 1px; }
       .box-ghost { fill: #ffffff; stroke: #888780; stroke-width: 0.75px; stroke-dasharray: 4 3; opacity: 0.55; }
       .box-work  { fill: #fdf2f8; stroke: #ec4899; stroke-width: 0.75px; }
+      .box-actor { fill: #f0fdf4; stroke: #16a34a; stroke-width: 0.75px; }
       .box-vllm  { fill: #f1efe8; stroke: #5f5e5a; stroke-width: 0.75px; }
       .box-ftm   { fill: #fef9c3; stroke: #ca8a04; stroke-width: 0.75px; }
-      .box-reap  { fill: #fee2e2; stroke: #ef4444; stroke-width: 0.5px; }
       .box-res   { fill: #f0f7ff; stroke: #185fa5; stroke-width: 0.75px; }
       .box-res-i { fill: #ffffff; stroke: #185fa5; stroke-width: 0.5px; }
-      .lbl-red   { font-family: Georgia, serif; font-size: 11px; font-weight: 600; fill: #991b1b; }
-      .sub-red   { font-family: Georgia, serif; font-size: 10px; fill: #b91c1c; }
+      .box-legacy { fill: #f8f8f8; stroke: #c0bdb8; stroke-width: 0.5px; stroke-dasharray: 3 3; }
       .lbl-blue  { font-family: Georgia, serif; font-size: 11px; font-weight: 600; fill: #185fa5; }
+      .lbl-green { font-family: Georgia, serif; font-size: 11px; font-weight: 600; fill: #15803d; }
+      .sub-green { font-family: Georgia, serif; font-size: 10px; fill: #16a34a; }
+      .lbl-gray  { font-family: Georgia, serif; font-size: 11px; font-weight: 600; fill: #888780; }
     </style>
   </defs>
 
   <!-- Background -->
-  <rect width="900" height="980" class="bg" rx="16"/>
+  <rect width="900" height="1020" class="bg" rx="16"/>
 
   <!-- Header -->
-  <text x="450" y="44" text-anchor="middle" class="title">Project David — Live Cluster State</text>
-  <text x="450" y="64" text-anchor="middle" class="tagline">rtx4060_laptop_main · NVIDIA RTX 4060 Laptop GPU · 7.99 GB VRAM · March 2026</text>
+  <text x="450" y="44" text-anchor="middle" class="title">Project David — Phase 4 Cluster Architecture</text>
+  <text x="450" y="64" text-anchor="middle" class="tagline">Ray-native node registry · heterogeneous GPU mesh · one env var to join</text>
 
   <!-- ── TIER 1: CONTROL PLANE ─────────────────────────────── -->
   <text x="50" y="96" class="tier-lbl">1. CONTROL PLANE (SINGLETON)</text>
-  <rect x="50" y="104" width="800" height="178" rx="12" class="box-ctrl"/>
+  <rect x="50" y="104" width="800" height="160" rx="12" class="box-ctrl"/>
 
+  <!-- Training API -->
   <rect x="68" y="122" width="220" height="68" rx="6" class="box-api"/>
-  <text x="178" y="146" text-anchor="middle" class="lbl">Training API</text>
-  <text x="178" y="162" text-anchor="middle" class="sub">Redis master lease holder</text>
-  <text x="178" y="176" text-anchor="middle" class="sub">Scheduler · deployment dispatcher</text>
+  <text x="178" y="142" text-anchor="middle" class="lbl">Training API</text>
+  <text x="178" y="158" text-anchor="middle" class="sub">Redis master lease holder</text>
+  <text x="178" y="172" text-anchor="middle" class="sub">Scheduler · deployment dispatcher</text>
+  <text x="178" y="184" text-anchor="middle" class="sub">Queries Ray dashboard HTTP API</text>
 
-  <rect x="316" y="122" width="220" height="68" rx="6" class="box-data"/>
-  <text x="426" y="146" text-anchor="middle" class="lbl">Redis Broker</text>
-  <text x="426" y="162" text-anchor="middle" class="sub">training_jobs queue</text>
-  <text x="426" y="176" text-anchor="middle" class="sub">Master lease: cluster:active_api</text>
+  <!-- Redis -->
+  <rect x="316" y="122" width="200" height="68" rx="6" class="box-data"/>
+  <text x="416" y="142" text-anchor="middle" class="lbl">Redis Broker</text>
+  <text x="416" y="158" text-anchor="middle" class="sub">training_jobs queue</text>
+  <text x="416" y="172" text-anchor="middle" class="sub">Master lease: cluster:active_api</text>
 
-  <rect x="564" y="122" width="270" height="68" rx="6" class="box-data"/>
-  <text x="699" y="146" text-anchor="middle" class="lbl">MySQL — Global Ledger</text>
-  <text x="699" y="162" text-anchor="middle" class="sub">compute_nodes · gpu_allocations</text>
-  <text x="699" y="176" text-anchor="middle" class="sub">inference_deployments · fine_tuned_models</text>
+  <!-- MySQL — legacy tables grayed -->
+  <rect x="540" y="122" width="294" height="68" rx="6" class="box-data"/>
+  <text x="687" y="142" text-anchor="middle" class="lbl">MySQL — Ledger</text>
+  <text x="687" y="158" text-anchor="middle" class="sub">inference_deployments · fine_tuned_models</text>
+  <text x="687" y="172" text-anchor="middle" class="sub-gray">compute_nodes · gpu_allocations  [legacy — phase 5]</text>
 
   <line x1="288" y1="156" x2="314" y2="156" class="conn" marker-end="url(#arrow)"/>
-  <line x1="536" y1="156" x2="562" y2="156" class="conn" marker-end="url(#arrow)"/>
+  <line x1="516" y1="156" x2="538" y2="156" class="conn" marker-end="url(#arrow)"/>
 
-  <rect x="68" y="204" width="766" height="52" rx="6" class="box-reap"/>
-  <text x="451" y="224" text-anchor="middle" class="lbl-red">Cluster Reaper Daemon</text>
-  <text x="451" y="242" text-anchor="middle" class="sub-red">Monitors heartbeats · clears stale VRAM allocations · marks abandoned jobs failed</text>
+  <!-- Ray Dashboard HTTP note -->
+  <rect x="68" y="204" width="766" height="44" rx="6" class="box-ray"/>
+  <text x="451" y="222" text-anchor="middle" class="lbl-green">Ray Dashboard HTTP API  ·  http://training_worker:8265</text>
+  <text x="451" y="238" text-anchor="middle" class="sub-green">Training API queries /api/v0/nodes for live GPU availability · no GCS connection required</text>
 
-  <!-- ── TIER 2: SHARED STORAGE ────────────────────────────── -->
-  <text x="50" y="308" class="tier-lbl">2. SHARED STORAGE HUB</text>
-  <rect x="50" y="316" width="800" height="72" rx="10" class="box-store"/>
-  <text x="450" y="344" text-anchor="middle" class="lbl">Samba Adapter Hub</text>
-  <text x="450" y="362" text-anchor="middle" class="sub">/datasets (source JSONL)  ·  /models/ftm_* (LoRA adapters)  ·  /.hf_cache (base model weights)</text>
+  <!-- ── TIER 2: RAY CLUSTER ──────────────────────────────── -->
+  <text x="50" y="278" class="tier-lbl">2. RAY CLUSTER — NODE REGISTRY &amp; RESOURCE SCHEDULING</text>
+  <rect x="50" y="286" width="800" height="82" rx="10" class="box-ray"/>
+  <text x="450" y="308" text-anchor="middle" class="lbl-green">Ray Head Node  ·  172.18.0.10  ·  dashboard: localhost:8265</text>
+  <text x="450" y="324" text-anchor="middle" class="sub">Node identity via ray.nodes()  ·  Resource scheduling via @ray.remote(num_gpus=1)</text>
+  <text x="450" y="340" text-anchor="middle" class="sub">DeploymentSupervisor actor  ·  ALIVE  ·  PID 193  ·  replaces heartbeat thread</text>
+  <text x="450" y="356" text-anchor="middle" class="sub-green">New node joins cluster: set RAY_ADDRESS=ray://&lt;head&gt;:10001 → docker compose up</text>
 
-  <line x1="450" y1="282" x2="450" y2="314" class="conn" marker-end="url(#arrow)"/>
-  <line x1="450" y1="388" x2="450" y2="400" class="conn" marker-end="url(#arrow)"/>
+  <!-- ── TIER 3: SHARED STORAGE ────────────────────────────── -->
+  <text x="50" y="392" class="tier-lbl">3. SHARED STORAGE HUB</text>
+  <rect x="50" y="400" width="800" height="60" rx="10" class="box-store"/>
+  <text x="450" y="424" text-anchor="middle" class="lbl">Samba Adapter Hub</text>
+  <text x="450" y="440" text-anchor="middle" class="sub">/datasets (source JSONL)  ·  /models/ftm_* (LoRA adapters)  ·  /.hf_cache (base model weights)</text>
 
-  <!-- ── TIER 3: COMPUTE MESH ──────────────────────────────── -->
-  <text x="50" y="398" class="tier-lbl">3. DISTRIBUTED COMPUTE MESH — HETEROGENEOUS GPU NODES</text>
-  <rect x="50" y="406" width="800" height="548" rx="12" class="box-mesh"/>
+  <line x1="450" y1="368" x2="450" y2="398" class="conn" marker-end="url(#arrow)"/>
+  <line x1="450" y1="460" x2="450" y2="472" class="conn" marker-end="url(#arrow)"/>
+
+  <!-- ── TIER 4: COMPUTE MESH ──────────────────────────────── -->
+  <text x="50" y="470" class="tier-lbl">4. DISTRIBUTED COMPUTE MESH — HETEROGENEOUS GPU NODES</text>
+  <rect x="50" y="478" width="800" height="516" rx="12" class="box-mesh"/>
 
   <!-- NODE 1 — LIVE ────────────────────────────────────────── -->
-  <rect x="68" y="424" width="330" height="508" rx="10" class="box-node"/>
-  <text x="233" y="446" text-anchor="middle" class="lbl">NODE: rtx4060_laptop_main  ●  ACTIVE</text>
-  <text x="233" y="462" text-anchor="middle" class="sub">RTX 4060 Laptop GPU · 7.99 GB total VRAM</text>
+  <rect x="68" y="494" width="330" height="482" rx="10" class="box-node"/>
+  <text x="233" y="514" text-anchor="middle" class="lbl">NODE: aea109206314b87a...  ●  ALIVE</text>
+  <text x="233" y="530" text-anchor="middle" class="sub">RTX 4060 Laptop GPU · 7.99 GB VRAM · 172.18.0.10</text>
 
-  <!-- Worker -->
-  <rect x="84" y="474" width="298" height="96" rx="6" class="box-work"/>
-  <text x="233" y="494" text-anchor="middle" class="lbl">Worker Agent</text>
-  <text x="233" y="512" text-anchor="middle" class="sub">💓  Heartbeat · nvidia-smi telemetry</text>
-  <text x="233" y="528" text-anchor="middle" class="sub">👀  Inference supervisor (deployment watcher)</text>
-  <text x="233" y="544" text-anchor="middle" class="sub">👷  Job consumer · competitive BRPOP</text>
+  <!-- Worker Agent -->
+  <rect x="84" y="542" width="298" height="96" rx="6" class="box-work"/>
+  <text x="233" y="562" text-anchor="middle" class="lbl">Training Worker</text>
+  <text x="233" y="580" text-anchor="middle" class="sub">🌐  Ray head node · dashboard on :8265</text>
+  <text x="233" y="596" text-anchor="middle" class="sub">👷  Job consumer · submits @ray.remote tasks</text>
+  <text x="233" y="612" text-anchor="middle" class="sub">📬  Redis brpop → process_job_remote.remote()</text>
+
+  <!-- DeploymentSupervisor Actor -->
+  <rect x="84" y="650" width="298" height="60" rx="6" class="box-actor"/>
+  <text x="233" y="670" text-anchor="middle" class="lbl-green">DeploymentSupervisor  [Ray Actor]</text>
+  <text x="233" y="686" text-anchor="middle" class="sub-green">ALIVE · PID 193 · reconciles vLLM state every 20s</text>
+  <text x="233" y="700" text-anchor="middle" class="sub-green">Persistent across worker restarts</text>
 
   <!-- Active Deployment -->
-  <rect x="84" y="582" width="298" height="106" rx="6" class="box-vllm"/>
-  <text x="233" y="602" text-anchor="middle" class="lbl">vLLM Inference Server — ACTIVE</text>
-  <text x="233" y="620" text-anchor="middle" class="sub">Container IP: 172.18.0.15  ·  Port: 8001</text>
-  <text x="233" y="636" text-anchor="middle" class="sub">dep_ovgC3OoH7CAChtosn9Xg4x</text>
-  <text x="233" y="654" text-anchor="middle" class="sub">Backbone: unsloth/qwen2.5-1.5b-instruct-bnb-4bit</text>
-  <text x="233" y="670" text-anchor="middle" class="sub-pur">+ LoRA adapter slot: available</text>
+  <rect x="84" y="722" width="298" height="96" rx="6" class="box-vllm"/>
+  <text x="233" y="742" text-anchor="middle" class="lbl">vLLM Inference Server — ACTIVE</text>
+  <text x="233" y="760" text-anchor="middle" class="sub">Container IP: 172.18.0.14  ·  Port: 8001</text>
+  <text x="233" y="776" text-anchor="middle" class="sub">Backbone: unsloth/qwen2.5-1.5b-instruct-bnb-4bit</text>
+  <text x="233" y="792" text-anchor="middle" class="sub-pur">+ LoRA adapter slot: available</text>
 
   <!-- Fine-tuned model registry -->
-  <rect x="84" y="700" width="298" height="116" rx="6" class="box-ftm"/>
-  <text x="233" y="720" text-anchor="middle" class="lbl">Fine-Tuned Model Registry</text>
-  <text x="233" y="738" text-anchor="middle" class="sub">ftm_7i8T  FT: Qwen/Qwen2.5-1.5B-Instruct</text>
-  <text x="233" y="752" text-anchor="middle" class="sub">ftm_RdCS  FT: Qwen/Qwen2.5-1.5B-Instruct</text>
-  <text x="233" y="766" text-anchor="middle" class="sub">ftm_IX5l  FT: unsloth/Llama-3.2-1B-Instruct</text>
-  <text x="233" y="780" text-anchor="middle" class="sub">ftm_kgVQ  ftm_mK9Z  ftm_ra4E  (Llama-3.2-1B)</text>
+  <rect x="84" y="830" width="298" height="110" rx="6" class="box-ftm"/>
+  <text x="233" y="850" text-anchor="middle" class="lbl">Fine-Tuned Model Registry  [6 models]</text>
+  <text x="233" y="868" text-anchor="middle" class="sub">ftm_7i8T · ftm_RdCS  —  Qwen/Qwen2.5-1.5B-Instruct</text>
+  <text x="233" y="884" text-anchor="middle" class="sub">ftm_IX5l · ftm_kgVQ · ftm_mK9Z · ftm_ra4E</text>
+  <text x="233" y="900" text-anchor="middle" class="sub">unsloth/Llama-3.2-1B-Instruct</text>
 
-  <!-- VRAM bar -->
-  <rect x="84" y="828" width="298" height="36" rx="6" class="box-api"/>
-  <text x="233" y="844" text-anchor="middle" class="lbl">VRAM: 4.0 GB reserved / 7.99 GB total</text>
-  <rect x="92" y="852" width="148" height="6" rx="3" style="fill:#185fa5;opacity:0.6"/>
-  <rect x="92" y="852" width="282" height="6" rx="3" style="fill:none;stroke:#185fa5;stroke-width:0.5px"/>
-
-  <!-- Heartbeat line to ledger -->
-  <path d="M 398 520 Q 520 480 564 180" class="conn-dash" marker-end="url(#arrow)"/>
-  <text x="490" y="390" text-anchor="middle" class="sub" transform="rotate(-70 490 390)">Heartbeat / VRAM telemetry</text>
+  <!-- Ray → resolver arrow (replaces heartbeat) -->
+  <path d="M 398 570 Q 520 520 540 310" class="conn-dash" marker-end="url(#arrow)"/>
+  <text x="496" y="440" text-anchor="middle" class="sub" transform="rotate(-75 496 440)">ray.nodes() · resource state</text>
 
   <!-- NODE 2 — OFFLINE PLACEHOLDER ───────────────────────── -->
-  <rect x="424" y="424" width="200" height="200" rx="10" class="box-ghost"/>
-  <text x="524" y="450" text-anchor="middle" class="lbl" style="opacity:0.55">workstation_01</text>
-  <text x="524" y="468" text-anchor="middle" class="sub" style="opacity:0.55">RTX 3090 class · 24 GB · offline</text>
-  <rect x="440" y="490" width="168" height="58" rx="6" style="fill:#f1efe8;stroke:#888780;stroke-width:0.5;stroke-dasharray:3 3;opacity:0.55"/>
-  <text x="524" y="514" text-anchor="middle" class="sub" style="opacity:0.55">Worker agent</text>
-  <text x="524" y="530" text-anchor="middle" class="sub" style="opacity:0.55">docker compose up to register</text>
-  <text x="524" y="596" text-anchor="middle" class="sub" style="opacity:0.45">Any GPU · capacity-first selection</text>
+  <rect x="424" y="494" width="200" height="190" rx="10" class="box-ghost"/>
+  <text x="524" y="518" text-anchor="middle" class="lbl" style="opacity:0.55">workstation_01</text>
+  <text x="524" y="534" text-anchor="middle" class="sub" style="opacity:0.55">RTX 3090 class · 24 GB · offline</text>
+  <rect x="440" y="554" width="168" height="56" rx="6" style="fill:#fdf2f8;stroke:#ec4899;stroke-width:0.5;stroke-dasharray:3 3;opacity:0.55"/>
+  <text x="524" y="576" text-anchor="middle" class="sub" style="opacity:0.55">Training worker</text>
+  <text x="524" y="592" text-anchor="middle" class="sub" style="opacity:0.55">RAY_ADDRESS=ray://head:10001</text>
+  <text x="524" y="668" text-anchor="middle" class="sub" style="opacity:0.45">docker compose up to join cluster</text>
 
   <!-- NODE N — SCALE-OUT ──────────────────────────────────── -->
-  <rect x="640" y="424" width="192" height="200" rx="10" class="box-ghost"/>
-  <text x="736" y="450" text-anchor="middle" class="lbl" style="opacity:0.45">gpu_server_N</text>
-  <text x="736" y="468" text-anchor="middle" class="sub" style="opacity:0.45">Any GPU class · any VRAM</text>
-  <rect x="656" y="490" width="160" height="58" rx="6" style="fill:#f1efe8;stroke:#888780;stroke-width:0.5;stroke-dasharray:3 3;opacity:0.45"/>
-  <text x="736" y="514" text-anchor="middle" class="sub" style="opacity:0.45">Worker agent</text>
-  <text x="736" y="530" text-anchor="middle" class="sub" style="opacity:0.45">docker compose up to register</text>
-  <text x="736" y="596" text-anchor="middle" class="sub" style="opacity:0.35">Unlimited nodes</text>
-  <text x="736" y="612" text-anchor="middle" class="sub" style="opacity:0.35">Heterogeneous by design</text>
+  <rect x="640" y="494" width="192" height="190" rx="10" class="box-ghost"/>
+  <text x="736" y="518" text-anchor="middle" class="lbl" style="opacity:0.45">gpu_server_N</text>
+  <text x="736" y="534" text-anchor="middle" class="sub" style="opacity:0.45">Any GPU class · any VRAM</text>
+  <rect x="656" y="554" width="160" height="56" rx="6" style="fill:#fdf2f8;stroke:#ec4899;stroke-width:0.5;stroke-dasharray:3 3;opacity:0.45"/>
+  <text x="736" y="576" text-anchor="middle" class="sub" style="opacity:0.45">Training worker</text>
+  <text x="736" y="592" text-anchor="middle" class="sub" style="opacity:0.45">RAY_ADDRESS=ray://head:10001</text>
+  <text x="736" y="668" text-anchor="middle" class="sub" style="opacity:0.35">Unlimited nodes</text>
+  <text x="736" y="684" text-anchor="middle" class="sub" style="opacity:0.35">Heterogeneous by design</text>
 
   <!-- STAGE 6: GLOBAL RESOLVER ───────────────────────────── -->
-  <rect x="424" y="648" width="408" height="280" rx="10" class="box-res"/>
-  <text x="628" y="672" text-anchor="middle" class="lbl">Stage 6 — Global Load Balancer</text>
-  <text x="628" y="690" text-anchor="middle" class="sub">Called by: Core API orchestrator on every inference request</text>
+  <rect x="424" y="706" width="408" height="270" rx="10" class="box-res"/>
+  <text x="628" y="730" text-anchor="middle" class="lbl">Stage 6 — Global Load Balancer</text>
+  <text x="628" y="748" text-anchor="middle" class="sub">Called by: Core API orchestrator on every inference request</text>
 
-  <rect x="440" y="704" width="376" height="80" rx="6" class="box-res-i"/>
-  <text x="628" y="724" text-anchor="middle" class="lbl-blue">InferenceResolver.resolve_vllm_url()</text>
-  <text x="628" y="742" text-anchor="middle" class="sub">1. Query inference_deployments WHERE status = active</text>
-  <text x="628" y="758" text-anchor="middle" class="sub">2. JOIN compute_nodes — verify heartbeat healthy</text>
-  <text x="628" y="774" text-anchor="middle" class="sub">3. ORDER BY free VRAM desc — automatic load balance</text>
+  <rect x="440" y="762" width="376" height="80" rx="6" class="box-res-i"/>
+  <text x="628" y="782" text-anchor="middle" class="lbl-blue">InferenceResolver.resolve_vllm_url()</text>
+  <text x="628" y="800" text-anchor="middle" class="sub">1. Query inference_deployments WHERE status = active</text>
+  <text x="628" y="816" text-anchor="middle" class="sub">2. Verify node ALIVE via Ray dashboard HTTP API</text>
+  <text x="628" y="832" text-anchor="middle" class="sub">3. Return http://internal_hostname:port</text>
 
-  <rect x="440" y="800" width="376" height="68" rx="6" class="box-res-i"/>
-  <text x="628" y="820" text-anchor="middle" class="lbl">Resolved endpoint (current)</text>
-  <text x="628" y="838" text-anchor="middle" class="sub">http://172.18.0.15:8001/v1/completions</text>
-  <text x="628" y="854" text-anchor="middle" class="sub">model: unsloth/qwen2.5-1.5b-instruct-bnb-4bit</text>
+  <rect x="440" y="858" width="376" height="58" rx="6" class="box-res-i"/>
+  <text x="628" y="878" text-anchor="middle" class="lbl">Resolved endpoint (current)</text>
+  <text x="628" y="896" text-anchor="middle" class="sub">http://172.18.0.14:8001/v1/completions</text>
 
   <!-- Arrow: resolver → node 1 -->
-  <path d="M 424 840 L 384 840 L 384 720 L 398 720" class="conn" marker-end="url(#arrow)"/>
-  <text x="404" y="790" text-anchor="middle" class="sub" transform="rotate(-90 404 790)">Forward request</text>
+  <path d="M 424 888 L 384 888 L 384 760 L 398 760" class="conn" marker-end="url(#arrow)"/>
+  <text x="404" y="832" text-anchor="middle" class="sub" transform="rotate(-90 404 832)">Forward request</text>
 
   <!-- Arrow: resolver ← core api -->
-  <path d="M 628 648 L 628 600 L 840 600 L 840 190 L 836 190" class="conn-dash" marker-end="url(#arrow)"/>
+  <path d="M 628 706 L 628 660 L 840 660 L 840 200 L 836 200" class="conn-dash" marker-end="url(#arrow)"/>
 
 </svg>
