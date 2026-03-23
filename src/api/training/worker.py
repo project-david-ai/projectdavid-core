@@ -6,7 +6,6 @@ import threading
 import time
 from typing import List, Optional
 
-import docker  # Required: pip install docker
 import ray
 import redis
 from projectdavid_common import UtilsInterface
@@ -15,14 +14,11 @@ from projectdavid_common.utilities.identifier_service import IdentifierService
 from projectdavid_orm.projectdavid_orm.models import FileStorage
 from sqlalchemy.orm import Session
 
+import docker  # Required: pip install docker
 from src.api.training.db.database import SessionLocal
-from src.api.training.models.models import (
-    ComputeNode,
-    Dataset,
-    FineTunedModel,
-    InferenceDeployment,
-    TrainingJob,
-)
+from src.api.training.models.models import (ComputeNode, Dataset,
+                                            FineTunedModel,
+                                            InferenceDeployment, TrainingJob)
 from src.api.training.services.cluster_service import node_heartbeat
 from src.api.training.services.file_service import SambaClient
 
