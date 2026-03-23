@@ -13,3 +13,12 @@ pip-compile `
   --generate-hashes `
   --strip-extras `
   -o api_reqs_hashed.txt
+
+
+pip-compile `
+  training_requirements.in `
+  --resolver=backtracking `
+  --generate-hashes `
+  --strip-extras `
+  -o training_reqs_hashed.txt
+

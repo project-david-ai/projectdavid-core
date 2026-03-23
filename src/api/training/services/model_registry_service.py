@@ -1,15 +1,43 @@
 import time
 from typing import List, Optional
 
+import httpx
 from fastapi import HTTPException
 from projectdavid_common.schemas.enums import StatusEnum
 from projectdavid_common.utilities.identifier_service import IdentifierService
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from src.api.training.models.models import (BaseModel, ComputeNode,
-                                            FineTunedModel, GPUAllocation,
+from src.api.training.models.models import (BaseModel, FineTunedModel,
                                             InferenceDeployment)
+
+# ---------------------------------------------------------------------------
+# Ray Dashboard HTTP API
+# ---------------------------------------------------------------------------
+
+RAY_DASHBOARD_URL = "http://training_worker:8265"
+
+
+def _get_ray_nodes() -> list:
+    """
+    Queries the Ray dashboard REST API for live node state.
+    Returns a list of ALIVE node dicts with resources_total.
+    """
+    try:
+        resp = httpx.get(
+            f"{RAY_DASHBOARD_URL}/api/v0/nodes?detail=True",
+            timeout=5.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Ray cluster unreachable — cannot schedule: {exc}",
+        )
+
+    nodes = data.get("data", {}).get("result", {}).get("result", [])
+    return [n for n in nodes if isinstance(n, dict) and n.get("state") == "ALIVE"]
+
 
 # ---------------------------------------------------------------------------
 # Registry Retrieval
@@ -49,74 +77,107 @@ def get_fine_tuned_model(db: Session, model_id: str, user_id: str) -> FineTunedM
 # ---------------------------------------------------------------------------
 
 
-def find_available_node(db: Session, required_vram: float = 4.0) -> str:
+def find_available_node(
+    db: Session,
+    required_vram: float = 4.0,
+    tensor_parallel_size: int = 1,
+) -> str:
     """
-    Finds a node by calculating: Total VRAM - SUM(All Active Reservations).
-    """
-    nodes = db.query(ComputeNode).filter(ComputeNode.status == StatusEnum.active).all()
+    Phase 4 + sharding: Selects a node from Ray cluster state.
 
-    for node in nodes:
-        # Calculate current load from the Ledger
-        reserved = (
-            db.query(func.sum(GPUAllocation.vram_reserved_gb))
-            .filter(GPUAllocation.node_id == node.id)
-            .scalar()
-            or 0.0
+    tensor_parallel_size > 1 means the deployment will span multiple GPUs.
+    The scheduler checks that the selected node has at least
+    tensor_parallel_size GPUs available before confirming the slot.
+
+    Returns the Ray node ID (hex string).
+    """
+    nodes = _get_ray_nodes()
+
+    if not nodes:
+        raise HTTPException(
+            status_code=507,
+            detail="No active nodes found in Ray cluster.",
         )
 
-        if (node.total_vram_gb - reserved) >= required_vram:
-            return node.id
+    nodes_sorted = sorted(
+        nodes,
+        key=lambda n: n.get("resources_total", {}).get("memory", 0.0),
+        reverse=True,
+    )
 
-    # 🎯 REQUIREMENT 2: Graceful feedback
+    for node in nodes_sorted:
+        resources = node.get("resources_total", {})
+        available_gpu = resources.get("GPU", 0.0)
+        available_memory_gb = resources.get("memory", 0.0) / (1024**3)
+
+        # For tensor parallel deployments we need N GPUs on the same node
+        if available_gpu < tensor_parallel_size:
+            continue
+
+        if available_memory_gb < required_vram:
+            continue
+
+        node_id = node.get("node_id", "")
+        if not node_id:
+            continue
+
+        return node_id
+
     raise HTTPException(
-        status_code=507, detail=f"Insufficient VRAM in cluster. Required: {required_vram}GB."
+        status_code=507,
+        detail=(
+            f"No Ray node has sufficient resources. "
+            f"Required: {tensor_parallel_size} GPU(s) + {required_vram:.1f} GB memory."
+        ),
     )
 
 
 # ---------------------------------------------------------------------------
-# Deployment Logic (The Mesh Implementation)
+# Deployment Logic
 # ---------------------------------------------------------------------------
 
 
 def deactivate_all_models(db: Session, user_id: str) -> dict:
     """
-    CLEAN SLATE: Physically removes deployments and allocations to
-    satisfy UniqueConstraints and free up hardware ports.
+    CLEAN SLATE: removes deployments to satisfy port constraints.
+    Phase 2+: GPUAllocation deletes removed — Ray releases reservations.
+    Phase 4: compute_nodes not touched.
     """
-    # 1. Reset Metadata flags for the user — E712 fix: use is_active directly
     db.query(FineTunedModel).filter(
         FineTunedModel.user_id == user_id, FineTunedModel.is_active
     ).update({"is_active": False, "node_id": None}, synchronize_session=False)
 
-    # 2. HARD DELETE Deployments: This clears the uq_node_port_deployment constraint
-    # so we can insert new models on the same port immediately.
-    # E711 fix: use is_not(None) instead of != None
     db.query(InferenceDeployment).filter(InferenceDeployment.node_id.is_not(None)).delete(
         synchronize_session=False
     )
-
-    # 3. Release VRAM allocations physically
-    db.query(GPUAllocation).delete(synchronize_session=False)
 
     db.commit()
     return {"status": "success", "message": "Cluster resources released."}
 
 
 def activate_model(
-    db: Session, model_id: str, user_id: str, target_node_id: Optional[str] = None
+    db: Session,
+    model_id: str,
+    user_id: str,
+    target_node_id: Optional[str] = None,
+    tensor_parallel_size: int = 1,
 ) -> dict:
     """
     DEPLOYS A FINE-TUNED MODEL (Base + LoRA).
+
+    tensor_parallel_size: number of GPUs to shard the model across.
+    Default 1 = single GPU, backward compatible.
     """
     model = get_fine_tuned_model(db, model_id, user_id)
 
-    # 1. Clear existing slots first
     deactivate_all_models(db, user_id)
 
-    # 2. Schedule
-    node_id = target_node_id or find_available_node(db, required_vram=5.0)
+    node_id = target_node_id or find_available_node(
+        db,
+        required_vram=5.0,
+        tensor_parallel_size=tensor_parallel_size,
+    )
 
-    # 3. Create Ticket
     deployment_id = IdentifierService.generate_prefixed_id("dep")
     deployment = InferenceDeployment(
         id=deployment_id,
@@ -126,44 +187,48 @@ def activate_model(
         port=8001,
         status=StatusEnum.pending,
         last_seen=int(time.time()),
+        tensor_parallel_size=tensor_parallel_size,
     )
 
-    # 4. Lock VRAM
-    allocation = GPUAllocation(node_id=node_id, model_id=model.id, vram_reserved_gb=5.0)
-
-    # 5. Persist
     model.is_active = True
     model.node_id = node_id
     db.add(deployment)
-    db.add(allocation)
     db.commit()
 
     return {
         "status": "deploying",
         "model_id": model.id,
         "node": node_id,
+        "tensor_parallel_size": tensor_parallel_size,
         "next_step": "Worker is provisioning LoRA weights.",
     }
 
 
 def activate_base_model(
-    db: Session, base_model_id: str, user_id: str, target_node_id: Optional[str] = None
+    db: Session,
+    base_model_id: str,
+    user_id: str,
+    target_node_id: Optional[str] = None,
+    tensor_parallel_size: int = 1,
 ) -> dict:
     """
     DEPLOYS A STANDARD MODEL (Backbone only).
+
+    tensor_parallel_size: number of GPUs to shard the model across.
+    Default 1 = single GPU, backward compatible.
     """
-    # 1. Verify model exists in our seeded catalog
     base = db.query(BaseModel).filter(BaseModel.id == base_model_id).first()
     if not base:
         raise HTTPException(status_code=404, detail=f"Base model {base_model_id} not found.")
 
-    # 2. Mutex: Clear existing deployments to free Node Port 8001
     deactivate_all_models(db, user_id)
 
-    # 3. Scheduler: Find hardware
-    node_id = target_node_id or find_available_node(db, required_vram=4.0)
+    node_id = target_node_id or find_available_node(
+        db,
+        required_vram=4.0,
+        tensor_parallel_size=tensor_parallel_size,
+    )
 
-    # 4. Create the Deployment Ticket (fine_tuned_model_id=None signals Standard Mode)
     deployment_id = IdentifierService.generate_prefixed_id("dep")
     deployment = InferenceDeployment(
         id=deployment_id,
@@ -173,20 +238,16 @@ def activate_base_model(
         port=8001,
         status=StatusEnum.pending,
         last_seen=int(time.time()),
-    )
-
-    # 5. Lock VRAM (Standard backbone)
-    allocation = GPUAllocation(
-        node_id=node_id, model_id=None, vram_reserved_gb=4.0  # Indicates base model lock
+        tensor_parallel_size=tensor_parallel_size,
     )
 
     db.add(deployment)
-    db.add(allocation)
     db.commit()
 
     return {
         "status": "deploying_standard",
         "model_id": base.id,
         "node": node_id,
+        "tensor_parallel_size": tensor_parallel_size,
         "next_step": f"Standard backbone {base.id} is being provisioned.",
     }

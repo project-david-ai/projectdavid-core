@@ -14,11 +14,11 @@ websockets==15.0.1
 transformers>=4.33.0,<5.0.0
 # ------------------------------------------------------------------ #
 # Internal packages
-projectdavid[text-embeddings]==1.88.0
+projectdavid[text-embeddings]==1.90.0
 #<--has projectdavid-common
-projectdavid-orm==1.2.0
+projectdavid-orm==1.4.0
 # <--Depends on projectdavid-orm
-projectdavid-services==1.0.11
+projectdavid-services==1.0.12
 # web search tools
 html2text>=2024.2.26
 playwright>=1.41.0

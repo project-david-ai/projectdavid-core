@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from projectdavid_common import ValidationInterface
 from sqlalchemy.orm import Session
 
@@ -62,15 +62,32 @@ def delete_model_endpoint(
 @router.post("/{model_id}/activate", response_model=ValidationInterface.ActivateModelResponse)
 def activate_model_endpoint(
     model_id: str,
-    node_id: Optional[str] = None,  # Optional: Pin to a specific hardware node
+    node_id: Optional[str] = None,
+    tensor_parallel_size: int = Query(
+        default=1,
+        ge=1,
+        description=(
+            "Number of GPUs to shard this model across using vLLM tensor parallelism. "
+            "1 = single GPU (default). N > 1 requires N GPUs available on the target node."
+        ),
+    ),
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
     """
     Promote a fine-tuned model to 'Active' status.
     Triggers the Node Agent to provision vLLM with the LoRA adapters.
+
+    Use tensor_parallel_size > 1 to shard the model across multiple GPUs
+    for larger models that exceed single-GPU VRAM.
     """
-    return model_registry_service.activate_model(db, model_id, user_id, target_node_id=node_id)
+    return model_registry_service.activate_model(
+        db,
+        model_id,
+        user_id,
+        target_node_id=node_id,
+        tensor_parallel_size=tensor_parallel_size,
+    )
 
 
 @router.post("/{model_id}/deactivate")
@@ -89,21 +106,34 @@ def deactivate_model_endpoint(
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-# Change from {base_model_id} to {base_model_id:path}
 @router.post("/base/{base_model_id:path}/activate")
 def activate_base_model_endpoint(
     base_model_id: str,
     node_id: Optional[str] = None,
+    tensor_parallel_size: int = Query(
+        default=1,
+        ge=1,
+        description=(
+            "Number of GPUs to shard this model across using vLLM tensor parallelism. "
+            "1 = single GPU (default). N > 1 requires N GPUs available on the target node."
+        ),
+    ),
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
     """
     Deploy a standard backbone model from the catalog (no LoRA).
     Schedules the model to the healthiest available GPU node.
+
+    Use tensor_parallel_size > 1 to shard the model across multiple GPUs
+    for larger models that exceed single-GPU VRAM.
     """
-    # Now base_model_id will correctly capture 'Qwen/Qwen2.5-1.5B-Instruct'
     return model_registry_service.activate_base_model(
-        db, base_model_id, user_id, target_node_id=node_id
+        db,
+        base_model_id,
+        user_id,
+        target_node_id=node_id,
+        tensor_parallel_size=tensor_parallel_size,
     )
 
 

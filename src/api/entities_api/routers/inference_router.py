@@ -2,7 +2,7 @@ import json
 import time
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from projectdavid_common import ValidationInterface
 from projectdavid_common.utilities.logging_service import LoggingUtility
 from redis import Redis
@@ -21,17 +21,18 @@ logging_utility = LoggingUtility()
 
 @router.post(
     "/completions",
-    summary="Asynchronous completions streaming endpoint (Unified Orchestration)",
-    response_description="A stream of JSON-formatted completions chunks",
+    summary="Completions endpoint — streaming (default) or buffered",
+    response_description="SSE stream or single JSON object depending on stream flag",
 )
 async def completions(
     stream_request: ValidationInterface.StreamRequest,
     redis: Redis = Depends(get_redis),
 ):
     logging_utility.info(
-        "Completions endpoint called for model: %s, run: %s",
+        "Completions endpoint called — model: %s, run: %s, stream: %s",
         stream_request.model,
         stream_request.run_id,
+        stream_request.stream,
     )
 
     # ------------------------------------------------------------------
@@ -64,21 +65,18 @@ async def completions(
         if not run:
             raise HTTPException(status_code=404, detail="Run not found.")
 
-        # ── Guard 1: run.thread_id matches the request ───────────────
         if run.thread_id != stream_request.thread_id:
             raise HTTPException(
                 status_code=403,
                 detail="Thread ID does not match the run.",
             )
 
-        # ── Guard 2: run.assistant_id matches the request ────────────
         if run.assistant_id != stream_request.assistant_id:
             raise HTTPException(
                 status_code=403,
                 detail="Assistant ID does not match the run.",
             )
 
-        # ── Guard 3: caller has access to the assistant ──────────────
         await native.assert_assistant_access(
             assistant_id=stream_request.assistant_id,
             user_id=run.user_id,
@@ -104,60 +102,161 @@ async def completions(
         raise HTTPException(status_code=500, detail=str(e))
 
     # ------------------------------------------------------------------
-    # STREAM
+    # CORE GENERATOR
+    #
+    # Runs identically regardless of stream mode. All side effects —
+    # tool calls, file generation, status events — execute in both paths.
+    # The stream flag only controls how the output is delivered to the
+    # caller, not what the generator does internally.
     # ------------------------------------------------------------------
-    async def stream_generator():
-        start_time = time.time()
+    async def event_generator():
         run_id = stream_request.run_id
-        prefix = "data: "
-        suffix = "\n\n"
-        chunk_count = 0
-        error_occurred = False
+        async for chunk in general_handler_instance.process_conversation(
+            thread_id=stream_request.thread_id,
+            message_id=stream_request.message_id,
+            run_id=run_id,
+            assistant_id=stream_request.assistant_id,
+            model=stream_request.model,
+            stream_reasoning=False,
+            api_key=stream_request.api_key,
+        ):
+            yield chunk
 
-        try:
-            async for chunk in general_handler_instance.process_conversation(
-                thread_id=stream_request.thread_id,
-                message_id=stream_request.message_id,
-                run_id=run_id,
-                assistant_id=stream_request.assistant_id,
-                model=stream_request.model,
-                stream_reasoning=False,
-                api_key=stream_request.api_key,
-            ):
-                chunk_count += 1
-                final_str = ""
+    # ------------------------------------------------------------------
+    # PATH A: STREAMING (default)
+    #
+    # Each chunk is forwarded to the client as it arrives via SSE.
+    # ------------------------------------------------------------------
+    if stream_request.stream:
 
-                if isinstance(chunk, str):
-                    final_str = chunk
-                elif isinstance(chunk, dict):
-                    if "run_id" not in chunk:
-                        chunk["run_id"] = run_id
-                    final_str = json.dumps(chunk)
-                else:
-                    final_str = json.dumps(
-                        {"type": "content", "content": str(chunk), "run_id": run_id}
-                    )
+        async def stream_generator():
+            start_time = time.time()
+            run_id = stream_request.run_id
+            prefix = "data: "
+            suffix = "\n\n"
+            chunk_count = 0
+            error_occurred = False
 
-                yield f"{prefix}{final_str}{suffix}"
+            try:
+                async for chunk in event_generator():
+                    chunk_count += 1
+                    final_str = ""
 
-            if not error_occurred:
-                yield "data: [DONE]\n\n"
+                    if isinstance(chunk, str):
+                        final_str = chunk
+                    elif isinstance(chunk, dict):
+                        if "run_id" not in chunk:
+                            chunk["run_id"] = run_id
+                        final_str = json.dumps(chunk)
+                    else:
+                        final_str = json.dumps(
+                            {"type": "content", "content": str(chunk), "run_id": run_id}
+                        )
 
-        except Exception as e:
-            error_occurred = True
-            logging_utility.error(f"Stream loop error: {e}", exc_info=True)
-            yield f"data: {json.dumps({'type': 'error', 'run_id': run_id, 'message': str(e)})}\n\n"
-        finally:
-            elapsed = time.time() - start_time
-            logging_utility.info(f"Stream finished: {chunk_count} chunks in {elapsed:.2f}s")
+                    yield f"{prefix}{final_str}{suffix}"
 
-    return StreamingResponse(
-        stream_generator(),
-        media_type="text/event-stream",
-        headers={
-            "X-Accel-Buffering": "no",
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "Content-Type": "text/event-stream",
-        },
+                if not error_occurred:
+                    yield "data: [DONE]\n\n"
+
+            except Exception as e:
+                error_occurred = True
+                logging_utility.error(f"Stream loop error: {e}", exc_info=True)
+                yield (
+                    f"data: {json.dumps({'type': 'error', 'run_id': run_id, 'message': str(e)})}\n\n"
+                )
+            finally:
+                elapsed = time.time() - start_time
+                logging_utility.info(f"Stream finished: {chunk_count} chunks in {elapsed:.2f}s")
+
+        return StreamingResponse(
+            stream_generator(),
+            media_type="text/event-stream",
+            headers={
+                "X-Accel-Buffering": "no",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Content-Type": "text/event-stream",
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # PATH B: BUFFERED
+    #
+    # The generator runs to completion server-side. Content chunks are
+    # assembled into a single string. All other event types (tool calls,
+    # status events, file events) still execute — they are logged but
+    # not forwarded since the client is waiting for a single response.
+    #
+    # Response shape mirrors a non-streaming OpenAI-compatible completion:
+    # {
+    #   "run_id":    "<run_id>",
+    #   "content":   "<assembled text>",
+    #   "type":      "content",
+    #   "model":     "<model>",
+    #   "elapsed_s": <float>
+    # }
+    # ------------------------------------------------------------------
+    start_time = time.time()
+    run_id = stream_request.run_id
+    content_parts = []
+    error_message = None
+
+    try:
+        async for chunk in event_generator():
+            # Normalise to dict
+            if isinstance(chunk, str):
+                try:
+                    parsed = json.loads(chunk)
+                except Exception:
+                    parsed = {"type": "content", "content": chunk}
+            elif isinstance(chunk, dict):
+                parsed = chunk
+            else:
+                parsed = {"type": "content", "content": str(chunk)}
+
+            chunk_type = parsed.get("type", "content")
+
+            if chunk_type == "content":
+                # Assemble the actual response text
+                content_parts.append(parsed.get("content", ""))
+
+            elif chunk_type == "error":
+                # Capture the first error and abort assembly
+                error_message = parsed.get("message") or parsed.get("error", "Unknown error")
+                logging_utility.error(
+                    f"[{run_id}] Buffered mode — error chunk received: {error_message}"
+                )
+                break
+
+            else:
+                # Side-effect events (tool_call_start, research_status, web_status,
+                # code_status, shell_status, hot_code, hot_code_output,
+                # computer_output, code_interpreter_file, computer_file,
+                # scratchpad_status, engineer_status, reasoning) —
+                # all execute normally, logged here for observability.
+                logging_utility.info(f"[{run_id}] Buffered side-effect: type={chunk_type}")
+
+    except Exception as e:
+        logging_utility.error(f"Buffered generator error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Buffered completion failed: {e}")
+
+    elapsed = time.time() - start_time
+
+    if error_message:
+        raise HTTPException(status_code=500, detail=error_message)
+
+    assembled_content = "".join(content_parts)
+    logging_utility.info(
+        f"[{run_id}] Buffered response assembled: "
+        f"{len(assembled_content)} chars in {elapsed:.2f}s"
+    )
+
+    return JSONResponse(
+        content={
+            "run_id": run_id,
+            "content": assembled_content,
+            "type": "content",
+            "model": stream_request.model,
+            "elapsed_s": round(elapsed, 3),
+        }
     )
