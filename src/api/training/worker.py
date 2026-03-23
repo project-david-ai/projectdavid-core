@@ -6,7 +6,6 @@ import threading
 import time
 from typing import List, Optional
 
-import docker  # Required: pip install docker
 import ray
 import redis
 from projectdavid_common import UtilsInterface
@@ -15,13 +14,10 @@ from projectdavid_common.utilities.identifier_service import IdentifierService
 from projectdavid_orm.projectdavid_orm.models import FileStorage
 from sqlalchemy.orm import Session
 
+import docker  # Required: pip install docker
 from src.api.training.db.database import SessionLocal
-from src.api.training.models.models import (
-    Dataset,
-    FineTunedModel,
-    InferenceDeployment,
-    TrainingJob,
-)
+from src.api.training.models.models import (Dataset, FineTunedModel,
+                                            InferenceDeployment, TrainingJob)
 from src.api.training.services.file_service import SambaClient
 
 logging_utility = UtilsInterface.LoggingUtility()
@@ -35,8 +31,6 @@ HF_CACHE_PATH = os.getenv("HF_CACHE_PATH", "/root/.cache/huggingface")
 
 DOCKER_NETWORK_NAME = os.getenv("DOCKER_NETWORK_NAME", "projectdavid-core_my_custom_network")
 
-# Phase 4: NODE_ID is derived from the Ray node ID at startup rather than
-# a manually configured env var. Kept as a fallback for logging only.
 NODE_ID = os.getenv("NODE_ID", f"node_{socket.gethostname()}")
 
 os.makedirs(LOCAL_SCRATCH, exist_ok=True)
@@ -67,14 +61,7 @@ def get_samba_client():
 
 
 def get_ray_node_id() -> str:
-    """
-    Phase 4: Returns the Ray node ID of the current head node.
-
-    This replaces the NODE_ID env var / compute_nodes heartbeat pattern.
-    Ray always knows which nodes are alive — we just read that state.
-    The node ID is a stable hex string (e.g. aea109206314b87a...) that
-    uniquely identifies this physical machine in the Ray cluster.
-    """
+    """Returns the Ray node ID of the head node from the live cluster state."""
     try:
         nodes = ray.nodes()
         for node in nodes:
@@ -82,7 +69,6 @@ def get_ray_node_id() -> str:
                 return node["NodeID"]
     except Exception as e:
         logging_utility.warning(f"Could not resolve Ray node ID: {e}")
-    # Fallback to env-based ID
     return NODE_ID
 
 
@@ -118,6 +104,19 @@ def _resolve_container_ip(container, network_name: str) -> Optional[str]:
 
 
 def manage_vllm_container(deployment: InferenceDeployment, action: str = "start") -> Optional[str]:
+    """
+    Physically manages the vLLM container lifecycle on the host machine.
+
+    Sharding: reads deployment.tensor_parallel_size and passes it to vLLM
+    via --tensor-parallel-size. Default is 1 (single GPU, no sharding).
+    When tensor_parallel_size > 1, vLLM splits the model across N GPUs
+    on the same host using NCCL. Each GPU receives one shard of the
+    model's layers (tensor parallelism).
+
+    Returns:
+        On 'start': the container's routable IP address.
+        On 'stop':  the container name that was removed.
+    """
     if not docker_client:
         return None
 
@@ -133,6 +132,9 @@ def manage_vllm_container(deployment: InferenceDeployment, action: str = "start"
             logging_utility.warning(f"⚠️  Could not stop container {container_name}: {e}")
             return container_name
 
+    # ── Resolve tensor parallel size from the deployment record ───────────
+    tp_size = getattr(deployment, "tensor_parallel_size", 1) or 1
+
     env = {
         "HF_TOKEN": os.getenv("HF_TOKEN"),
         "NVIDIA_DISABLE_REQUIRE": "true",
@@ -140,15 +142,28 @@ def manage_vllm_container(deployment: InferenceDeployment, action: str = "start"
         "NVIDIA_VISIBLE_DEVICES": "all",
     }
 
+    # ── Build vLLM command ────────────────────────────────────────────────
+    # --tensor-parallel-size controls how many GPUs vLLM shards across.
+    # tp=1 is a no-op (single GPU, default behaviour).
+    # tp=N splits attention heads and MLP weights across N GPUs via NCCL.
     cmd = (
         f"--model {deployment.base_model_id} "
-        f"--dtype float16 --max-model-len 2048 --gpu-memory-utilization 0.5"
+        f"--dtype float16 "
+        f"--max-model-len 2048 "
+        f"--gpu-memory-utilization 0.5 "
+        f"--tensor-parallel-size {tp_size}"
     )
+
     if deployment.fine_tuned_model_id:
         adapter_path = f"/mnt/training_data/{deployment.fine_tuned_model.storage_path}"
         cmd += f" --enable-lora --lora-modules {deployment.fine_tuned_model_id}={adapter_path}"
 
+    logging_utility.info(
+        f"🔀 Tensor parallel size: {tp_size} GPU(s) for {deployment.base_model_id}"
+    )
+
     try:
+        # ── AGGRESSIVE CLEANUP ────────────────────────────────────────────
         all_containers = docker_client.containers.list(all=True)
         for c in all_containers:
             port_bindings = c.attrs.get("HostConfig", {}).get("PortBindings", {})
@@ -160,6 +175,10 @@ def manage_vllm_container(deployment: InferenceDeployment, action: str = "start"
                     )
                     c.remove(force=True)
 
+        # ── GPU request — count matches tensor_parallel_size ──────────────
+        # For tp=1: count=-1 (all GPUs visible, vLLM picks one).
+        # For tp=N: count=-1 still — NVIDIA_VISIBLE_DEVICES=all exposes all
+        # GPUs and vLLM's NCCL backend handles the assignment.
         gpu_config = docker.types.DeviceRequest(
             count=-1, capabilities=[["gpu", "compute", "utility"]]
         )
@@ -183,7 +202,8 @@ def manage_vllm_container(deployment: InferenceDeployment, action: str = "start"
 
         container_ip = _resolve_container_ip(container, DOCKER_NETWORK_NAME)
         logging_utility.info(
-            f"✅ vLLM container {container_name} is up — routable IP: {container_ip}"
+            f"✅ vLLM container {container_name} is up — "
+            f"routable IP: {container_ip} — tp={tp_size}"
         )
         return container_ip
 
@@ -198,11 +218,11 @@ def manage_vllm_container(deployment: InferenceDeployment, action: str = "start"
 @ray.remote
 class DeploymentSupervisor:
     """
-    Phase 3B: Persistent Ray actor replacing the supervisor thread.
+    Persistent Ray actor that reconciles vLLM container state with the
+    inference_deployments ledger every poll_interval seconds.
 
-    Phase 4 update: node_id is now the Ray node ID (hex string) written to
-    inference_deployments for traceability, instead of the legacy NODE_ID
-    env var / compute_nodes heartbeat value.
+    Sharding: reads tensor_parallel_size from each deployment record and
+    passes it through to _spawn(), which builds the correct vLLM command.
 
     SERIALIZATION: all dependencies imported locally inside run() to avoid
     pickling module-level objects with thread locks or weakrefs.
@@ -217,9 +237,11 @@ class DeploymentSupervisor:
     def run(self):
         import os as _os
         import time as _time
-        import docker as _docker
+
         from projectdavid_common import UtilsInterface as _UI
         from projectdavid_common.schemas.enums import StatusEnum as _Status
+
+        import docker as _docker
         from src.api.training.db.database import SessionLocal as _SessionLocal
         from src.api.training.models.models import InferenceDeployment as _Dep
 
@@ -252,6 +274,10 @@ class DeploymentSupervisor:
             if not _dc:
                 return None
             container_name = f"pd_vllm_{dep.id}"
+
+            # ── Read tensor parallel size from deployment record ───────────
+            tp_size = getattr(dep, "tensor_parallel_size", 1) or 1
+
             env = {
                 "HF_TOKEN": _os.getenv("HF_TOKEN"),
                 "NVIDIA_DISABLE_REQUIRE": "true",
@@ -260,7 +286,10 @@ class DeploymentSupervisor:
             }
             cmd = (
                 f"--model {dep.base_model_id} "
-                f"--dtype float16 --max-model-len 2048 --gpu-memory-utilization 0.5"
+                f"--dtype float16 "
+                f"--max-model-len 2048 "
+                f"--gpu-memory-utilization 0.5 "
+                f"--tensor-parallel-size {tp_size}"
             )
             if dep.fine_tuned_model_id:
                 adapter_path = f"/mnt/training_data/{dep.fine_tuned_model.storage_path}"
@@ -279,7 +308,7 @@ class DeploymentSupervisor:
                 gpu = _docker.types.DeviceRequest(
                     count=-1, capabilities=[["gpu", "compute", "utility"]]
                 )
-                _log.info(f"🚢 Spawning vLLM: {container_name}")
+                _log.info(f"🚢 Spawning vLLM: {container_name} (tp={tp_size})")
                 container = _dc.containers.run(
                     "vllm/vllm-openai:latest",
                     name=container_name,
@@ -296,7 +325,7 @@ class DeploymentSupervisor:
                     },
                 )
                 ip = _resolve_ip(container)
-                _log.info(f"✅ {container_name} up — IP: {ip}")
+                _log.info(f"✅ {container_name} up — IP: {ip} — tp={tp_size}")
                 return ip
             except Exception as e:
                 _log.error(f"Docker spawn failed for {container_name}: {e}")
@@ -349,11 +378,7 @@ class DeploymentSupervisor:
 
 @ray.remote(num_gpus=1)
 def process_job_remote(job_id: str, user_id: str):
-    """
-    Phase 3A: Ray remote task wrapping process_job with num_gpus=1.
-    Ray reserves 1 GPU, tracks the task in the dashboard, and releases
-    the reservation automatically on completion or failure.
-    """
+    """Ray remote task — reserves 1 GPU, tracks in dashboard."""
     process_job(job_id, user_id)
 
 
@@ -455,16 +480,10 @@ def main():
     logging_utility.info(f"🔵 Ray resources: {ray.cluster_resources()}")
 
     # ── Phase 4: Resolve node identity from Ray ───────────────────────────────
-    # Replaces the start_heartbeat() thread and node_heartbeat() DB call.
-    # Ray already knows which nodes are alive — we read that state directly.
-    # The Ray node ID (hex string) is written to inference_deployments for
-    # traceability, consistent with what appears in the Ray dashboard.
     ray_node_id = get_ray_node_id()
     logging_utility.info(f"✅ Node identity resolved from Ray cluster: {ray_node_id}")
 
     # ── Phase 3B: DeploymentSupervisor Ray actor ──────────────────────────────
-    # Pass the Ray node ID so the supervisor queries deployments by the
-    # same identifier that gets written to inference_deployments.node_id.
     supervisor = DeploymentSupervisor.options(
         name="DeploymentSupervisor",
         get_if_exists=True,
