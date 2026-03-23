@@ -122,8 +122,28 @@ Ensure your .env contains TRAINING_PROFILE=laptop. This forces the following saf
 If the training finished but the DB record is missing, manually "Claim" the weights:
 
 
+**F. List Base Models**
+
+````bash 
+
+docker exec -it my_mysql_cosmic_catalyst mysql -u api_user -p<PASSWORD> entities_db -e "SELECT id, name, base_model, storage_path, status FROM fine_tuned_models LIMIT 10;"
+
+````
+
+
+**G. List Fine-Tuned Models**
+
 ````bash 
 INSERT INTO fine_tuned_models (id, user_id, name, base_model, storage_path, status, is_active, created_at, updated_at) 
 VALUES ('ftm_XYZ', 'user_ID', 'Recovered Brain', 'Base_Model_ID', 'models/ftm_XYZ', 'active', 0, UNIX_TIMESTAMP(), UNIX_TIMESTAMP());
 
 ````
+
+**G. Get Current Active Nodes**
+
+````bash 
+INSERT INTO fine_tuned_models (id, user_id, name, base_model, storage_path, status, is_active, created_at, updated_at) 
+VALUES ('ftm_XYZ', 'user_ID', 'Recovered Brain', 'Base_Model_ID', 'models/ftm_XYZ', 'active', 0, UNIX_TIMESTAMP(), UNIX_TIMESTAMP());
+
+````
+

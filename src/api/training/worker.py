@@ -6,6 +6,8 @@ import threading
 import time
 from typing import List, Optional
 
+import docker  # Required: pip install docker
+import ray
 import redis
 from projectdavid_common import UtilsInterface
 from projectdavid_common.schemas.enums import StatusEnum
@@ -13,11 +15,15 @@ from projectdavid_common.utilities.identifier_service import IdentifierService
 from projectdavid_orm.projectdavid_orm.models import FileStorage
 from sqlalchemy.orm import Session
 
-import docker  # Required: pip install docker
 from src.api.training.db.database import SessionLocal
-from src.api.training.models.models import (ComputeNode, Dataset,
-                                            FineTunedModel, GPUAllocation,
-                                            InferenceDeployment, TrainingJob)
+from src.api.training.models.models import (
+    ComputeNode,
+    Dataset,
+    FineTunedModel,
+    GPUAllocation,
+    InferenceDeployment,
+    TrainingJob,
+)
 from src.api.training.services.cluster_service import node_heartbeat
 from src.api.training.services.file_service import SambaClient
 
@@ -161,7 +167,10 @@ def manage_vllm_container(deployment: InferenceDeployment, action: str = "start"
         "NVIDIA_VISIBLE_DEVICES": "all",
     }
 
-    cmd = f"--model {deployment.base_model_id} --dtype float16 --max-model-len 2048 --gpu-memory-utilization 0.5"
+    cmd = (
+        f"--model {deployment.base_model_id} "
+        f"--dtype float16 --max-model-len 2048 --gpu-memory-utilization 0.5"
+    )
     if deployment.fine_tuned_model_id:
         adapter_path = f"/mnt/training_data/{deployment.fine_tuned_model.storage_path}"
         cmd += f" --enable-lora --lora-modules {deployment.fine_tuned_model_id}={adapter_path}"
@@ -172,9 +181,9 @@ def manage_vllm_container(deployment: InferenceDeployment, action: str = "start"
         # bound to our target port and evict any squatters before spawning.
         all_containers = docker_client.containers.list(all=True)
         for c in all_containers:
-            port_bindings = c.attrs.get('HostConfig', {}).get('PortBindings', {})
-            if f"8000/tcp" in port_bindings:
-                bound_port = port_bindings[f"8000/tcp"][0].get('HostPort')
+            port_bindings = c.attrs.get("HostConfig", {}).get("PortBindings", {})
+            if "8000/tcp" in port_bindings:
+                bound_port = port_bindings["8000/tcp"][0].get("HostPort")
                 if bound_port == str(deployment.port):
                     logging_utility.warning(
                         f"🧹 Port {deployment.port} is hogged by {c.name}. Evicting..."
@@ -184,7 +193,7 @@ def manage_vllm_container(deployment: InferenceDeployment, action: str = "start"
         # ── 3. Setup GPU and Spawn ────────────────────────────────────────
         # Hardened GPU Request for WSL2/Windows
         gpu_config = docker.types.DeviceRequest(
-            count=-1, capabilities=[['gpu', 'compute', 'utility']]
+            count=-1, capabilities=[["gpu", "compute", "utility"]]
         )
 
         logging_utility.info(f"🚢 Spawning vLLM: {container_name}")
@@ -197,7 +206,7 @@ def manage_vllm_container(deployment: InferenceDeployment, action: str = "start"
             device_requests=[gpu_config],
             runtime="nvidia",
             network=DOCKER_NETWORK_NAME,
-            ports={f"8000/tcp": deployment.port},
+            ports={"8000/tcp": deployment.port},
             volumes={
                 HF_CACHE_PATH: {"bind": "/root/.cache/huggingface", "mode": "rw"},
                 SHARED_PATH: {"bind": "/mnt/training_data", "mode": "rw"},
@@ -386,6 +395,29 @@ def process_job(job_id: str, user_id: str):
 
 
 def main():
+    # ── Phase 1: Ray cluster init ────────────────────────────────────────────
+    # RAY_ADDRESS unset  → this node starts as Ray head (single-node mode).
+    # RAY_ADDRESS set    → this node joins an existing cluster as a worker.
+    #                      e.g. RAY_ADDRESS=ray://192.168.1.10:10001
+    # No other code changes are required for multi-node scale-out — adding
+    # a second machine is purely an env-var and docker-compose change.
+    ray_address = os.getenv("RAY_ADDRESS") or None
+    ray.init(
+        address=ray_address,
+        ignore_reinit_error=True,
+        include_dashboard=True,
+        dashboard_host="0.0.0.0",
+        dashboard_port=int(os.getenv("RAY_DASHBOARD_PORT", "8265")),
+        logging_level="WARNING",
+    )
+
+    logging_utility.info(
+        f"🌐 Ray cluster online — "
+        f"dashboard: http://localhost:{os.getenv('RAY_DASHBOARD_PORT', '8265')}"
+    )
+    logging_utility.info(f"🔵 Ray resources: {ray.cluster_resources()}")
+
+    # ── Existing startup (unchanged) ─────────────────────────────────────────
     db = SessionLocal()
     try:
         node_heartbeat(db, NODE_ID)
