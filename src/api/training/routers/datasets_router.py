@@ -10,13 +10,11 @@ from sqlalchemy.orm import Session
 
 from src.api.training.db.database import get_db
 from src.api.training.dependencies import get_current_user_id
-from src.api.training.services.dataset_service import (
-    create_dataset,
-    delete_dataset,
-    get_dataset,
-    list_datasets,
-    prepare_dataset,
-)
+from src.api.training.services.dataset_service import (create_dataset,
+                                                       delete_dataset,
+                                                       get_dataset,
+                                                       list_datasets,
+                                                       prepare_dataset)
 
 logging_utility = UtilsInterface.LoggingUtility()
 

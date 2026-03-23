@@ -2,10 +2,10 @@ from typing import Any, Generator, Optional, Type
 
 from projectdavid_common.utilities.logging_service import LoggingUtility
 
-from src.api.entities_api.orchestration.engine.inference_arbiter import InferenceArbiter
-from src.api.entities_api.orchestration.workers.deepseek.deepseek_chat_inference import (
-    DeepSeekChatInference,
-)
+from src.api.entities_api.orchestration.engine.inference_arbiter import \
+    InferenceArbiter
+from src.api.entities_api.orchestration.workers.deepseek.deepseek_chat_inference import \
+    DeepSeekChatInference
 
 LOG = LoggingUtility()
 

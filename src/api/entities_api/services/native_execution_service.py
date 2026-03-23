@@ -391,7 +391,8 @@ class NativeExecutionService:
         """
         from src.api.entities_api.db.database import SessionLocal
         from src.api.entities_api.services.file_service import FileService
-        from src.api.entities_api.services.message_service import _detect_mime_from_b64
+        from src.api.entities_api.services.message_service import \
+            _detect_mime_from_b64
 
         def _do_hydrate(msgs):
             hydrated = []

@@ -48,7 +48,8 @@ class MessageCache:
     @property
     def _message_svc(self):
         if not hasattr(self, "_message_svc_instance") or self._message_svc_instance is None:
-            from src.api.entities_api.services.message_service import MessageService
+            from src.api.entities_api.services.message_service import \
+                MessageService
 
             self._message_svc_instance = MessageService()
         return self._message_svc_instance
@@ -56,9 +57,8 @@ class MessageCache:
     @property
     def _native_exec(self):
         if not hasattr(self, "_native_exec_instance") or self._native_exec_instance is None:
-            from src.api.entities_api.services.native_execution_service import (
-                NativeExecutionService,
-            )
+            from src.api.entities_api.services.native_execution_service import \
+                NativeExecutionService
 
             self._native_exec_instance = NativeExecutionService()
         return self._native_exec_instance

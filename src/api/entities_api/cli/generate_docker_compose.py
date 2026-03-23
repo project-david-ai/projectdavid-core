@@ -144,7 +144,6 @@ services:
       - ${SHARED_PATH}:/mnt/training_data
     ports:
       - "8001:8000"
-    # The command now dynamically expands the flags provided by the Manager
     command: >
       --model ${VLLM_MODEL}
       ${VLLM_EXTRA_FLAGS}
@@ -178,6 +177,8 @@ services:
       - SANDBOX_AUTH_SECRET=${SANDBOX_AUTH_SECRET}
       - SHARED_PATH=/mnt/training_data
       - PYTHONUNBUFFERED=1
+      # training-api connects to Ray cluster via dashboard HTTP API only —
+      # no direct GCS connection required. RAY_ADDRESS not needed here.
     ports:
       - "9001:9001"
     volumes:
@@ -185,6 +186,7 @@ services:
       - ./src:/app/src
     depends_on:
       - redis
+      - training-worker
     networks:
       - my_custom_network
 
@@ -203,7 +205,9 @@ services:
     env_file:
       - .env
     runtime: nvidia
+    shm_size: '5gb'
     environment:
+      - RAY_CLIENT_SERVER_PORT=10001
       - TRAINING_PROFILE=${TRAINING_PROFILE:-standard}
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=redis://redis:6379/0
@@ -211,17 +215,20 @@ services:
       - WORKER_API_KEY=${ADMIN_API_KEY}
       - SHARED_PATH=/mnt/training_data
       - HF_TOKEN=${HF_TOKEN:-}
-      # FIX 1: Point HF_HOME to the local host-mounted volume for high-speed IO
       - HF_HOME=/root/.cache/huggingface
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - PYTHONUNBUFFERED=1
+      # Ray: unset = start as head node. Set to ray://<host>:10001 to join a cluster.
+      - RAY_ADDRESS=${RAY_ADDRESS:-}
+      - RAY_DASHBOARD_PORT=${RAY_DASHBOARD_PORT:-8265}
+    ports:
+      - "8265:8265"    # Ray dashboard — http://localhost:8265
+      - "10001:10001"  # Ray client protocol (external connections)
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${SHARED_PATH:-./shared_data}:/mnt/training_data
-      # Use the high-speed host cache for base models
       - ${HF_CACHE_PATH}:/root/.cache/huggingface
-      # FIX 2: Enable live-code sync for the worker and ML scripts
       - ./src:/app/src
     command: [ "python", "src/api/training/worker.py" ]
     depends_on:
@@ -358,7 +365,7 @@ networks:
 """
 
     output_path.write_text(compose_yaml)
-    print("✅ FULL docker-compose generated (AI + training are opt-in profiles).")
+    print("✅  docker-compose.yml generated (AI + training are opt-in profiles).")
 
 
 if __name__ == "__main__":

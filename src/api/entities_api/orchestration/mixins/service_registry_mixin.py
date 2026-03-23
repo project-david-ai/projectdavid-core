@@ -9,7 +9,8 @@ from functools import lru_cache
 
 from dotenv import load_dotenv
 from entities_api.cache.assistant_cache import AssistantCache
-from entities_api.platform_tools.handlers.code_interpreter.code_execution_client import StreamOutput
+from entities_api.platform_tools.handlers.code_interpreter.code_execution_client import \
+    StreamOutput
 from entities_api.utils.conversation_truncator import ConversationTruncator
 from projectdavid import Entity
 from projectdavid.clients.actions_client import ActionsClient
@@ -21,7 +22,8 @@ from projectdavid.clients.threads_client import ThreadsClient
 from projectdavid.clients.users_client import UsersClient
 from projectdavid.clients.vectors import VectorStoreClient
 
-from src.api.entities_api.orchestration.mixins.client_factory_mixin import ClientFactoryMixin
+from src.api.entities_api.orchestration.mixins.client_factory_mixin import \
+    ClientFactoryMixin
 from src.api.entities_api.services.logging_service import LoggingUtility
 
 load_dotenv()

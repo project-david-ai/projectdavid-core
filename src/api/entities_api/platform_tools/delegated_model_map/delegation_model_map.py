@@ -1,4 +1,5 @@
-from entities_api.platform_tools.delegated_model_map.deep_search import DELEGATED_DEEP_SEARCH_MAP
+from entities_api.platform_tools.delegated_model_map.deep_search import \
+    DELEGATED_DEEP_SEARCH_MAP
 
 
 # ---------------------------------------------------------

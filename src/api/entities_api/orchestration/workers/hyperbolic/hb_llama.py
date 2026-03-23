@@ -1,7 +1,8 @@
 import os
 
 from entities_api.clients.unified_async_client import get_cached_client
-from entities_api.orchestration.workers.base_workers.llama_base import LlamaBaseWorker
+from entities_api.orchestration.workers.base_workers.llama_base import \
+    LlamaBaseWorker
 
 
 class HyperbolicLlamaWorker(LlamaBaseWorker):

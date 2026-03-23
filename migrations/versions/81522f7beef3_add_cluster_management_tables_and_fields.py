@@ -11,15 +11,12 @@ import sqlalchemy as sa
 from alembic import op
 
 # Import the safe_ddl helpers
-from migrations.utils.safe_ddl import (
-    add_column_if_missing,
-    create_fk_if_not_exists,
-    create_index_if_missing,
-    drop_column_if_exists,
-    drop_fk_if_exists,
-    drop_index_if_exists,
-    has_table,
-)
+from migrations.utils.safe_ddl import (add_column_if_missing,
+                                       create_fk_if_not_exists,
+                                       create_index_if_missing,
+                                       drop_column_if_exists,
+                                       drop_fk_if_exists, drop_index_if_exists,
+                                       has_table)
 
 # Optional: If you strictly enforce database ENUM constraints, import your Python Enum here.
 # Otherwise, we default to String(64) in the migration to prevent standard Alembic type parsing issues.

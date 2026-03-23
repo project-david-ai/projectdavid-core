@@ -4,7 +4,8 @@ import os
 import jwt
 from dotenv import load_dotenv
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, status
-from sandbox.services.code_execution_service import StreamingCodeExecutionHandler
+from sandbox.services.code_execution_service import \
+    StreamingCodeExecutionHandler
 from sandbox.services.logging_service import LoggingUtility
 from sandbox.services.room_manager import RoomManager
 from sandbox.services.shell_session import PersistentShellSession

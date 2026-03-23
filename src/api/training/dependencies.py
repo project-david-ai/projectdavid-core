@@ -4,7 +4,8 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import Depends, HTTPException, Security, status
-from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import (APIKeyHeader, HTTPAuthorizationCredentials,
+                              HTTPBearer)
 from projectdavid_common import UtilsInterface
 from projectdavid_orm.projectdavid_orm.models import ApiKey
 from sqlalchemy.orm import Session

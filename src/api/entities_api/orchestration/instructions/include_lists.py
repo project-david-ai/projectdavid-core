@@ -1,4 +1,5 @@
-from entities_api.orchestration.instructions.definitions import LEVEL_3_WEB_USE_INSTRUCTIONS
+from entities_api.orchestration.instructions.definitions import \
+    LEVEL_3_WEB_USE_INSTRUCTIONS
 
 L2_INSTRUCTIONS = [
     "TOOL_USAGE_PROTOCOL",

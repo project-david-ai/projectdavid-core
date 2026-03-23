@@ -11,7 +11,8 @@ from projectdavid_common.utilities.identifier_service import IdentifierService
 from sqlalchemy.orm import Session
 
 from src.api.training.models.models import TrainingJob
-from src.api.training.services.cluster_service import select_best_node  # New Cluster Import
+from src.api.training.services.cluster_service import \
+    select_best_node  # New Cluster Import
 from src.api.training.services.dataset_service import get_dataset
 
 logging_utility = UtilsInterface.LoggingUtility()

@@ -1,12 +1,9 @@
-from src.api.entities_api.platform_tools.definitions.delegation.delegate_engineer_task import (
-    delegate_engineer_task,
-)
-from src.api.entities_api.platform_tools.definitions.scratch_pad.read_scratchpad import (
-    read_scratchpad,
-)
-from src.api.entities_api.platform_tools.definitions.scratch_pad.update_scratchpad import (
-    update_scratchpad,
-)
+from src.api.entities_api.platform_tools.definitions.delegation.delegate_engineer_task import \
+    delegate_engineer_task
+from src.api.entities_api.platform_tools.definitions.scratch_pad.read_scratchpad import \
+    read_scratchpad
+from src.api.entities_api.platform_tools.definitions.scratch_pad.update_scratchpad import \
+    update_scratchpad
 
 # ============================
 # Senior Network Engineer

@@ -1,6 +1,7 @@
 from typing import Optional
 
-from entities_api.orchestration.instructions.definitions import CORE_INSTRUCTIONS
+from entities_api.orchestration.instructions.definitions import \
+    CORE_INSTRUCTIONS
 
 
 def assemble_instructions(

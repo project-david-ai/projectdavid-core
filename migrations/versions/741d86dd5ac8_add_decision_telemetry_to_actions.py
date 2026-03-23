@@ -12,13 +12,10 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import mysql
 
-from migrations.utils.safe_ddl import (
-    add_column_if_missing,
-    create_index_if_missing,
-    drop_column_if_exists,
-    drop_index_if_exists,
-    safe_alter_column,
-)
+from migrations.utils.safe_ddl import (add_column_if_missing,
+                                       create_index_if_missing,
+                                       drop_column_if_exists,
+                                       drop_index_if_exists, safe_alter_column)
 
 # revision identifiers, used by Alembic.
 revision: str = "741d86dd5ac8"

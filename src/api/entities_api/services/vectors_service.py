@@ -13,7 +13,8 @@ from projectdavid_common import UtilsInterface, ValidationInterface
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
-from src.api.entities_api.models.models import Assistant, VectorStore, VectorStoreFile
+from src.api.entities_api.models.models import (Assistant, VectorStore,
+                                                VectorStoreFile)
 
 StatusEnum = ValidationInterface.StatusEnum
 logging_utility = UtilsInterface.LoggingUtility()

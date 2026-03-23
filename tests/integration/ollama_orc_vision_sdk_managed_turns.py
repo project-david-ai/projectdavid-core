@@ -12,7 +12,8 @@ import os
 import time
 
 from dotenv import load_dotenv
-from projectdavid import ContentEvent, DecisionEvent, Entity, ReasoningEvent, ToolCallRequestEvent
+from projectdavid import (ContentEvent, DecisionEvent, Entity, ReasoningEvent,
+                          ToolCallRequestEvent)
 
 load_dotenv()
 

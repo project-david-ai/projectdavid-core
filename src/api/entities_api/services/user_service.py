@@ -9,16 +9,9 @@ from sqlalchemy import orm
 from sqlalchemy.orm import Session
 
 from src.api.entities_api.db.database import SessionLocal
-from src.api.entities_api.models.models import (
-    Assistant,
-    AuditLog,
-    File,
-    FileStorage,
-    Message,
-    Thread,
-    User,
-    VectorStore,
-)
+from src.api.entities_api.models.models import (Assistant, AuditLog, File,
+                                                FileStorage, Message, Thread,
+                                                User, VectorStore)
 from src.api.entities_api.services.logging_service import LoggingUtility
 from src.api.entities_api.utils.samba_client import SambaClient
 

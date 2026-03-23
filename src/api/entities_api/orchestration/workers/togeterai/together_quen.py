@@ -2,7 +2,8 @@ import os
 
 from entities_api.clients.unified_async_client import get_cached_client
 
-from src.api.entities_api.orchestration.workers.base_workers.qwen_base import QwenBaseWorker
+from src.api.entities_api.orchestration.workers.base_workers.qwen_base import \
+    QwenBaseWorker
 
 
 class TogetherQwenWorker(QwenBaseWorker):

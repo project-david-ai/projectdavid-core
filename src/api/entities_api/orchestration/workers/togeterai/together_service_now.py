@@ -2,9 +2,8 @@ import os
 
 from entities_api.clients.unified_async_client import get_cached_client
 
-from src.api.entities_api.orchestration.workers.base_workers.service_now_base import (
-    ServiceNowBaseWorker,
-)
+from src.api.entities_api.orchestration.workers.base_workers.service_now_base import \
+    ServiceNowBaseWorker
 
 
 class TogetherServiceNowWorker(ServiceNowBaseWorker):

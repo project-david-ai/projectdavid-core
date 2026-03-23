@@ -9,18 +9,14 @@ from typing import Sequence, Union
 
 import sqlalchemy as sa
 from alembic import op
-
 # Application Enums
 from projectdavid_common.schemas.enums import StatusEnum
 from sqlalchemy.dialects import mysql
 
 # SafeDDL helpers
-from migrations.utils.safe_ddl import (
-    create_fk_if_not_exists,
-    create_index_if_missing,
-    has_table,
-    safe_alter_column,
-)
+from migrations.utils.safe_ddl import (create_fk_if_not_exists,
+                                       create_index_if_missing, has_table,
+                                       safe_alter_column)
 
 # revision identifiers, used by Alembic.
 revision: str = 'd98d34517e5f'

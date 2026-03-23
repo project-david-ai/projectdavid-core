@@ -12,7 +12,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import mysql
 
-from migrations.utils.safe_ddl import create_fk_if_not_exists, has_table, safe_alter_column
+from migrations.utils.safe_ddl import (create_fk_if_not_exists, has_table,
+                                       safe_alter_column)
 
 # revision identifiers, used by Alembic.
 revision: str = "26a927cbe516"

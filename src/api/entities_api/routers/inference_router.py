@@ -8,11 +8,12 @@ from projectdavid_common.utilities.logging_service import LoggingUtility
 from redis import Redis
 
 from src.api.entities_api.dependencies import get_redis
-from src.api.entities_api.orchestration.engine.inference_arbiter import InferenceArbiter
-from src.api.entities_api.orchestration.engine.inference_provider_selector import (
-    InferenceProviderSelector,
-)
-from src.api.entities_api.services.native_execution_service import NativeExecutionService
+from src.api.entities_api.orchestration.engine.inference_arbiter import \
+    InferenceArbiter
+from src.api.entities_api.orchestration.engine.inference_provider_selector import \
+    InferenceProviderSelector
+from src.api.entities_api.services.native_execution_service import \
+    NativeExecutionService
 
 router = APIRouter()
 logging_utility = LoggingUtility()

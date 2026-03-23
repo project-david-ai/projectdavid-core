@@ -9,7 +9,8 @@ from typing import Sequence, Union
 
 import sqlalchemy as sa
 
-from migrations.utils.safe_ddl import add_column_if_missing, drop_column_if_exists
+from migrations.utils.safe_ddl import (add_column_if_missing,
+                                       drop_column_if_exists)
 
 # Alembic identifiers
 revision: str = "c8adf7bf8fa8"

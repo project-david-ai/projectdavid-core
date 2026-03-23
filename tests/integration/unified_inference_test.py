@@ -17,8 +17,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
-from entities_api.orchestration.instructions.assembler import assemble_instructions
-
+from entities_api.orchestration.instructions.assembler import \
+    assemble_instructions
 # Import definitions
 from models import TOGETHER_AI_MODELS
 from projectdavid import Entity

@@ -37,9 +37,8 @@ class AssistantCache:
         # NativeExecutionService is only instantiated when actually needed,
         # and the deferred import keeps circular dependencies at bay.
         if self._native_exec_svc is None:
-            from src.api.entities_api.services.native_execution_service import (
-                NativeExecutionService,
-            )
+            from src.api.entities_api.services.native_execution_service import \
+                NativeExecutionService
 
             self._native_exec_svc = NativeExecutionService()
         return self._native_exec_svc

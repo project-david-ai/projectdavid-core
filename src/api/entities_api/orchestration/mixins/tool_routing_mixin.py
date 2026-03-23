@@ -112,7 +112,8 @@ class ToolRoutingMixin:
     def parse_and_set_function_calls(
         self, accumulated_content: str, assistant_reply: str
     ) -> List[Dict]:
-        from src.api.entities_api.orchestration.mixins.json_utils_mixin import JsonUtilsMixin
+        from src.api.entities_api.orchestration.mixins.json_utils_mixin import \
+            JsonUtilsMixin
 
         if not isinstance(self, JsonUtilsMixin):
             raise TypeError("ToolRoutingMixin must be mixed with JsonUtilsMixin")

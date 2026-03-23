@@ -2,14 +2,14 @@ import inspect
 import threading
 from typing import Any, Dict, Generator, Union
 
-from entities_api.platform_tools.handlers.code_interpreter.code_execution_client import StreamOutput
-from entities_api.platform_tools.handlers.computer.shell_command_interface import (
-    ShellCommandInterface,
-)
-from entities_api.platform_tools.handlers.vector_store.vector_search_handler import (
-    VectorSearchHandler,
-)
-from entities_api.platform_tools.handlers.web.web_search_handler import FirecrawlService
+from entities_api.platform_tools.handlers.code_interpreter.code_execution_client import \
+    StreamOutput
+from entities_api.platform_tools.handlers.computer.shell_command_interface import \
+    ShellCommandInterface
+from entities_api.platform_tools.handlers.vector_store.vector_search_handler import \
+    VectorSearchHandler
+from entities_api.platform_tools.handlers.web.web_search_handler import \
+    FirecrawlService
 
 from src.api.entities_api.services.logging_service import LoggingUtility
 

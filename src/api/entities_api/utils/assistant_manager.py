@@ -2,9 +2,12 @@ import asyncio
 import uuid
 from typing import Any, Optional
 
-from entities_api.platform_tools.tool_reigistry.junior_network_engineer import JUNIOR_ENGINEER_TOOLS
-from entities_api.platform_tools.tool_reigistry.research_supervisor import SUPERVISOR_TOOLS
-from entities_api.platform_tools.tool_reigistry.senior_network_engineer import SENIOR_ENGINEER_TOOLS
+from entities_api.platform_tools.tool_reigistry.junior_network_engineer import \
+    JUNIOR_ENGINEER_TOOLS
+from entities_api.platform_tools.tool_reigistry.research_supervisor import \
+    SUPERVISOR_TOOLS
+from entities_api.platform_tools.tool_reigistry.senior_network_engineer import \
+    SENIOR_ENGINEER_TOOLS
 
 from src.api.entities_api.services.logging_service import LoggingUtility
 
@@ -27,9 +30,8 @@ class AssistantManager:
     @property
     def _native_exec(self):
         if getattr(self, "_native_exec_svc", None) is None:
-            from src.api.entities_api.services.native_execution_service import (
-                NativeExecutionService,
-            )
+            from src.api.entities_api.services.native_execution_service import \
+                NativeExecutionService
 
             self._native_exec_svc = NativeExecutionService()
         return self._native_exec_svc

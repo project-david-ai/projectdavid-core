@@ -4,8 +4,10 @@ from typing import Any, AsyncGenerator, Optional, Type
 
 from projectdavid_common.utilities.logging_service import LoggingUtility
 
-from src.api.entities_api.orchestration.engine.inference_arbiter import InferenceArbiter
-from src.api.entities_api.orchestration.workers.ollama.ollama_default import OllamaDefaultWorker
+from src.api.entities_api.orchestration.engine.inference_arbiter import \
+    InferenceArbiter
+from src.api.entities_api.orchestration.workers.ollama.ollama_default import \
+    OllamaDefaultWorker
 
 LOG = LoggingUtility()
 

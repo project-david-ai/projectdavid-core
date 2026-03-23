@@ -10,14 +10,10 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-from migrations.utils.safe_ddl import (
-    add_column_if_missing,
-    column_exists,
-    drop_column_if_exists,
-    has_table,
-    rename_column_if_exists,
-    safe_alter_column,
-)
+from migrations.utils.safe_ddl import (add_column_if_missing, column_exists,
+                                       drop_column_if_exists, has_table,
+                                       rename_column_if_exists,
+                                       safe_alter_column)
 
 # Alembic identifiers
 revision: str = "dc84d53c3c46"
