@@ -1,3 +1,17 @@
+# [1.26.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.25.0...v1.26.0) (2026-03-23)
+
+
+### Features
+
+* Phase 2 — replace MySQL VRAM ledger with Ray resource scheduling ([733c7eb](https://github.com/project-david-ai/projectdavid-core/commit/733c7ebd567622544b9931dd3694350b33372839))
+* Phase 2 — replace MySQL VRAM ledger with Ray resource scheduling ([21acbd6](https://github.com/project-david-ai/projectdavid-core/commit/21acbd6143aad210a185ca91c22de67764d02cfd))
+* Phase 3 — Ray task execution and DeploymentSupervisor actor ([1fe6e61](https://github.com/project-david-ai/projectdavid-core/commit/1fe6e61b019a258ab0c92b860263cc67fa1e2282))
+* Phase 3 — Ray task execution and DeploymentSupervisor actor ([adf9719](https://github.com/project-david-ai/projectdavid-core/commit/adf97192523b4dbf70b753befe3655085512dfd4))
+* Release ([3130181](https://github.com/project-david-ai/projectdavid-core/commit/3130181ecc701542c1977b2927e1437a9663be4f))
+* ReleaseX ([40fed5a](https://github.com/project-david-ai/projectdavid-core/commit/40fed5a272fa995af8031601cd21d2869a700faf))
+* wire tensor_parallel_size into activation endpoints ([86b0990](https://github.com/project-david-ai/projectdavid-core/commit/86b0990077b125a8cc627342b3de14dbb0ce84b9))
+* wire tensor_parallel_size into activation endpoints ([d8ad4cc](https://github.com/project-david-ai/projectdavid-core/commit/d8ad4cc48278eb46040475fd528883caddac8a04))
+
 # [1.25.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.24.1...v1.25.0) (2026-03-22)
 
 
