@@ -23,8 +23,7 @@ import time
 from threading import Thread
 
 import torch
-from transformers import (AutoModelForCausalLM, AutoTokenizer,
-                          TextIteratorStreamer)
+from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
 
 # ── Config ────────────────────────────────────────────────────────────────────
 

@@ -13,8 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.api.entities_api.orchestration.mixins.assistant_cache_mixin import \
-    AssistantCacheMixin
+from src.api.entities_api.orchestration.mixins.assistant_cache_mixin import AssistantCacheMixin
 
 # ---------------------------------------------------------------------------
 # Helpers — minimal concrete classes for each path

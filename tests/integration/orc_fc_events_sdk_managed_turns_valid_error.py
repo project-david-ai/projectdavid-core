@@ -11,6 +11,7 @@ import os
 
 from config_orc_fc import config
 from dotenv import load_dotenv
+
 # Import the project classes
 from projectdavid import ContentEvent, Entity, ToolCallRequestEvent
 

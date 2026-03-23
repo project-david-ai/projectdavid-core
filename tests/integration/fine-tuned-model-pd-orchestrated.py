@@ -49,7 +49,7 @@ TEST_PROMPT = "Hello Assistant! Can you confirm you are currently utilizing your
 # ------------------------------------------------------------------
 # Execution
 # ------------------------------------------------------------------
-client = Entity(base_url="http://localhost:9000", api_key=API_KEY)
+client = Entity(base_url=BASE_URL, api_key=API_KEY)
 
 
 def run_assistant_ft_test():

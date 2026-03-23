@@ -1,8 +1,7 @@
 # src/api/entities_api/orchestration/mixins/native_exec_mixin.py
 from __future__ import annotations
 
-from src.api.entities_api.services.native_execution_service import \
-    NativeExecutionService
+from src.api.entities_api.services.native_execution_service import NativeExecutionService
 
 
 class NativeExecMixin:

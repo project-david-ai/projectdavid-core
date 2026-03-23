@@ -2,8 +2,7 @@ import os
 
 from entities_api.clients.unified_async_client import get_cached_client
 
-from src.api.entities_api.orchestration.workers.base_workers.deepseek_base import \
-    DeepSeekBaseWorker
+from src.api.entities_api.orchestration.workers.base_workers.deepseek_base import DeepSeekBaseWorker
 
 
 class TogetherDs1(DeepSeekBaseWorker):

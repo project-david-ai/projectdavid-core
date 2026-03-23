@@ -7,8 +7,7 @@ from typing import Any, AsyncGenerator, Dict, Generator, Optional
 import websockets
 from dotenv import load_dotenv
 from projectdavid_common.utilities.logging_service import LoggingUtility
-from tenacity import (retry, retry_if_exception_type, stop_after_attempt,
-                      wait_fixed)
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 from websockets.legacy.protocol import WebSocketCommonProtocol
 
 load_dotenv()

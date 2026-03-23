@@ -7,8 +7,7 @@ from projectdavid_common.schemas.enums import StatusEnum
 from projectdavid_common.utilities.identifier_service import IdentifierService
 from sqlalchemy.orm import Session
 
-from src.api.training.models.models import (BaseModel, FineTunedModel,
-                                            InferenceDeployment)
+from src.api.training.models.models import BaseModel, FineTunedModel, InferenceDeployment
 
 # ---------------------------------------------------------------------------
 # Ray Dashboard HTTP API

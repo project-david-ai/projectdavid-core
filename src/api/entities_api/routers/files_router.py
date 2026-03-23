@@ -5,8 +5,7 @@ from datetime import datetime
 from urllib.parse import urlencode
 
 from dotenv import load_dotenv
-from fastapi import (APIRouter, Depends, File, Form, HTTPException, Query,
-                     UploadFile, status)
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 from projectdavid_common.utilities.logging_service import LoggingUtility
 from projectdavid_common.validation import FileDeleteResponse, FileResponse

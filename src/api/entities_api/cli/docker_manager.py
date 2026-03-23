@@ -1068,8 +1068,7 @@ def docker_manager(
     )
 
     try:
-        from entities_api.cli.generate_docker_compose import \
-            generate_dev_docker_compose
+        from entities_api.cli.generate_docker_compose import generate_dev_docker_compose
 
         generate_dev_docker_compose()
         time.sleep(0.5)

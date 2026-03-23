@@ -15,10 +15,8 @@ import json
 
 import pytest
 
-from src.api.entities_api.orchestration.mixins.json_utils_mixin import \
-    JsonUtilsMixin
-from src.api.entities_api.orchestration.mixins.tool_routing_mixin import \
-    ToolRoutingMixin
+from src.api.entities_api.orchestration.mixins.json_utils_mixin import JsonUtilsMixin
+from src.api.entities_api.orchestration.mixins.tool_routing_mixin import ToolRoutingMixin
 
 # ---------------------------------------------------------------------------
 # Minimal concrete class — satisfies both mixin requirements

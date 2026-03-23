@@ -16,8 +16,7 @@ from sqlalchemy.orm import Session
 
 import docker  # Required: pip install docker
 from src.api.training.db.database import SessionLocal
-from src.api.training.models.models import (Dataset, FineTunedModel,
-                                            InferenceDeployment, TrainingJob)
+from src.api.training.models.models import Dataset, FineTunedModel, InferenceDeployment, TrainingJob
 from src.api.training.services.file_service import SambaClient
 
 logging_utility = UtilsInterface.LoggingUtility()

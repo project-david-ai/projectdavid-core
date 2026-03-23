@@ -11,9 +11,11 @@ from projectdavid_orm.projectdavid_orm.base import Base
 
 from src.api.training.db.database import SessionLocal, engine, wait_for_db
 from src.api.training.routers import training_router
-from src.api.training.services.cluster_service import (acquire_api_lease,
-                                                       reap_stale_nodes,
-                                                       renew_api_lease)
+from src.api.training.services.cluster_service import (
+    acquire_api_lease,
+    reap_stale_nodes,
+    renew_api_lease,
+)
 from src.api.training.services.training_service import get_redis_client
 
 logging_utility = UtilsInterface.LoggingUtility()

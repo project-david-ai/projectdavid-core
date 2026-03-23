@@ -19,10 +19,17 @@ from typing import Dict, List, Optional, Tuple
 
 from config_benchmark import config
 from dotenv import load_dotenv
+
 # --- SDK Event Imports ---
 from projectdavid import PlanEvent  # [NEW] For L3 Strategy Visibility
-from projectdavid import (ContentEvent, DecisionEvent, Entity, ReasoningEvent,
-                          StatusEvent, ToolCallRequestEvent)
+from projectdavid import (
+    ContentEvent,
+    DecisionEvent,
+    Entity,
+    ReasoningEvent,
+    StatusEvent,
+    ToolCallRequestEvent,
+)
 
 # ------------------------------------------------------------------
 # 0. Setup & Config

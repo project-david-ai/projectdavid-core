@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from projectdavid_common.schemas.api_key_schemas import (ApiKeyCreateRequest,
-                                                         ApiKeyCreateResponse,
-                                                         ApiKeyDetails)
+from projectdavid_common.schemas.api_key_schemas import (
+    ApiKeyCreateRequest,
+    ApiKeyCreateResponse,
+    ApiKeyDetails,
+)
 from projectdavid_common.utilities.logging_service import LoggingUtility
 from sqlalchemy.orm import Session
 

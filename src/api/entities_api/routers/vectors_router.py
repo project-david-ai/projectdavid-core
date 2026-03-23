@@ -10,7 +10,10 @@ from sqlalchemy.orm import Session
 from src.api.entities_api.dependencies import get_api_key, get_db
 from src.api.entities_api.models.models import ApiKey as ApiKeyModel
 from src.api.entities_api.services.vectors_service import (
-    DatabaseConflictError, VectorStoreDBError, VectorStoreDBService)
+    DatabaseConflictError,
+    VectorStoreDBError,
+    VectorStoreDBService,
+)
 from src.api.entities_api.utils.check_admin_status import _is_admin
 
 router = APIRouter()

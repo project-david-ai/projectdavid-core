@@ -1,12 +1,11 @@
 # src/api/entities_api/orchestration/mixins/create_supervisor.py
-from entities_api.platform_tools.tool_reigistry.research_supervisor import \
-    SUPERVISOR_TOOLS
+from entities_api.platform_tools.tool_reigistry.research_supervisor import SUPERVISOR_TOOLS
 from projectdavid import Entity
 
-from src.api.entities_api.orchestration.instructions.assembler import \
-    assemble_instructions
-from src.api.entities_api.orchestration.instructions.include_lists import \
-    LEVEL_4_SUPERVISOR_INSTRUCTIONS
+from src.api.entities_api.orchestration.instructions.assembler import assemble_instructions
+from src.api.entities_api.orchestration.instructions.include_lists import (
+    LEVEL_4_SUPERVISOR_INSTRUCTIONS,
+)
 
 
 def create_supervisor_assistant(client: Entity):

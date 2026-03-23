@@ -11,9 +11,11 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import mysql
 
-from migrations.utils.safe_ddl import (add_column_if_missing,
-                                       drop_column_if_exists,
-                                       safe_alter_column)
+from migrations.utils.safe_ddl import (
+    add_column_if_missing,
+    drop_column_if_exists,
+    safe_alter_column,
+)
 
 revision: str = "33111f6ac0b8"
 down_revision: Union[str, None] = "c6d0aaad984f"

@@ -8,8 +8,9 @@ import time
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import jwt
-from entities_api.platform_tools.handlers.computer.shell_command_interface import \
-    run_shell_commands_async
+from entities_api.platform_tools.handlers.computer.shell_command_interface import (
+    run_shell_commands_async,
+)
 from projectdavid_common.utilities.tool_validator import ToolValidator
 from projectdavid_common.validation import StatusEnum
 

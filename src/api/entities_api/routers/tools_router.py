@@ -7,13 +7,15 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 # --- Core Dependencies ---
-from src.api.entities_api.dependencies import (get_api_key, get_db,
-                                               get_scratchpad_service,
-                                               get_web_reader)
+from src.api.entities_api.dependencies import (
+    get_api_key,
+    get_db,
+    get_scratchpad_service,
+    get_web_reader,
+)
 from src.api.entities_api.models.models import ApiKey as ApiKeyModel
 from src.api.entities_api.models.models import User as UserModel
-from src.api.entities_api.orchestration.mixins.web_search_mixin import \
-    SearxNGClient
+from src.api.entities_api.orchestration.mixins.web_search_mixin import SearxNGClient
 from src.api.entities_api.services.logging_service import LoggingUtility
 from src.api.entities_api.services.web_reader import UniversalWebReader
 from src.api.entities_api.utils.check_admin_status import _is_admin

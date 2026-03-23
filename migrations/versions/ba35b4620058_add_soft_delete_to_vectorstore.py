@@ -11,10 +11,12 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-from migrations.utils.safe_ddl import (add_column_if_missing,
-                                       create_index_if_missing,
-                                       drop_column_if_exists,
-                                       drop_index_if_exists)
+from migrations.utils.safe_ddl import (
+    add_column_if_missing,
+    create_index_if_missing,
+    drop_column_if_exists,
+    drop_index_if_exists,
+)
 
 # revision identifiers, used by Alembic.
 revision: str = "ba35b4620058"

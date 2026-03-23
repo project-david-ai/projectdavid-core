@@ -13,12 +13,16 @@ from alembic import op
 from sqlalchemy.dialects import mysql
 
 # Import the safe DDL helpers
-from migrations.utils.safe_ddl import (add_column_if_missing,
-                                       create_fk_if_not_exists,
-                                       create_index_if_missing,
-                                       drop_column_if_exists,
-                                       drop_fk_if_exists, drop_index_if_exists,
-                                       has_table, safe_alter_column)
+from migrations.utils.safe_ddl import (
+    add_column_if_missing,
+    create_fk_if_not_exists,
+    create_index_if_missing,
+    drop_column_if_exists,
+    drop_fk_if_exists,
+    drop_index_if_exists,
+    has_table,
+    safe_alter_column,
+)
 
 # revision identifiers, used by Alembic.
 revision: str = "dda6fd28f45c"

@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from projectdavid_common.schemas.api_key_schemas import (ApiKeyCreateRequest,
-                                                         ApiKeyCreateResponse,
-                                                         ApiKeyDetails,
-                                                         ApiKeyListResponse)
+from projectdavid_common.schemas.api_key_schemas import (
+    ApiKeyCreateRequest,
+    ApiKeyCreateResponse,
+    ApiKeyDetails,
+    ApiKeyListResponse,
+)
 from sqlalchemy.orm import Session
 
 from src.api.entities_api.dependencies import get_api_key, get_db

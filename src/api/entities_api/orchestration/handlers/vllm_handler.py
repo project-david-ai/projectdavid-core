@@ -4,10 +4,8 @@ from typing import Any, AsyncGenerator, Optional, Type
 
 from projectdavid_common.utilities.logging_service import LoggingUtility
 
-from src.api.entities_api.orchestration.engine.inference_arbiter import \
-    InferenceArbiter
-from src.api.entities_api.orchestration.workers.vllm.vllm_default import \
-    VllmDefaultWorker
+from src.api.entities_api.orchestration.engine.inference_arbiter import InferenceArbiter
+from src.api.entities_api.orchestration.workers.vllm.vllm_default import VllmDefaultWorker
 
 LOG = LoggingUtility()
 
