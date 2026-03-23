@@ -20,7 +20,6 @@ from src.api.training.models.models import (
     ComputeNode,
     Dataset,
     FineTunedModel,
-    GPUAllocation,
     InferenceDeployment,
     TrainingJob,
 )
@@ -259,36 +258,12 @@ def start_deployment_supervisor():
                     if dep.status == StatusEnum.pending or not is_running:
                         logging_utility.warning(f"🚨 Deployment drift! Syncing {container_name}")
 
-                        # manage_vllm_container now returns the container's real IP
                         container_ip = manage_vllm_container(dep, action="start")
                         if container_ip:
                             dep.status = StatusEnum.active
                             # Store the real dotted-quad IP so InferenceResolver
                             # can build a valid http://<ip>:<port> endpoint URL.
                             dep.internal_hostname = container_ip
-
-                            # Reserve VRAM in the cluster ledger
-                            existing_alloc = (
-                                db.query(GPUAllocation)
-                                .filter(
-                                    GPUAllocation.node_id == NODE_ID,
-                                    (
-                                        (GPUAllocation.model_id == dep.fine_tuned_model_id)
-                                        if dep.fine_tuned_model_id
-                                        else (GPUAllocation.job_id.is_(None))
-                                    ),
-                                )
-                                .first()
-                            )
-                            if not existing_alloc:
-                                db.add(
-                                    GPUAllocation(
-                                        node_id=NODE_ID,
-                                        model_id=dep.fine_tuned_model_id,
-                                        vram_reserved_gb=4.0,
-                                    )
-                                )
-
                             db.commit()
 
             except Exception as e:
@@ -305,9 +280,13 @@ def start_deployment_supervisor():
 
 
 def process_job(job_id: str, user_id: str):
+    """
+    Phase 2: GPUAllocation ledger lock removed.
+    Ray tracks resource consumption implicitly via task scheduling —
+    no manual DB reservation or release needed.
+    """
     db: Session = SessionLocal()
     local_data_path = None
-    allocation_id = None
 
     try:
         job = db.query(TrainingJob).filter(TrainingJob.id == job_id).first()
@@ -317,13 +296,7 @@ def process_job(job_id: str, user_id: str):
         job.status = StatusEnum.in_progress
         job.node_id = NODE_ID
         job.started_at = int(time.time())
-
-        # VRAM Ledger Lock
-        new_allocation = GPUAllocation(node_id=NODE_ID, job_id=job_id, vram_reserved_gb=5.0)
-        db.add(new_allocation)
         db.commit()
-        db.refresh(new_allocation)
-        allocation_id = new_allocation.id
 
         # Data Staging
         storage = db.query(FileStorage).filter(FileStorage.file_id == dataset.file_id).first()
@@ -372,6 +345,7 @@ def process_job(job_id: str, user_id: str):
             job.status = StatusEnum.completed
             job.completed_at = int(time.time())
             job.output_path = model_rel_path
+            db.commit()
             logging_utility.info(f"✨ Job {job_id} finalized successfully.")
         else:
             raise subprocess.CalledProcessError(process.returncode, cmd)
@@ -383,9 +357,6 @@ def process_job(job_id: str, user_id: str):
             job.last_error = str(e)
             db.commit()
     finally:
-        if allocation_id:
-            db.query(GPUAllocation).filter(GPUAllocation.id == allocation_id).delete()
-            db.commit()
         if local_data_path and os.path.exists(local_data_path):
             os.remove(local_data_path)
         db.close()
@@ -408,9 +379,8 @@ def main():
         include_dashboard=True,
         dashboard_host="0.0.0.0",
         dashboard_port=int(os.getenv("RAY_DASHBOARD_PORT", "8265")),
-        logging_level="WARNING",
+        logging_level="WARNING",  # suppress Ray's verbose startup output
     )
-
     logging_utility.info(
         f"🌐 Ray cluster online — "
         f"dashboard: http://localhost:{os.getenv('RAY_DASHBOARD_PORT', '8265')}"
