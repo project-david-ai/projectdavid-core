@@ -1,3 +1,44 @@
+## [1.23.1] - 2026-03-24
+
+### Fixed
+
+- **Critical: First-run stack failure on clean installs**
+
+  On a fresh installation with no existing database, the API container
+  would crash-loop during database migration with:
+```
+  sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError)
+  (1824, "Failed to open the referenced table 'users'")
+```
+
+  **Root cause:** Migration `005820173bc4` (add_fine_tuning_tables) was
+  on a branch that did not pass through the baseline schema migration
+  that creates the `users` table. MySQL InnoDB enforces foreign key
+  constraints at CREATE TABLE time, so the `datasets`, `training_jobs`,
+  and `fine_tuned_models` tables could not be created.
+
+  **Fix:** Added `depends_on = "9351530d20ab"` to the migration,
+  forcing Alembic to resolve the merge point (which includes the
+  baseline schema) before executing fine-tuning table creation.
+
+  **Affected:** Clean installs only. Existing deployments with a
+  populated database volume are not affected — the migration guard
+  (`has_table`) skips table creation if the tables already exist.
+
+### Upgrade
+```bash
+  pip install --upgrade projectdavid-platform
+  pdavid --mode up --pull
+```
+
+  If your stack failed to start on first run, the volumes will be
+  empty. A clean restart is sufficient — no data recovery needed:
+```bash
+  pdavid --mode down_only --clear-volumes
+  pdavid --mode up --pull
+```
+
+
 ## [1.26.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.26.0...v1.26.1) (2026-03-24)
 
 
