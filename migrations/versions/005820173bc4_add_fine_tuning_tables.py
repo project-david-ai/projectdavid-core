@@ -11,13 +11,12 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import mysql
 
-# Use your official Organization-wide SafeDDL helpers
-from migrations.utils.safe_ddl import \
-    drop_table_if_exists  # Optional: for cleaner downgrades
-from migrations.utils.safe_ddl import (create_fk_if_not_exists,
+from migrations.utils.safe_ddl import (add_column_if_missing,
+                                       create_fk_if_not_exists,
                                        create_index_if_missing,
-                                       drop_index_if_exists, has_table,
-                                       safe_alter_column)
+                                       drop_column_if_exists,
+                                       drop_index_if_exists, has_column,
+                                       has_table, safe_alter_column)
 
 # revision identifiers, used by Alembic.
 revision: str = "005820173bc4"
