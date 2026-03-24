@@ -1,3 +1,10 @@
+## [1.26.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.26.0...v1.26.1) (2026-03-24)
+
+
+### Bug Fixes
+
+* resolve FK ordering failure in add_fine_tuning_tables ([7030c4f](https://github.com/project-david-ai/projectdavid-core/commit/7030c4fae6a8e6e1d4e6699cdd4949ca0488a5ef))
+
 # [1.26.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.25.0...v1.26.0) (2026-03-23)
 
 
