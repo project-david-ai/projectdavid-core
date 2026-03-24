@@ -1,3 +1,10 @@
+## [1.26.5](https://github.com/project-david-ai/projectdavid-core/compare/v1.26.4...v1.26.5) (2026-03-24)
+
+
+### Bug Fixes
+
+* resolve API crash-loop and MySQL 1824 constraint errors ([83f491c](https://github.com/project-david-ai/projectdavid-core/commit/83f491c971cd4f77d1512eb548af1bab40ad43fe))
+
 ## [1.26.4](https://github.com/project-david-ai/projectdavid-core/compare/v1.26.3...v1.26.4) (2026-03-24)
 
 
