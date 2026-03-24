@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "entities_sandbox"
-version = "1.26.3"
+version = "1.26.4"
 description = "Core sandbox environment for AI and data analysis"
 readme = "README.md"
 authors = [
