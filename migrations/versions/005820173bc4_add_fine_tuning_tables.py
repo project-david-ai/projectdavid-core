@@ -20,7 +20,7 @@ from migrations.utils.safe_ddl import (add_column_if_missing,
 revision: str = "005820173bc4"
 down_revision: Union[str, None] = "ba35b4620058"
 branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = "9351530d20ab"
 
 
 # ---------------------------------------------------------------------------
