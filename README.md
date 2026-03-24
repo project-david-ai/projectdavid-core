@@ -188,6 +188,7 @@ client = Entity(api_key=os.getenv("USER_API_KEY"))
 ## Architecture
 
 ![Project David Stack](https://raw.githubusercontent.com/project-david-ai/projectdavid-platform/master/assets/svg/projectdavid-stack.svg)
+
 ---
 
 
