@@ -1,3 +1,75 @@
+## [1.26.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.26.0...v1.26.1) (2026-03-24)
+
+
+### Bug Fixes
+
+* resolve FK ordering failure in add_fine_tuning_tables ([7030c4f](https://github.com/project-david-ai/projectdavid-core/commit/7030c4fae6a8e6e1d4e6699cdd4949ca0488a5ef))
+
+# [1.26.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.25.0...v1.26.0) (2026-03-23)
+
+
+### Features
+
+* Phase 2 — replace MySQL VRAM ledger with Ray resource scheduling ([733c7eb](https://github.com/project-david-ai/projectdavid-core/commit/733c7ebd567622544b9931dd3694350b33372839))
+* Phase 2 — replace MySQL VRAM ledger with Ray resource scheduling ([21acbd6](https://github.com/project-david-ai/projectdavid-core/commit/21acbd6143aad210a185ca91c22de67764d02cfd))
+* Phase 3 — Ray task execution and DeploymentSupervisor actor ([1fe6e61](https://github.com/project-david-ai/projectdavid-core/commit/1fe6e61b019a258ab0c92b860263cc67fa1e2282))
+* Phase 3 — Ray task execution and DeploymentSupervisor actor ([adf9719](https://github.com/project-david-ai/projectdavid-core/commit/adf97192523b4dbf70b753befe3655085512dfd4))
+* Release ([3130181](https://github.com/project-david-ai/projectdavid-core/commit/3130181ecc701542c1977b2927e1437a9663be4f))
+* ReleaseX ([40fed5a](https://github.com/project-david-ai/projectdavid-core/commit/40fed5a272fa995af8031601cd21d2869a700faf))
+* wire tensor_parallel_size into activation endpoints ([86b0990](https://github.com/project-david-ai/projectdavid-core/commit/86b0990077b125a8cc627342b3de14dbb0ce84b9))
+* wire tensor_parallel_size into activation endpoints ([d8ad4cc](https://github.com/project-david-ai/projectdavid-core/commit/d8ad4cc48278eb46040475fd528883caddac8a04))
+
+# [1.25.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.24.1...v1.25.0) (2026-03-22)
+
+
+### Bug Fixes
+
+* change samba hostname in docker-compose.yml from -->samba_server-->samba ([2b2d9ce](https://github.com/project-david-ai/projectdavid-core/commit/2b2d9ce4df2a8bf7d61ae0eb308ce90d21623662))
+* conftest.py errors ([dc8dc35](https://github.com/project-david-ai/projectdavid-core/commit/dc8dc35b8fbe0917186d40c1564fa8b1a6b7378a))
+* conftest.py errors ([44e8c9a](https://github.com/project-david-ai/projectdavid-core/commit/44e8c9ae49bf69930d8b52430fd4820e6bec6f90))
+* RUF errors. ([a010658](https://github.com/project-david-ai/projectdavid-core/commit/a010658a0d7d2295b8364e8dad0477479be11f67))
+
+
+### Features
+
+* add `force` flag to `generate_dev_docker_compose` for overwrite control and update generated compose files and secrets ([baf943a](https://github.com/project-david-ai/projectdavid-core/commit/baf943a57273e6abcf93258577f7ea64d84e4d4c))
+* add cluster management, node telemetry, and VRAM-aware scheduling ([be8294b](https://github.com/project-david-ai/projectdavid-core/commit/be8294b41b5353a64af54f2f161fc296b24f08df))
+* add datasets router, JWT-based authentication, and multi-stage build for Training API ([d429a9f](https://github.com/project-david-ai/projectdavid-core/commit/d429a9fc574af720abceadb689abf421ca1934fb))
+* add fine-tuned model registry API, service logic, and integration tests ([1a923b2](https://github.com/project-david-ai/projectdavid-core/commit/1a923b2f28c40c4178d63d7271ad3ba619d4a722))
+* add fine-tuning pipeline with Dataset, TrainingJob, and FineTunedModel tables ([56a4632](https://github.com/project-david-ai/projectdavid-core/commit/56a46321c867cd6f69aaeb8061f857c8085a12e2))
+* add fine-tuning support with new database tables and models for datasets, training jobs, and fine-tuned models ([7d6ccc0](https://github.com/project-david-ai/projectdavid-core/commit/7d6ccc0fe358d55b8869009c62d96afb14053845))
+* add fine-tuning table schemas, update Alembic migration, and extend Docker Compose for training services ([7cd4021](https://github.com/project-david-ai/projectdavid-core/commit/7cd4021b18bba4d8cddf94162cd3b98d3ff99259))
+* add self-hosted fine-tuning container with Axolotl and Unsloth support, including Dockerfile, training scripts, and entrypoint ([abafa7a](https://github.com/project-david-ai/projectdavid-core/commit/abafa7a146c6fa2668d16e847062a97d7b0144ab))
+* add training jobs router, service logic, and integration tests ([dc96d3c](https://github.com/project-david-ai/projectdavid-core/commit/dc96d3cde48b8326ee1cad4ff9506d2f97f5525a))
+* data drive vllm cluster ([72caf8d](https://github.com/project-david-ai/projectdavid-core/commit/72caf8d6aeb4105e41eeb1e724d508560e35df51))
+* document fine-tuning pipeline architecture, endpoints, and implementation details ([53c99dc](https://github.com/project-david-ai/projectdavid-core/commit/53c99dcd3762498e96fd68caf8b7ad11cde19388))
+* extend Docker Compose with new services, default handling, and improved generation logic ([6dfc5aa](https://github.com/project-david-ai/projectdavid-core/commit/6dfc5aac5e695a53f7201dd4db6fa3cd92c5638c))
+* implement dataset service with CRUD operations, Samba integration, and dataset preparation logic ([2c75b2d](https://github.com/project-david-ai/projectdavid-core/commit/2c75b2dca9288071c116368caf11b08777529532))
+* implement dataset service with CRUD operations, Samba integration, and dataset preparation logic ([2d59c10](https://github.com/project-david-ai/projectdavid-core/commit/2d59c103c6244711afc008f11dd1ea98e42dfd53))
+* implement dataset service with CRUD operations, Samba integration, and dataset preparation logic ([c7fc414](https://github.com/project-david-ai/projectdavid-core/commit/c7fc414d5e42c38b188086012f3889fffaa85560))
+* improve dataset preprocessing with Samba integration and Nginx fixes ([edf3bcf](https://github.com/project-david-ai/projectdavid-core/commit/edf3bcfe1c5c00ed06be042d48ae5b92bb828d15))
+* improve dataset preprocessing with Samba integration and Nginx fixes ([7738cf9](https://github.com/project-david-ai/projectdavid-core/commit/7738cf99b5291bb2f2c31d15755a296de54d2888))
+* integrate training worker, Redis-based job queue, and fine-tuning status cache with expanded dependency handling ([85dcb1b](https://github.com/project-david-ai/projectdavid-core/commit/85dcb1b164166904f38c1daa68bb007b0436c7af))
+* introduce Training Service API with FastAPI, updated Dockerfile, and dependencies for fine-tuning REST operations ([1b20898](https://github.com/project-david-ai/projectdavid-core/commit/1b20898e3614155522527bd4acabbf028f9ba345))
+* introduce Training Service API with FastAPI, updated Dockerfile, and dependencies for fine-tuning REST operations ([aa11327](https://github.com/project-david-ai/projectdavid-core/commit/aa11327a4a53ad5a44fce1c415215194be0c8823))
+* protect training and model files during purge, add fine-tuning integration tests ([05fef00](https://github.com/project-david-ai/projectdavid-core/commit/05fef00f401d35a34f2e2c2d4180a7d6b5dea286))
+* rebuild the worker.py ([13aae1b](https://github.com/project-david-ai/projectdavid-core/commit/13aae1b740a1b3ad632218fe7a6ed8a8c4febc26))
+* refactor Docker Compose generation, streamline training services configuration, and enhance Docker Manager with Ollama support ([7abef74](https://github.com/project-david-ai/projectdavid-core/commit/7abef74bc835c87ee3ed4a76f204de770da5b500))
+* refactor Docker Compose generation, streamline training services configuration, and enhance Docker Manager with Ollama support ([d8f1546](https://github.com/project-david-ai/projectdavid-core/commit/d8f15462983513a811dd80010408b3533cf59dfb))
+* refactor fine-tuning table management, update schema migration, and cleanup unused model definitions ([c351136](https://github.com/project-david-ai/projectdavid-core/commit/c3511363dc6614fb06e277ff888eed8d7047eb85))
+* Release. ([c2e8b41](https://github.com/project-david-ai/projectdavid-core/commit/c2e8b41fd1d895bd55518c6cc6f4e8c81b1314a7))
+* Sovereign_Forge.md ([ba86924](https://github.com/project-david-ai/projectdavid-core/commit/ba869248f2c5c19e40569023e13b2485da3926e6))
+* synch generate_dev_docker_compose ([7cb299a](https://github.com/project-david-ai/projectdavid-core/commit/7cb299ad3c1cba783b06772a857804dae1700f64))
+* unify authentication to support Bearer tokens and X-API-Key ([d5ddcef](https://github.com/project-david-ai/projectdavid-core/commit/d5ddcefe688c7a97f0a97397974f046276023c00))
+* vLLM hot swap ([fed312d](https://github.com/project-david-ai/projectdavid-core/commit/fed312d6c625d4ce218f7d8c954789747eebdf39))
+
+## [1.24.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.24.0...v1.24.1) (2026-03-16)
+
+
+### Bug Fixes
+
+* update build cache configuration and remove redundant Docker prune step in CI workflow ([28f01a0](https://github.com/project-david-ai/projectdavid-core/commit/28f01a05b143ed9c7d1a17a877d615a64dfca935))
+
 # [1.24.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.23.0...v1.24.0) (2026-03-16)
 
 
