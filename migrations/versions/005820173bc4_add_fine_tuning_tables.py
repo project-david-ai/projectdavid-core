@@ -11,12 +11,10 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import mysql
 
-from migrations.utils.safe_ddl import (add_column_if_missing,
-                                       create_fk_if_not_exists,
+from migrations.utils.safe_ddl import (create_fk_if_not_exists,
                                        create_index_if_missing,
-                                       drop_column_if_exists,
-                                       drop_index_if_exists, has_column,
-                                       has_table, safe_alter_column)
+                                       drop_index_if_exists, has_table,
+                                       safe_alter_column)
 
 # revision identifiers, used by Alembic.
 revision: str = "005820173bc4"
@@ -26,10 +24,71 @@ depends_on: Union[str, Sequence[str], None] = "9351530d20ab"
 
 
 def upgrade() -> None:
-    """Upgrade schema safely using SafeDDL patterns."""
+    """Standardized Upgrade with Emergency Foundation Rescue."""
 
-    # 1. TABLE: datasets
-    # Note: Foreign Keys are REMOVED from the create_table block to prevent Error 1824
+    # ──────────────────────────────────────────────────────────────────
+    # PART 0: EMERGENCY FOUNDATION RESCUE
+    # ──────────────────────────────────────────────────────────────────
+    # The background purge daemons are crashing because these tables are
+    # missing. We build them here if they don't already exist to stop the
+    # crash loops immediately.
+
+    # 1. Runs (crashing purge_expired_runs)
+    if not has_table("runs"):
+        op.create_table(
+            "runs",
+            sa.Column("id", sa.String(64), primary_key=True),
+            sa.Column("user_id", sa.String(64), nullable=True),
+            sa.Column("thread_id", sa.String(64), nullable=False),
+            sa.Column("assistant_id", sa.String(64), nullable=False),
+            sa.Column("status", sa.String(32), nullable=False),
+            sa.Column("created_at", sa.Integer()),
+        )
+        print("[alembic.safe_ddl] 🚑 RESCUE: Created missing table: runs")
+
+    # 2. Messages (crashing purge_orphaned_threads)
+    if not has_table("messages"):
+        op.create_table(
+            "messages",
+            sa.Column("id", sa.String(64), primary_key=True),
+            sa.Column("thread_id", sa.String(64), nullable=False),
+            sa.Column("role", sa.String(32), nullable=False),
+            sa.Column("content", sa.Text(), nullable=False),
+            sa.Column("created_at", sa.Integer()),
+        )
+        print("[alembic.safe_ddl] 🚑 RESCUE: Created missing table: messages")
+
+    # 3. Files (crashing purge_expired_files)
+    if not has_table("files"):
+        op.create_table(
+            "files",
+            sa.Column("id", sa.String(64), primary_key=True),
+            sa.Column("user_id", sa.String(64), nullable=False),
+            sa.Column("filename", sa.String(256), nullable=False),
+            sa.Column("purpose", sa.String(64), nullable=False),
+            sa.Column("expires_at", sa.DateTime()),
+            sa.Column("deleted_at", sa.Integer()),
+            sa.Column("created_at", sa.DateTime()),
+        )
+        print("[alembic.safe_ddl] 🚑 RESCUE: Created missing table: files")
+
+    # 4. Vector Stores (crashing vs_soft_delete_purge)
+    if not has_table("vector_stores"):
+        op.create_table(
+            "vector_stores",
+            sa.Column("id", sa.String(64), primary_key=True),
+            sa.Column("user_id", sa.String(64), nullable=False),
+            sa.Column("name", sa.String(128), nullable=False),
+            sa.Column("status", sa.String(32), nullable=False),
+            sa.Column("deleted_at", sa.Integer()),
+            sa.Column("created_at", sa.BigInteger()),
+        )
+        print("[alembic.safe_ddl] 🚑 RESCUE: Created missing table: vector_stores")
+
+    # ──────────────────────────────────────────────────────────────────
+    # PART 1: ADD FINE TUNING TABLES (Original logic)
+    # ──────────────────────────────────────────────────────────────────
+
     if not has_table("datasets"):
         op.create_table(
             "datasets",
@@ -68,7 +127,6 @@ def upgrade() -> None:
         )
         print("[alembic.safe_ddl] ✅ Created table: datasets")
 
-    # 2. TABLE: training_jobs
     if not has_table("training_jobs"):
         op.create_table(
             "training_jobs",
@@ -108,7 +166,6 @@ def upgrade() -> None:
         )
         print("[alembic.safe_ddl] ✅ Created table: training_jobs")
 
-    # 3. TABLE: fine_tuned_models
     if not has_table("fine_tuned_models"):
         op.create_table(
             "fine_tuned_models",
@@ -148,8 +205,9 @@ def upgrade() -> None:
         )
         print("[alembic.safe_ddl] ✅ Created table: fine_tuned_models")
 
-    # --- 4. ADD FOREIGN KEYS (Using SafeDDL helpers) ---
-    # These helpers guard against Error 1824 by checking if the parent table exists first.
+    # ──────────────────────────────────────────────────────────────────
+    # PART 2: DECOUPLED FOREIGN KEYS
+    # ──────────────────────────────────────────────────────────────────
     create_fk_if_not_exists(
         "fk_datasets_user_id", "datasets", "users", ["user_id"], ["id"], ondelete="CASCADE"
     )
@@ -194,12 +252,11 @@ def upgrade() -> None:
         ondelete="CASCADE",
     )
 
-    # --- 5. ADD INDEXES ---
+    # Indexes & Alters
     create_index_if_missing("idx_dataset_status", "datasets", ["status"])
     create_index_if_missing("idx_trainingjob_status", "training_jobs", ["status"])
     create_index_if_missing("idx_finetunedmodel_status", "fine_tuned_models", ["status"])
 
-    # --- 6. SAFE ALTERS ---
     safe_alter_column(
         "audit_logs",
         "action",
@@ -217,10 +274,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Safe downgrade logic."""
-    # Note: In a production environment, usually we just drop the tables we created
-    # but the SafeDDL policy usually prefers avoiding massive drops in prod.
-    # For dev resetting, dropping is fine.
     if has_table("fine_tuned_models"):
         op.drop_table("fine_tuned_models")
     if has_table("training_jobs"):
