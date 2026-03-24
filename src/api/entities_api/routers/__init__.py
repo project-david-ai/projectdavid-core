@@ -15,6 +15,8 @@ from src.api.entities_api.routers.inference_router import \
     router as inference_router
 from src.api.entities_api.routers.messages_router import \
     router as messages_router
+from src.api.entities_api.routers.registry_router import \
+    router as registry_router
 from src.api.entities_api.routers.runs_router import router as runs_router
 from src.api.entities_api.routers.sandbox_auth_router import \
     router as sandbox_auth_router
@@ -26,6 +28,8 @@ from src.api.entities_api.routers.vectors_router import \
     router as vectors_router
 
 api_router = APIRouter()
+
+api_router.registry_router(registry_router, tags=["registry"])
 api_router.include_router(inference_router, tags=["Inference"])
 api_router.include_router(threads_router, tags=["Threads"])
 api_router.include_router(users_router, tags=["Users"])
