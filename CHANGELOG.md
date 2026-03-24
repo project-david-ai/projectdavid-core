@@ -1,3 +1,10 @@
+## [1.26.6](https://github.com/project-david-ai/projectdavid-core/compare/v1.26.5...v1.26.6) (2026-03-24)
+
+
+### Bug Fixes
+
+* replace Alembic runtime migrations with ensure_schema() ([d8da494](https://github.com/project-david-ai/projectdavid-core/commit/d8da49469cf1af820ff19ca3e80f17208c7da7ea))
+
 ## [1.26.5](https://github.com/project-david-ai/projectdavid-core/compare/v1.26.4...v1.26.5) (2026-03-24)
 
 
