@@ -7,8 +7,7 @@ from projectdavid_common.schemas.enums import StatusEnum
 from projectdavid_common.utilities.identifier_service import IdentifierService
 from sqlalchemy.orm import Session
 
-from src.api.training.models.models import (BaseModel, FineTunedModel,
-                                            InferenceDeployment)
+from src.api.training.models.models import BaseModel, FineTunedModel, InferenceDeployment
 
 # ---------------------------------------------------------------------------
 # Ray Dashboard HTTP API
@@ -75,8 +74,6 @@ def get_fine_tuned_model(db: Session, model_id: str, user_id: str) -> FineTunedM
 # ---------------------------------------------------------------------------
 # Cluster Resource Management & Scheduling
 # ---------------------------------------------------------------------------
-
-
 def find_available_node(
     db: Session,
     required_vram: float = 4.0,
