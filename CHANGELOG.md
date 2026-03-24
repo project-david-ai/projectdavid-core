@@ -1,3 +1,12 @@
+## [1.27.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.27.0...v1.27.1) (2026-03-24)
+
+
+### Bug Fixes
+
+* pin typer and click ([4f4f878](https://github.com/project-david-ai/projectdavid-core/commit/4f4f878dbef0300f74491785ab984db4eb129dce))
+* pin typer and click ([984e889](https://github.com/project-david-ai/projectdavid-core/commit/984e889b3a18146520a01bfc572dea4c11bfc8ae))
+* pin typer and click ([de4825f](https://github.com/project-david-ai/projectdavid-core/commit/de4825fc69eadd3a858c532a94bb629ddc0b08b6))
+
 # [1.27.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.26.6...v1.27.0) (2026-03-24)
 
 
