@@ -1,3 +1,10 @@
+## [1.26.3](https://github.com/project-david-ai/projectdavid-core/compare/v1.26.2...v1.26.3) (2026-03-24)
+
+
+### Bug Fixes
+
+* resolve MySQL 1824 error by implementing idempotent baseline ([e436231](https://github.com/project-david-ai/projectdavid-core/commit/e4362316686b0abcf99346592f11b76aac813484))
+
 ## [1.26.2](https://github.com/project-david-ai/projectdavid-core/compare/v1.26.1...v1.26.2) (2026-03-24)
 
 
