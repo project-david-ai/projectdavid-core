@@ -85,8 +85,6 @@ RUN pip install --no-cache-dir html2text playwright && \
 
 
 COPY src /app/src
-COPY alembic.ini /app/alembic.ini
-COPY migrations /app/migrations
 COPY docker/api/init_and_run_api.sh /app/init_and_run_api.sh
 COPY docker/api/supervisord.conf    /etc/supervisor/conf.d/supervisord.conf
 

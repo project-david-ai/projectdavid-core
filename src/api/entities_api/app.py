@@ -2,11 +2,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from projectdavid_common import UtilsInterface
 from projectdavid_orm.projectdavid_orm.base import Base
-from sqlalchemy import text
 
 from src.api.entities_api.db.database import engine, wait_for_databases
 from src.api.entities_api.observability.tracing import setup_tracing
 from src.api.entities_api.routers import api_router
+from src.api.entities_api.utils.ensure_schema import ensure_schema
 
 logging_utility = UtilsInterface.LoggingUtility()
 
@@ -46,12 +46,7 @@ def create_app(init_db: bool = True) -> FastAPI:
 
     if init_db:
         logging_utility.info("Initializing database schema...")
-        Base.metadata.create_all(bind=engine)
-        try:
-            with engine.begin() as conn:
-                conn.execute(text("ALTER TABLE messages MODIFY COLUMN content TEXT"))
-        except Exception:
-            pass
+        ensure_schema(engine)
 
     return app
 

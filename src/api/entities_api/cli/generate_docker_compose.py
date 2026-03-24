@@ -253,7 +253,6 @@ services:
       - .env
     environment:
       - DATABASE_URL=${DATABASE_URL}
-      - AUTO_MIGRATE=1
       - SANDBOX_SERVER_URL=http://sandbox:8000
       - QDRANT_URL=http://qdrant:6333
       - REDIS_URL=redis://redis:6379/0
@@ -275,8 +274,6 @@ services:
       - "9000:9000"
     volumes:
       - ./src:/app/src
-      - ./alembic.ini:/app/alembic.ini
-      - ./migrations:/app/migrations
       - ${SHARED_PATH}:/app/shared_data
     depends_on:
       db:
