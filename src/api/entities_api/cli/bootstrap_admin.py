@@ -97,6 +97,29 @@ def _build_engine(db_url: str):
         raise SystemExit(1)
 
 
+def _fix_db_url_for_local_dev(url: str) -> str:
+    """
+    Automatically maps 'db:3306' to 'localhost:3307' if running outside Docker.
+    This improves Developer Experience (DX) for users running CLI commands on the host.
+    """
+    # Detection: /.dockerenv exists in almost all Docker containers
+    is_docker = os.path.exists('/.dockerenv')
+
+    if not is_docker and url:
+        # Check for the standard Docker-compose service name 'db'
+        if "@db:3306" in url:
+            new_url = url.replace("@db:3306", "@localhost:3307")
+            log.info(f"Local host detected: Mapping 'db:3306' -> 'localhost:3307'")
+            return new_url
+        elif "@db/" in url:
+            # Handle cases where port is omitted
+            new_url = url.replace("@db/", "@localhost:3307/")
+            log.info(f"Local host detected: Mapping 'db' -> 'localhost:3307'")
+            return new_url
+
+    return url
+
+
 # ---------------------------------------------------------------------------
 # Domain logic  (pure functions — easy to unit-test)
 # ---------------------------------------------------------------------------
@@ -232,7 +255,8 @@ def bootstrap_admin(
     Safe to re-run: existing users and keys are detected and left untouched.
     The generated API key is printed once to stdout — store it immediately.
     """
-    engine = _build_engine(db_url)
+    effective_url = _fix_db_url_for_local_dev(db_url)
+    engine = _build_engine(effective_url)
 
     with Session(engine) as db:
         try:

@@ -110,7 +110,7 @@ Get-Content .env | ForEach-Object {
 Then run:
 
 ```bash
-platform-api bootstrap-admin
+platform-api bootstrap-admin bootstrap-admin
 ```
 
 Or explicitly:
