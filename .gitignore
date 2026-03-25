@@ -201,3 +201,5 @@ models/
 *.safetensors
 *.csv
 *.jsonl
+/scratch/
+/logs/

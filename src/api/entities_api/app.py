@@ -6,7 +6,6 @@ from projectdavid_orm.projectdavid_orm.base import Base
 from src.api.entities_api.db.database import engine, wait_for_databases
 from src.api.entities_api.observability.tracing import setup_tracing
 from src.api.entities_api.routers import api_router
-from src.api.entities_api.utils.ensure_schema import ensure_schema
 
 logging_utility = UtilsInterface.LoggingUtility()
 
@@ -43,10 +42,6 @@ def create_app(init_db: bool = True) -> FastAPI:
     def read_root():
         logging_utility.info("Root endpoint accessed")
         return {"message": "Welcome to the API!"}
-
-    if init_db:
-        logging_utility.info("Initializing database schema...")
-        ensure_schema(engine)
 
     return app
 

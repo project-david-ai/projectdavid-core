@@ -1,3 +1,4 @@
+# src/api/training/services/registry_service.py
 """
 registry_service.py
 

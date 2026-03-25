@@ -14,9 +14,8 @@ if project_dir not in sys.path:
 
 load_dotenv()
 
-# 1. Import models from the interface
-# This ensures they execute and register their metadata
-import projectdavid_orm.ormInterface as models
+from projectdavid_common.projectdavid_orm.base import Base
+from projectdavid_orm.projectdavid_orm import models
 
 # 2. EXTRACT METADATA DIRECTLY FROM A MODEL
 # Since 'User' inherits from Base, User.metadata IS the registry we want.

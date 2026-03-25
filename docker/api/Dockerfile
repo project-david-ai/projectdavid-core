@@ -88,6 +88,13 @@ COPY src /app/src
 COPY docker/api/init_and_run_api.sh /app/init_and_run_api.sh
 COPY docker/api/supervisord.conf    /etc/supervisor/conf.d/supervisord.conf
 
+COPY src /app/src
+COPY alembic.ini /app/alembic.ini
+COPY migrations /app/migrations
+COPY docker/api/init_and_run_api.sh /app/init_and_run_api.sh
+COPY docker/api/supervisord.conf    /etc/supervisor/conf.d/supervisord.conf
+
+
 RUN dos2unix /app/init_and_run_api.sh && chmod +x /app/init_and_run_api.sh
 
 

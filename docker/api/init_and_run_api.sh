@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Starts the main command (Supervisor → Uvicorn)
-# Schema sync is handled automatically at startup by ensure_schema()
 set -e
 
-echo "🚀 Starting Supervisor (which will run Uvicorn)…"
+echo "🔄 Running database migrations..."
+cd /app && alembic upgrade head
+
+echo "🚀 Starting Supervisor (which will run Uvicorn)..."
 exec "$@"

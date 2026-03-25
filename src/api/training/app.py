@@ -7,7 +7,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from projectdavid_common import UtilsInterface
-from projectdavid_orm.projectdavid_orm.base import Base
 
 from src.api.training.db.database import SessionLocal, engine, wait_for_db
 from src.api.training.routers import training_router
@@ -132,10 +131,6 @@ def create_app(init_db: bool = True) -> FastAPI:
     @app.get("/health")
     def health_check():
         return {"status": "ok", "instance_id": INSTANCE_ID}
-
-    if init_db:
-        logging_utility.info("Initializing Training database schema...")
-        Base.metadata.create_all(bind=engine)
 
     return app
 
