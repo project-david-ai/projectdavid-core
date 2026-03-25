@@ -1,3 +1,10 @@
+## [1.28.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.28.0...v1.28.1) (2026-03-25)
+
+
+### Bug Fixes
+
+* Resolve Ruff (F821): src/api/training/routers/__init__.py#L13 ([7ea997b](https://github.com/project-david-ai/projectdavid-core/commit/7ea997b3d6479228811c8bbbae8c18bba1e676e5)), closes [src/api/training/routers/__init__.py#L13](https://github.com/src/api/training/routers/__init__.py/issues/L13)
+
 # [1.28.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.27.1...v1.28.0) (2026-03-25)
 
 
