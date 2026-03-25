@@ -1,3 +1,11 @@
+# [1.28.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.27.1...v1.28.0) (2026-03-25)
+
+
+### Features
+
+* add base model registry API (schemas, service, router) ([922d9f3](https://github.com/project-david-ai/projectdavid-core/commit/922d9f30cf64069b419188efbfd8e291cd539b42))
+* replace ensure_schema with Alembic for schema management ([eb415b1](https://github.com/project-david-ai/projectdavid-core/commit/eb415b11b344487485dd4eaa2885ac2cb7a71bda))
+
 ## [1.27.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.27.0...v1.27.1) (2026-03-24)
 
 
