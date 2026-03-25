@@ -1,3 +1,10 @@
+# [1.29.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.28.1...v1.29.0) (2026-03-25)
+
+
+### Features
+
+* implement smart database URL mapping for local development ([ebe3083](https://github.com/project-david-ai/projectdavid-core/commit/ebe3083894977c290006bf9e47d3018b47c6853b))
+
 ## [1.28.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.28.0...v1.28.1) (2026-03-25)
 
 
