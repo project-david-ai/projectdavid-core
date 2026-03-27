@@ -79,6 +79,7 @@ target-version = ["py39", "py310", "py311", "py312"]
 [tool.isort]
 profile = "black"
 line_length = 88
+known_third_party = ["pytest"]
 
 [tool.ruff]
 line-length = 88
