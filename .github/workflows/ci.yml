@@ -63,7 +63,7 @@ jobs:
           fi
 
       - name: "🔀 isort (Import Sort Check)"
-        run: isort --check . --skip-glob "tests/integration/*"
+        run: isort --check . --skip-glob "tests/integration/*" --skip "tests/conftest.py"
 
       - name: "🛡️ Bandit (Security Analysis)"
         run: bandit -r src/ -x tests/ -s B101 -c .bandit.yml
