@@ -106,7 +106,9 @@ class ShellClient:
                 # the mixin detects these by attempting json.loads and checking
                 # for the "computer_file" type key, exactly as code_interpreter
                 # mixin does for "code_interpreter_file".
-                logger.info("computer_file received: %s", data.get("filename", "<unknown>"))
+                logger.info(
+                    "computer_file received: %s", data.get("filename", "<unknown>")
+                )
                 yield json.dumps({"type": "computer_file", **data})
 
             elif msg_type == "command_complete":
@@ -141,7 +143,9 @@ class ShellClient:
                 async for chunk in self._drain_until_complete():
                     yield chunk
             except Exception as exc:
-                logger.error("Error while receiving output for command '%s': %s", cmd, exc)
+                logger.error(
+                    "Error while receiving output for command '%s': %s", cmd, exc
+                )
                 yield f"\n[Connection Error: {exc}]\n"
                 return
 

@@ -72,7 +72,9 @@ async def test_naked_json():
     tokens = [make_openai_token(c) for c in payload]
     evs = await collect(tokens)
     args = [e for e in evs if e["type"] == "call_arguments"]
-    combined = "".join((e["content"] if isinstance(e["content"], str) else "") for e in args)
+    combined = "".join(
+        (e["content"] if isinstance(e["content"], str) else "") for e in args
+    )
     assert "{" in combined, f"naked json not captured: {combined!r}"
     print("✓ naked json")
 

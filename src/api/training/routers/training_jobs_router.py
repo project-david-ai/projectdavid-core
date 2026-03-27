@@ -9,11 +9,13 @@ from sqlalchemy.orm import Session
 
 from src.api.training.db.database import get_db
 from src.api.training.dependencies import get_current_user_id
-from src.api.training.services.training_service import (cancel_training_job,
-                                                        create_training_job,
-                                                        get_training_job,
-                                                        list_training_jobs,
-                                                        peek_training_queue)
+from src.api.training.services.training_service import (
+    cancel_training_job,
+    create_training_job,
+    get_training_job,
+    list_training_jobs,
+    peek_training_queue,
+)
 
 router = APIRouter()
 
@@ -57,7 +59,9 @@ def list_training_jobs_endpoint(
         try:
             status_filter = StatusEnum(status)
         except ValueError:
-            raise HTTPException(status_code=422, detail=f"Invalid status value '{status}'.")
+            raise HTTPException(
+                status_code=422, detail=f"Invalid status value '{status}'."
+            )
 
     jobs = list_training_jobs(
         db=db, user_id=user_id, status=status_filter, limit=limit, offset=offset

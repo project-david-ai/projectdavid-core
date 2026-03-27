@@ -1,6 +1,8 @@
 # src/api/training/services/cluster_service.py
 import os
-import subprocess
+
+# — required for nvidia-smi GPU introspection
+import subprocess  # nosec B404
 import time
 from typing import Dict, List, Optional
 
@@ -21,11 +23,10 @@ def get_gpu_telemetry():
     """
     try:
         # Query total memory, used memory, and the GPU name
-        cmd = (
-            "nvidia-smi --query-gpu=memory.total,memory.used,gpu_name --format=csv,nounits,noheader"
-        )
-        output = subprocess.check_output(cmd, shell=True).decode().strip()
-        total, used, name = output.split(', ')
+        cmd = "nvidia-smi --query-gpu=memory.total,memory.used,gpu_name --format=csv,nounits,noheader"
+        # — cmd is a hardcoded nvidia-smi string, never user input
+        output = subprocess.check_output(cmd, shell=True).decode().strip()  # nosec B602
+        total, used, name = output.split(", ")
         return {
             "total_vram": float(total) / 1024,  # Convert MiB to GB
             "used_vram": float(used) / 1024,
@@ -105,7 +106,9 @@ def reap_stale_nodes(db: Session):
     # 2. Find nodes that haven't checked in
     stale_nodes = (
         db.query(ComputeNode)
-        .filter(ComputeNode.status == StatusEnum.active, ComputeNode.last_heartbeat < cutoff)
+        .filter(
+            ComputeNode.status == StatusEnum.active, ComputeNode.last_heartbeat < cutoff
+        )
         .all()
     )
 
@@ -113,7 +116,9 @@ def reap_stale_nodes(db: Session):
         return
 
     stale_node_ids = [node.id for node in stale_nodes]
-    logging_utility.warning(f"💀 Reaper: Found {len(stale_node_ids)} stale nodes: {stale_node_ids}")
+    logging_utility.warning(
+        f"💀 Reaper: Found {len(stale_node_ids)} stale nodes: {stale_node_ids}"
+    )
 
     try:
         # 3. Fail jobs that were running on these nodes
@@ -136,9 +141,9 @@ def reap_stale_nodes(db: Session):
         # 4. Clear the VRAM Ledger for these nodes
         from src.api.training.models.models import GPUAllocation
 
-        db.query(GPUAllocation).filter(GPUAllocation.node_id.in_(stale_node_ids)).delete(
-            synchronize_session=False
-        )
+        db.query(GPUAllocation).filter(
+            GPUAllocation.node_id.in_(stale_node_ids)
+        ).delete(synchronize_session=False)
         logging_utility.info(f"🧹 Reaper: Cleared VRAM allocations for stale nodes.")
 
         # 5. Mark nodes as offline

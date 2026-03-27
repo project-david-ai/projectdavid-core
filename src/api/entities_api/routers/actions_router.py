@@ -19,7 +19,9 @@ def create_action(
     db: Session = Depends(get_db),
     auth_key: ApiKeyModel = Depends(get_api_key),
 ):
-    logging_utility.info(f"User '{auth_key.user_id}' - Received request to create a new action.")
+    logging_utility.info(
+        f"User '{auth_key.user_id}' - Received request to create a new action."
+    )
     action_service = ActionService()
     try:
         new_action = action_service.create_action(action)
@@ -105,7 +107,9 @@ def update_action_status(
         )
 
 
-@router.get("/runs/{run_id}/actions/status", response_model=List[ValidationInterface.ActionRead])
+@router.get(
+    "/runs/{run_id}/actions/status", response_model=List[ValidationInterface.ActionRead]
+)
 def get_actions_by_status(
     run_id: str,
     status: Optional[str] = "pending",

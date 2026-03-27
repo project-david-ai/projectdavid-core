@@ -82,9 +82,13 @@ async def stream_ollama_native(
 
                 if response.status_code != 200:
                     body = await response.aread()
-                    err_msg = f"Ollama returned HTTP {response.status_code}: {body.decode()}"
+                    err_msg = (
+                        f"Ollama returned HTTP {response.status_code}: {body.decode()}"
+                    )
                     LOG.error(err_msg)
-                    yield json.dumps({"type": "error", "content": err_msg, "run_id": run_id})
+                    yield json.dumps(
+                        {"type": "error", "content": err_msg, "run_id": run_id}
+                    )
                     return
 
                 async for raw_line in response.aiter_lines():
@@ -95,7 +99,9 @@ async def stream_ollama_native(
                     try:
                         chunk = json.loads(raw_line)
                     except json.JSONDecodeError as e:
-                        LOG.warning("Ollama: malformed JSON line skipped (%s): %r", e, raw_line)
+                        LOG.warning(
+                            "Ollama: malformed JSON line skipped (%s): %r", e, raw_line
+                        )
                         continue
 
                     # ── Final done chunk ──────────────────────────────────
@@ -104,7 +110,9 @@ async def stream_ollama_native(
                             "prompt_tokens": chunk.get("prompt_eval_count", 0),
                             "completion_tokens": chunk.get("eval_count", 0),
                         }
-                        LOG.info("Ollama stream complete. model=%s usage=%s", model, usage)
+                        LOG.info(
+                            "Ollama stream complete. model=%s usage=%s", model, usage
+                        )
                         yield json.dumps(
                             {
                                 "type": "status",

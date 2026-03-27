@@ -11,7 +11,9 @@ from projectdavid_common.utilities.logging_service import LoggingUtility
 
 LOG = LoggingUtility()
 
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").removesuffix("/v1")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").removesuffix(
+    "/v1"
+)
 
 
 # ── Multimodal normalisation ──────────────────────────────────────────────────
@@ -84,7 +86,9 @@ def _normalise_for_ollama(messages: List[Dict]) -> List[Dict]:
                     image_b64_list.append(b64)
 
             else:
-                LOG.warning("_normalise_for_ollama: unknown block type '%s', skipping.", btype)
+                LOG.warning(
+                    "_normalise_for_ollama: unknown block type '%s', skipping.", btype
+                )
 
         # Ollama only supports one image per message
         if len(image_b64_list) > 1:
@@ -122,7 +126,9 @@ def _strip_data_uri(uri: str) -> str:
     if uri.startswith("data:"):
         if ";base64," in uri:
             return uri.split(";base64,", 1)[1]
-        LOG.warning("_strip_data_uri: unexpected data URI format, returning empty string.")
+        LOG.warning(
+            "_strip_data_uri: unexpected data URI format, returning empty string."
+        )
         return ""
     # Already raw base64
     return uri
@@ -145,7 +151,9 @@ async def stream_ollama_raw(
 
     # Normalise multimodal messages before dispatch
     if _is_multimodal(messages):
-        LOG.info("stream_ollama_raw: multimodal messages detected — normalising for Ollama format.")
+        LOG.info(
+            "stream_ollama_raw: multimodal messages detected — normalising for Ollama format."
+        )
         messages = _normalise_for_ollama(messages)
 
     payload: Dict[str, Any] = {
@@ -166,7 +174,9 @@ async def stream_ollama_raw(
         async with client.stream("POST", url, json=payload) as response:
             if response.status_code != 200:
                 body = await response.aread()
-                raise RuntimeError(f"Ollama returned HTTP {response.status_code}: {body.decode()}")
+                raise RuntimeError(
+                    f"Ollama returned HTTP {response.status_code}: {body.decode()}"
+                )
 
             async for raw_line in response.aiter_lines():
                 raw_line = raw_line.strip()
@@ -176,7 +186,9 @@ async def stream_ollama_raw(
                 try:
                     chunk = json.loads(raw_line)
                 except json.JSONDecodeError as exc:
-                    LOG.warning("Ollama: malformed JSON line skipped (%s): %r", exc, raw_line)
+                    LOG.warning(
+                        "Ollama: malformed JSON line skipped (%s): %r", exc, raw_line
+                    )
                     continue
 
                 yield chunk
@@ -199,7 +211,9 @@ class OllamaNativeStream:
         base_url: str | None = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
 
-        resolved_base_url = base_url or getattr(self, "OLLAMA_BASE_URL", OLLAMA_BASE_URL)
+        resolved_base_url = base_url or getattr(
+            self, "OLLAMA_BASE_URL", OLLAMA_BASE_URL
+        )
 
         async for chunk in stream_ollama_raw(
             messages=messages,
@@ -263,7 +277,9 @@ Example:
     tool_call_received: Dict | None = None
 
     async for chunk in DeltaNormalizer.async_iter_deltas(
-        stream_ollama_raw(messages, model="qwen3:4b", think=False, tools=None, temperature=0.0),
+        stream_ollama_raw(
+            messages, model="qwen3:4b", think=False, tools=None, temperature=0.0
+        ),
         "smoke-xml-fc-t1",
     ):
         ctype = chunk.get("type")
@@ -295,7 +311,9 @@ Example:
     fn_args = json.loads(fn_args_raw) if isinstance(fn_args_raw, str) else fn_args_raw
     city = fn_args.get("city", "Paris")
 
-    fake_result = json.dumps({"city": city, "temperature": "18°C", "condition": "Partly cloudy"})
+    fake_result = json.dumps(
+        {"city": city, "temperature": "18°C", "condition": "Partly cloudy"}
+    )
     print(f"\n[TOOL RESULT] Injecting fake result: {fake_result}\n")
 
     messages += [
@@ -309,7 +327,9 @@ Example:
     print("[TURN 2] Sending tool result, awaiting final answer …\n")
 
     async for chunk in DeltaNormalizer.async_iter_deltas(
-        stream_ollama_raw(messages, model="qwen3:4b", think=False, tools=None, temperature=0.0),
+        stream_ollama_raw(
+            messages, model="qwen3:4b", think=False, tools=None, temperature=0.0
+        ),
         "smoke-xml-fc-t2",
     ):
         ctype = chunk.get("type")

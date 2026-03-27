@@ -23,7 +23,9 @@ class StreamingCodeExecutionHandler:
 
         # ───────────────────────── DIRS ──────────────────────────
         self.root_dir = os.getcwd()
-        self.generated_files_dir = os.path.abspath(os.path.join(self.root_dir, "generated_files"))
+        self.generated_files_dir = os.path.abspath(
+            os.path.join(self.root_dir, "generated_files")
+        )
         self.mpl_cache_dir = os.path.abspath(os.path.join(self.root_dir, "mpl_cache"))
 
         os.makedirs(self.generated_files_dir, exist_ok=True)
@@ -125,7 +127,9 @@ class StreamingCodeExecutionHandler:
 
             if not self._validate_code_security(full_code):
                 await websocket.send_json(
-                    {"error": "Security violation: Forbidden import or command detected."}
+                    {
+                        "error": "Security violation: Forbidden import or command detected."
+                    }
                 )
                 return
 
@@ -192,7 +196,9 @@ class StreamingCodeExecutionHandler:
             except Exception:
                 pass
 
-    async def _stream_process_output(self, proc, websocket: WebSocket, execution_id: str) -> None:
+    async def _stream_process_output(
+        self, proc, websocket: WebSocket, execution_id: str
+    ) -> None:
         try:
             while True:
                 line = await asyncio.wait_for(proc.stdout.readline(), timeout=30)
@@ -271,9 +277,9 @@ class StreamingCodeExecutionHandler:
                 fpath = os.path.join(self.generated_files_dir, fname)
 
                 # Skip the running script
-                if self.last_executed_script_path and os.path.abspath(fpath) == os.path.abspath(
-                    self.last_executed_script_path
-                ):
+                if self.last_executed_script_path and os.path.abspath(
+                    fpath
+                ) == os.path.abspath(self.last_executed_script_path):
                     continue
 
                 if os.path.isfile(fpath):

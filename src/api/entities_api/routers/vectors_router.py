@@ -10,7 +10,10 @@ from sqlalchemy.orm import Session
 from src.api.entities_api.dependencies import get_api_key, get_db
 from src.api.entities_api.models.models import ApiKey as ApiKeyModel
 from src.api.entities_api.services.vectors_service import (
-    DatabaseConflictError, VectorStoreDBError, VectorStoreDBService)
+    DatabaseConflictError,
+    VectorStoreDBError,
+    VectorStoreDBService,
+)
 from src.api.entities_api.utils.check_admin_status import _is_admin
 
 router = APIRouter()
@@ -21,7 +24,9 @@ def _require_store_access(
     store_id: str, db: Session, auth_key: ApiKeyModel, service: VectorStoreDBService
 ):
     store = service.get_vector_store_by_id(store_id)
-    if not store or (store.user_id != auth_key.user_id and not _is_admin(auth_key.user_id, db)):
+    if not store or (
+        store.user_id != auth_key.user_id and not _is_admin(auth_key.user_id, db)
+    ):
         raise HTTPException(status_code=404, detail="Vector store not found.")
     return store
 
@@ -125,7 +130,9 @@ def get_vector_store_by_collection(
 ):
     service = VectorStoreDBService(db)
     store = service.get_vector_store_by_collection_name(name)
-    if not store or (store.user_id != auth_key.user_id and not _is_admin(auth_key.user_id, db)):
+    if not store or (
+        store.user_id != auth_key.user_id and not _is_admin(auth_key.user_id, db)
+    ):
         raise HTTPException(status_code=404, detail="Collection not found.")
     return store
 
@@ -141,7 +148,9 @@ def get_vector_store(
 ):
     service = VectorStoreDBService(db)
     store = service.get_vector_store_by_id(vector_store_id)
-    if not store or (store.user_id != auth_key.user_id and not _is_admin(auth_key.user_id, db)):
+    if not store or (
+        store.user_id != auth_key.user_id and not _is_admin(auth_key.user_id, db)
+    ):
         raise HTTPException(status_code=404, detail="Vector store not found.")
     return store
 
@@ -176,7 +185,9 @@ def delete_vector_store(
     )
     service = VectorStoreDBService(db)
     store = service.get_vector_store_by_id(vector_store_id)
-    if not store or (store.user_id != auth_key.user_id and not _is_admin(auth_key.user_id, db)):
+    if not store or (
+        store.user_id != auth_key.user_id and not _is_admin(auth_key.user_id, db)
+    ):
         raise HTTPException(status_code=404, detail="Vector store not found.")
     try:
         if permanent:

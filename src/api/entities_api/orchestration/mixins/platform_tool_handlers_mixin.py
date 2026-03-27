@@ -15,8 +15,9 @@ from typing import Any, Dict, List, Optional
 
 from projectdavid_common import ValidationInterface
 
-from src.api.entities_api.constants.assistant import \
-    WEB_SEARCH_PRESENTATION_FOLLOW_UP_INSTRUCTIONS
+from src.api.entities_api.constants.assistant import (
+    WEB_SEARCH_PRESENTATION_FOLLOW_UP_INSTRUCTIONS,
+)
 from src.api.entities_api.constants.platform import ERROR_NO_CONTENT
 from src.api.entities_api.services.logging_service import LoggingUtility
 
@@ -77,8 +78,9 @@ class PlatformToolHandlersMixin:
         Thin wrapper around ConsumerToolHandlersMixin.submit_tool_output.
         Async to match the Consumer refactor.
         """
-        from src.api.entities_api.orchestration.mixins.consumer_tool_handlers_mixin import \
-            ConsumerToolHandlersMixin
+        from src.api.entities_api.orchestration.mixins.consumer_tool_handlers_mixin import (
+            ConsumerToolHandlersMixin,
+        )
 
         if not isinstance(self, ConsumerToolHandlersMixin):
             raise TypeError(
@@ -105,7 +107,9 @@ class PlatformToolHandlersMixin:
         """Async handler for web_search results."""
         try:
             pretty_content = output[0] if output else "No results found."
-            rendered = f"{pretty_content}{WEB_SEARCH_PRESENTATION_FOLLOW_UP_INSTRUCTIONS}"
+            rendered = (
+                f"{pretty_content}{WEB_SEARCH_PRESENTATION_FOLLOW_UP_INSTRUCTIONS}"
+            )
 
             await self._submit_platform_tool_output(
                 thread_id=thread_id,
@@ -219,7 +223,9 @@ class PlatformToolHandlersMixin:
             LOG.error(f"PLATFORM-HANDLER ▸ Action creation failed: {e}")
             return
 
-        LOG.debug("Action %s created for %s", getattr(action, "id", "unknown"), tool_name)
+        LOG.debug(
+            "Action %s created for %s", getattr(action, "id", "unknown"), tool_name
+        )
 
         # 2. Update Run Status to pending_action via _native_exec
         try:
@@ -233,7 +239,9 @@ class PlatformToolHandlersMixin:
         # 3. Call the Platform Service — blocking, offloaded to thread
         platform = self.platform_tool_service
         try:
-            result = await asyncio.to_thread(platform.call_function, tool_name, arguments)
+            result = await asyncio.to_thread(
+                platform.call_function, tool_name, arguments
+            )
         except Exception as e:
             LOG.error(f"PLATFORM-HANDLER ▸ Platform service call failed: {e}")
             result = f"CRITICAL ERROR: Platform service failed to execute {tool_name}"

@@ -13,21 +13,26 @@ from typing import Any, AsyncGenerator, Dict, Generator, List, Optional, Union
 from dotenv import load_dotenv
 from entities_api.cache.assistant_cache import AssistantCache
 from entities_api.clients.delta_normalizer import DeltaNormalizer
-from entities_api.platform_tools.delegated_model_map.delegation_model_map import \
-    get_delegated_model
+from entities_api.platform_tools.delegated_model_map.delegation_model_map import (
+    get_delegated_model,
+)
 from projectdavid import StreamEvent
 from projectdavid_common.utilities.logging_service import LoggingUtility
 from projectdavid_common.validation import StatusEnum
 
 # --- DEPENDENCIES ---
-from src.api.entities_api.clients.multimodal_utils import (is_multimodal,
-                                                           normalise_for_chat)
+from src.api.entities_api.clients.multimodal_utils import (
+    is_multimodal,
+    normalise_for_chat,
+)
 from src.api.entities_api.dependencies import get_redis, get_redis_sync
 from src.api.entities_api.orchestration.engine.orchestrator_core import (
-    OrchestratorCore, StreamState)
+    OrchestratorCore,
+    StreamState,
+)
+
 # --- MIXINS ---
-from src.api.entities_api.orchestration.mixins.provider_mixins import \
-    _ProviderMixins
+from src.api.entities_api.orchestration.mixins.provider_mixins import _ProviderMixins
 
 load_dotenv()
 LOG = LoggingUtility()
@@ -79,7 +84,9 @@ class DefaultBaseWorker(
 
         if assistant_cache_service:
             self._assistant_cache = assistant_cache_service
-        elif "assistant_cache" in extra and isinstance(extra["assistant_cache"], AssistantCache):
+        elif "assistant_cache" in extra and isinstance(
+            extra["assistant_cache"], AssistantCache
+        ):
             self._assistant_cache = extra["assistant_cache"]
 
         legacy_config = extra.get("assistant_config") or extra.get("assistant_cache")
@@ -154,7 +161,9 @@ class DefaultBaseWorker(
 
         pre_mapped_model = model
         try:
-            if hasattr(self, "_get_model_map") and (mapped := self._get_model_map(model)):
+            if hasattr(self, "_get_model_map") and (
+                mapped := self._get_model_map(model)
+            ):
                 model = mapped
 
             self.assistant_id = assistant_id
@@ -178,7 +187,9 @@ class DefaultBaseWorker(
             )
             research_worker_setting = str(
                 is_worker_val
-            ).lower() == "true" or self.assistant_config.get("is_research_worker", False)
+            ).lower() == "true" or self.assistant_config.get(
+                "is_research_worker", False
+            )
 
             is_junior_val = raw_meta.get(
                 "junior_engineer", raw_meta.get("junior_engineer_calling", False)
@@ -200,7 +211,8 @@ class DefaultBaseWorker(
                 junior_engineer_setting = False
                 delegation_model = get_delegated_model(requested_model=pre_mapped_model)
                 await self._native_exec.update_run_fields(
-                    run_id, meta_data={"api_key": api_key, "delegated_model": delegation_model}
+                    run_id,
+                    meta_data={"api_key": api_key, "delegated_model": delegation_model},
                 )
 
             elif research_worker_setting:
@@ -256,7 +268,9 @@ class DefaultBaseWorker(
             # ------------------------------------------------------------------
             # 5. IDENTITY SWAP & RELOAD
             # ------------------------------------------------------------------
-            await self._handle_role_based_identity_swap(requested_model=pre_mapped_model)
+            await self._handle_role_based_identity_swap(
+                requested_model=pre_mapped_model
+            )
 
             if self.assistant_id != _original_assistant_id:
                 LOG.info(
@@ -270,7 +284,9 @@ class DefaultBaseWorker(
             if not self._scratch_pad_thread:
                 self._scratch_pad_thread = thread_id
 
-            LOG.info("STREAM ▸ Scratchpad thread pinned to: %s", self._scratch_pad_thread)
+            LOG.info(
+                "STREAM ▸ Scratchpad thread pinned to: %s", self._scratch_pad_thread
+            )
 
             # ------------------------------------------------------------------
             # 6. CONTEXT WINDOW CONSTRUCTION
@@ -311,7 +327,9 @@ class DefaultBaseWorker(
                 )
                 ctx = normalise_for_chat(ctx)
 
-            LOG.info(f"\nRAW_CTX_DUMP:\n{json.dumps(ctx, indent=2, ensure_ascii=False)}")
+            LOG.info(
+                f"\nRAW_CTX_DUMP:\n{json.dumps(ctx, indent=2, ensure_ascii=False)}"
+            )
 
             # ------------------------------------------------------------------
             # 8. THE STREAM LOOP
@@ -353,7 +371,9 @@ class DefaultBaseWorker(
                 except Exception:
                     pass
 
-            yield json.dumps({"type": "status", "status": "processing", "run_id": run_id})
+            yield json.dumps(
+                {"type": "status", "status": "processing", "run_id": run_id}
+            )
 
             tool_calls_batch = self.parse_and_set_function_calls(
                 state.accumulated, state.assistant_reply
@@ -365,7 +385,9 @@ class DefaultBaseWorker(
             if tool_calls_batch:
                 self._tool_queue = tool_calls_batch
                 final_status = StatusEnum.pending_action.value
-                LOG.info(f"🚀[L3 NATIVE MODE] Turn 1 Batch size: {len(tool_calls_batch)}")
+                LOG.info(
+                    f"🚀[L3 NATIVE MODE] Turn 1 Batch size: {len(tool_calls_batch)}"
+                )
 
             if message_to_save:
                 await self.finalize_conversation(
@@ -375,7 +397,9 @@ class DefaultBaseWorker(
             await self._native_exec.update_run_status(run_id, final_status)
 
             if not tool_calls_batch:
-                yield json.dumps({"type": "status", "status": "complete", "run_id": run_id})
+                yield json.dumps(
+                    {"type": "status", "status": "complete", "run_id": run_id}
+                )
 
         except Exception as exc:
             LOG.error(f"DEBUG: Stream Exception: {exc}")
@@ -434,7 +458,9 @@ class DefaultBaseWorker(
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                agen = self.stream(thread_id, message_id, run_id, assistant_id, model, **kwargs)
+                agen = self.stream(
+                    thread_id, message_id, run_id, assistant_id, model, **kwargs
+                )
                 while True:
                     try:
                         yield loop.run_until_complete(agen.__anext__())
@@ -463,7 +489,9 @@ class DefaultBaseWorker(
             queue_ref.append(q)
 
             async def _drain() -> None:
-                agen = self.stream(thread_id, message_id, run_id, assistant_id, model, **kwargs)
+                agen = self.stream(
+                    thread_id, message_id, run_id, assistant_id, model, **kwargs
+                )
                 try:
                     async for item in agen:
                         q.put(item)

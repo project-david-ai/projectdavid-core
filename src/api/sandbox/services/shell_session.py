@@ -5,7 +5,7 @@ import mimetypes
 import os
 import pty
 import shutil
-import subprocess
+import subprocess  # nosec B404
 import termios
 import uuid
 from typing import Optional
@@ -44,7 +44,9 @@ _DISABLE_FIREJAIL = os.getenv("DISABLE_FIREJAIL", "false").lower() == "true"
 # Set COMPUTER_SHELL_ALLOW_NET=true to bypass even the netfilter rules.
 # Only needed for debugging — in normal operation the netfilter handles
 # the internet-yes / internal-Docker-no distinction automatically.
-_ALLOW_NET_UNRESTRICTED = os.getenv("COMPUTER_SHELL_ALLOW_NET", "false").lower() == "true"
+_ALLOW_NET_UNRESTRICTED = (
+    os.getenv("COMPUTER_SHELL_ALLOW_NET", "false").lower() == "true"
+)
 
 # ProjectDavid file server — mirrors the code_interpreter upload pattern.
 _ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
@@ -236,7 +238,8 @@ class PersistentShellSession:
                 preexec_fn=os.setsid,
                 shell=False,
                 close_fds=True,
-                cwd=self.session_dir,  # Default working dir = session dir
+                # shell=False is intentionally secure; PTY handles I/O directly
+                cwd=self.session_dir,  # nosec B603
             )
             os.close(slave_fd)
 
@@ -248,7 +251,9 @@ class PersistentShellSession:
         except WebSocketDisconnect:
             logger.info("Client disconnected from room %s", self.room)
         except Exception as exc:
-            logger.error("Unexpected error in shell session for room %s: %s", self.room, exc)
+            logger.error(
+                "Unexpected error in shell session for room %s: %s", self.room, exc
+            )
         finally:
             await self.cleanup()
 
@@ -518,7 +523,9 @@ class PersistentShellSession:
                     "filename": fname,
                     "id": upload.id,
                     "url": signed_url,
-                    "mime_type": (mimetypes.guess_type(fname)[0] or "application/octet-stream"),
+                    "mime_type": (
+                        mimetypes.guess_type(fname)[0] or "application/octet-stream"
+                    ),
                 }
             except Exception as exc:
                 logger.error("Upload failed for %s: %s", fname, exc)

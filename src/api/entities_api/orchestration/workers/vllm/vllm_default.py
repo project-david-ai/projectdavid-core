@@ -1,8 +1,9 @@
 # src/api/entities_api/orchestration/workers/ollama_default_worker.py
 import os
 
-from src.api.entities_api.orchestration.workers.base_workers.vllm_raw_worker import \
-    VLLMDefaultBaseWorker
+from src.api.entities_api.orchestration.workers.base_workers.vllm_raw_worker import (
+    VLLMDefaultBaseWorker,
+)
 
 
 class VllmDefaultWorker(VLLMDefaultBaseWorker):

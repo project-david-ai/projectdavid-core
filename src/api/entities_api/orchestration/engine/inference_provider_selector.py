@@ -2,12 +2,10 @@
 import threading
 from typing import Any, Type
 
-from entities_api.orchestration.engine.inference_arbiter import \
-    InferenceArbiter
+from entities_api.orchestration.engine.inference_arbiter import InferenceArbiter
 from entities_api.orchestration.handlers.hb_handler import HyperbolicHandler
 from entities_api.orchestration.handlers.ollama_handler import OllamaHandler
-from entities_api.orchestration.handlers.together_handler import \
-    TogetherAIHandler
+from entities_api.orchestration.handlers.together_handler import TogetherAIHandler
 from entities_api.orchestration.handlers.vllm_handler import VllmHandler
 from projectdavid_common.constants.ai_model_map import MODEL_MAP
 from projectdavid_common.utilities.logging_service import LoggingUtility
@@ -66,7 +64,9 @@ class InferenceProviderSelector:
         with self._cache_lock:
             instance = self._general_handler_cache.get(class_name)
             if not instance:
-                LOG.debug(f"Cache miss for general handler: {class_name}. Creating instance.")
+                LOG.debug(
+                    f"Cache miss for general handler: {class_name}. Creating instance."
+                )
                 try:
                     instance = handler_class(self.arbiter)
                     self._general_handler_cache[class_name] = instance
@@ -75,7 +75,9 @@ class InferenceProviderSelector:
                         f"Failed to instantiate general handler {class_name}: {e}",
                         exc_info=True,
                     )
-                    raise ValueError(f"Instantiation failed for handler {class_name}") from e
+                    raise ValueError(
+                        f"Instantiation failed for handler {class_name}"
+                    ) from e
         return instance
 
     def select_provider(self, model_id: str) -> tuple[Any, str]:
@@ -95,18 +97,26 @@ class InferenceProviderSelector:
                 break
         if selected_general_class is None:
             LOG.error(f"No routing match for model_id prefix: '{model_id}'")
-            raise ValueError(f"Invalid or unknown model identifier prefix: '{model_id}'")
+            raise ValueError(
+                f"Invalid or unknown model identifier prefix: '{model_id}'"
+            )
         try:
-            provider_instance = self._get_or_create_general_handler(selected_general_class)
+            provider_instance = self._get_or_create_general_handler(
+                selected_general_class
+            )
         except ValueError as e:
             LOG.error(f"Provider selection failed for model '{model_id}': {e}")
-            raise ValueError(f"Handler instantiation failed for model '{model_id}'") from e
+            raise ValueError(
+                f"Handler instantiation failed for model '{model_id}'"
+            ) from e
         except Exception as e:
             LOG.error(
                 f"Unexpected error getting handler instance for {selected_general_class.__name__}: {e}",
                 exc_info=True,
             )
-            raise ValueError(f"Failed to get handler instance for model '{model_id}'") from e
+            raise ValueError(
+                f"Failed to get handler instance for model '{model_id}'"
+            ) from e
         LOG.info(
             f"Handler selected: '{selected_general_class.__name__}' → Model: '{api_model_name}'"
         )

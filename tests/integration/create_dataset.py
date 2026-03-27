@@ -72,7 +72,9 @@ def run_integration_test():
             print(f"✅ Dataset ready! (Samples: {dataset.train_samples})")
             break
         elif dataset.status == "failed":
-            print(f"❌ Dataset preparation failed: {dataset.config.get('preparation_error')}")
+            print(
+                f"❌ Dataset preparation failed: {dataset.config.get('preparation_error')}"
+            )
             return
         time.sleep(2)
     else:
@@ -84,7 +86,9 @@ def run_integration_test():
     # Training API creates a Job record and pushes a ticket to Redis.
     # This handoff moves the task from the Web tier to the GPU tier.
     # ──────────────────────────────────────────────────────────────────────────
-    print(f"🔥 STAGE 3: Submitting training job [Qwen-1.5B] for dataset {dataset.id}...")
+    print(
+        f"🔥 STAGE 3: Submitting training job [Qwen-1.5B] for dataset {dataset.id}..."
+    )
     job = client.training.create(
         dataset_id=dataset.id,
         base_model="Qwen/Qwen2.5-1.5B-Instruct",
@@ -123,7 +127,9 @@ def run_integration_test():
     # The Worker stages data from Samba to local NVMe and runs the ML subprocess.
     # We poll the MySQL state until the LoRA adapters are exported.
     # ──────────────────────────────────────────────────────────────────────────
-    print(f"⏳ STAGE 5: Monitoring GPU training (Check Worker Terminal for live kernels)...")
+    print(
+        f"⏳ STAGE 5: Monitoring GPU training (Check Worker Terminal for live kernels)..."
+    )
     while True:
         job = client.training.retrieve(job.id)
         if job.status == "completed":
@@ -155,7 +161,9 @@ def run_integration_test():
         # Final Database Verification
         final_check = client.models.retrieve(new_model.id)
         if final_check.is_active:
-            print(f"✨ PIPELINE COMPLETE: Model {new_model.id} is now the Active Brain.")
+            print(
+                f"✨ PIPELINE COMPLETE: Model {new_model.id} is now the Active Brain."
+            )
     else:
         print("❌ FAIL: Could not find fine_tuned_model record in registry.")
 

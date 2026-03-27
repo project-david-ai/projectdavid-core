@@ -32,7 +32,9 @@ OWNER_KEY = os.getenv("OWNER_API_KEY")
 INTRUDER_KEY = os.getenv("INTRUDER_API_KEY")
 
 if not OWNER_KEY or not INTRUDER_KEY:
-    raise RuntimeError("Set OWNER_API_KEY and INTRUDER_API_KEY in your environment or .env file.")
+    raise RuntimeError(
+        "Set OWNER_API_KEY and INTRUDER_API_KEY in your environment or .env file."
+    )
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -239,7 +241,9 @@ def run_sweep() -> dict:
         print(f"  probe_store.collection_name : {probe_collection}")
 
         # 12a: Owner can look up own store by collection name
-        print("\n--- Test 12a: Owner looks up own store by collection name (expecting success) ---")
+        print(
+            "\n--- Test 12a: Owner looks up own store by collection name (expecting success) ---"
+        )
         expect_success(
             "Test 12a: Owner looks up own store by collection name",
             owner_client.vectors.retrieve_vector_store_sync,
@@ -288,7 +292,9 @@ def run_sweep() -> dict:
         )
     else:
         print("[WARN] ⚠️  Test 12: Could not create probe store — skipping.")
-        results["Test 12b: Intruder looks up owner's store by collection name (Gap 2 fix)"] = "FAIL"
+        results[
+            "Test 12b: Intruder looks up owner's store by collection name (Gap 2 fix)"
+        ] = "FAIL"
 
     # ── Teardown ──────────────────────────────────────────────────────────────
     print("\n" + "═" * 60)

@@ -45,7 +45,9 @@ def _extract_text(content: Any) -> str:
     return str(content)
 
 
-def _merge_content(existing: Union[str, list], incoming: Union[str, list]) -> Union[str, list]:
+def _merge_content(
+    existing: Union[str, list], incoming: Union[str, list]
+) -> Union[str, list]:
     """
     Merge two message contents that share the same role.
 
@@ -154,7 +156,9 @@ class ConversationTruncator:
 
         # Restore original order using a pre-built id-index
         original_index = {id(m): i for i, m in enumerate(conversation)}
-        combined = sorted(system_msgs + kept_others, key=lambda m: original_index[id(m)])
+        combined = sorted(
+            system_msgs + kept_others, key=lambda m: original_index[id(m)]
+        )
 
         return self.merge_consecutive_messages(combined)
 

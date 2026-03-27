@@ -28,7 +28,9 @@ async def _push_to_redis(redis: Redis, message_obj):
         await redis.ltrim(key, -200, -1)
         logging_utility.debug(f"Async Pushed message {message_obj.id} to Redis '{key}'")
     except Exception as e:
-        logging_utility.error(f"Redis async push failed for {message_obj.id}: {e}", exc_info=True)
+        logging_utility.error(
+            f"Redis async push failed for {message_obj.id}: {e}", exc_info=True
+        )
 
 
 @router.post("/messages", response_model=ValidationInterface.MessageRead)
@@ -37,7 +39,9 @@ async def create_message(
     redis: Redis = Depends(get_redis),
     auth_key: ApiKeyModel = Depends(get_api_key),
 ):
-    logging_utility.info(f"[{auth_key.user_id}] Creating message in thread {message.thread_id}")
+    logging_utility.info(
+        f"[{auth_key.user_id}] Creating message in thread {message.thread_id}"
+    )
     svc = MessageService()
     try:
         new_message = svc.create_message(message, user_id=auth_key.user_id)
@@ -108,7 +112,9 @@ def list_messages(
     order: str = "asc",
     auth_key: ApiKeyModel = Depends(get_api_key),
 ):
-    logging_utility.info(f"[{auth_key.user_id}] Listing messages for thread {thread_id}")
+    logging_utility.info(
+        f"[{auth_key.user_id}] Listing messages for thread {thread_id}"
+    )
     svc = MessageService()
     try:
         return svc.list_messages(
@@ -124,7 +130,9 @@ def list_messages(
         )
 
 
-@router.get("/threads/{thread_id}/formatted_messages", response_model=List[Dict[str, Any]])
+@router.get(
+    "/threads/{thread_id}/formatted_messages", response_model=List[Dict[str, Any]]
+)
 def get_formatted_messages(
     thread_id: str,
     auth_key: ApiKeyModel = Depends(get_api_key),
@@ -138,7 +146,9 @@ def get_formatted_messages(
     except HTTPException:
         raise
     except Exception as e:
-        logging_utility.error(f"Error retrieving formatted messages: {e}", exc_info=True)
+        logging_utility.error(
+            f"Error retrieving formatted messages: {e}", exc_info=True
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred.",

@@ -77,7 +77,9 @@ def get_sandbox_connection_ticket(
     """
     Exchanges a valid API Key for a short-lived WebSocket Ticket (JWT).
     """
-    logging_utility.info(f"SDK Client '{auth_key.user_id}' requesting WS ticket for {room_id}")
+    logging_utility.info(
+        f"SDK Client '{auth_key.user_id}' requesting WS ticket for {room_id}"
+    )
 
     # 1. (Optional) Validation: Can this API Key access this room?
     # if not access_control.can_access(auth_key.user_id, room_id):

@@ -154,7 +154,9 @@ def main() -> int:
     print(f"  Time     : {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
     if not preflight():
-        print("\n[ABORT] Pre-flight checks failed. Set the required env vars and retry.")
+        print(
+            "\n[ABORT] Pre-flight checks failed. Set the required env vars and retry."
+        )
         return 2
 
     all_results = []

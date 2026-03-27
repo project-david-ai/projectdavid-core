@@ -10,9 +10,11 @@ from projectdavid_common import UtilsInterface
 
 from src.api.training.db.database import SessionLocal, engine, wait_for_db
 from src.api.training.routers import training_router
-from src.api.training.services.cluster_service import (acquire_api_lease,
-                                                       reap_stale_nodes,
-                                                       renew_api_lease)
+from src.api.training.services.cluster_service import (
+    acquire_api_lease,
+    reap_stale_nodes,
+    renew_api_lease,
+)
 from src.api.training.services.training_service import get_redis_client
 
 logging_utility = UtilsInterface.LoggingUtility()
@@ -89,7 +91,9 @@ async def lifespan(app: FastAPI):
     # Explicitly release the lease so a new instance can start immediately
     # without waiting for the 30s TTL to expire
     r.delete("cluster:active_training_api")
-    logging_utility.info(f"🔓 Instance [{INSTANCE_ID}] released Master lease. Cluster is free.")
+    logging_utility.info(
+        f"🔓 Instance [{INSTANCE_ID}] released Master lease. Cluster is free."
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────

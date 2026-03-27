@@ -7,8 +7,11 @@ from projectdavid_common.schemas.enums import StatusEnum
 from projectdavid_common.utilities.identifier_service import IdentifierService
 from sqlalchemy.orm import Session
 
-from src.api.training.models.models import (BaseModel, FineTunedModel,
-                                            InferenceDeployment)
+from src.api.training.models.models import (
+    BaseModel,
+    FineTunedModel,
+    InferenceDeployment,
+)
 
 # ---------------------------------------------------------------------------
 # Ray Dashboard HTTP API
@@ -145,9 +148,9 @@ def deactivate_all_models(db: Session, user_id: str) -> dict:
         FineTunedModel.user_id == user_id, FineTunedModel.is_active
     ).update({"is_active": False, "node_id": None}, synchronize_session=False)
 
-    db.query(InferenceDeployment).filter(InferenceDeployment.node_id.is_not(None)).delete(
-        synchronize_session=False
-    )
+    db.query(InferenceDeployment).filter(
+        InferenceDeployment.node_id.is_not(None)
+    ).delete(synchronize_session=False)
 
     db.commit()
     return {"status": "success", "message": "Cluster resources released."}
@@ -217,7 +220,9 @@ def activate_base_model(
     """
     base = db.query(BaseModel).filter(BaseModel.id == base_model_id).first()
     if not base:
-        raise HTTPException(status_code=404, detail=f"Base model {base_model_id} not found.")
+        raise HTTPException(
+            status_code=404, detail=f"Base model {base_model_id} not found."
+        )
 
     deactivate_all_models(db, user_id)
 

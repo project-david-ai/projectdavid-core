@@ -1,8 +1,9 @@
 # src/api/entities_api/orchestration/workers/ollama_default_worker.py
 import os
 
-from src.api.entities_api.orchestration.workers.base_workers.ollama_default_base import \
-    OllamaDefaultBaseWorker
+from src.api.entities_api.orchestration.workers.base_workers.ollama_default_base import (
+    OllamaDefaultBaseWorker,
+)
 
 
 class OllamaDefaultWorker(OllamaDefaultBaseWorker):

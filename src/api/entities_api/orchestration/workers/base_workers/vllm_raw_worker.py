@@ -25,8 +25,9 @@ from dotenv import load_dotenv
 from entities_api.cache.assistant_cache import AssistantCache
 from entities_api.clients.delta_normalizer import DeltaNormalizer
 from entities_api.clients.vllm_raw_stream import VLLMRawStream
-from entities_api.platform_tools.delegated_model_map.delegation_model_map import \
-    get_delegated_model
+from entities_api.platform_tools.delegated_model_map.delegation_model_map import (
+    get_delegated_model,
+)
 from projectdavid import StreamEvent
 from projectdavid_common.utilities.logging_service import LoggingUtility
 from projectdavid_common.validation import StatusEnum
@@ -34,12 +35,11 @@ from projectdavid_common.validation import StatusEnum
 # Infrastructure Imports
 from src.api.entities_api.db.database import SessionLocal  # Main API DB
 from src.api.entities_api.dependencies import get_redis, get_redis_sync
-from src.api.entities_api.orchestration.engine.orchestrator_core import \
-    OrchestratorCore
-from src.api.entities_api.orchestration.mixins.provider_mixins import \
-    _ProviderMixins
-from src.api.entities_api.services.inference_resolver import \
-    InferenceResolver  # Mesh Resolver
+from src.api.entities_api.orchestration.engine.orchestrator_core import OrchestratorCore
+from src.api.entities_api.orchestration.mixins.provider_mixins import _ProviderMixins
+from src.api.entities_api.services.inference_resolver import (  # Mesh Resolver
+    InferenceResolver,
+)
 
 load_dotenv()
 LOG = LoggingUtility()
@@ -93,7 +93,9 @@ class VLLMDefaultBaseWorker(
 
         if assistant_cache_service:
             self._assistant_cache = assistant_cache_service
-        elif "assistant_cache" in extra and isinstance(extra["assistant_cache"], AssistantCache):
+        elif "assistant_cache" in extra and isinstance(
+            extra["assistant_cache"], AssistantCache
+        ):
             self._assistant_cache = extra["assistant_cache"]
 
         legacy_config = extra.get("assistant_config") or extra.get("assistant_cache")
@@ -157,7 +159,9 @@ class VLLMDefaultBaseWorker(
         pre_mapped_model = model
 
         try:
-            if hasattr(self, "_get_model_map") and (mapped := self._get_model_map(model)):
+            if hasattr(self, "_get_model_map") and (
+                mapped := self._get_model_map(model)
+            ):
                 model = mapped
 
             self.assistant_id = assistant_id
@@ -184,7 +188,9 @@ class VLLMDefaultBaseWorker(
                 db_session = SessionLocal()
                 try:
                     # Model might be "vllm/david-ft" or just "ftm_..."
-                    mesh_resolved_url = InferenceResolver.resolve_vllm_url(db_session, model)
+                    mesh_resolved_url = InferenceResolver.resolve_vllm_url(
+                        db_session, model
+                    )
                     if mesh_resolved_url:
                         LOG.info("🌐 Mesh Resolver: %s -> %s", model, mesh_resolved_url)
                 except Exception as e:
@@ -196,7 +202,9 @@ class VLLMDefaultBaseWorker(
             target_url = custom_vllm_url or mesh_resolved_url or self.base_url
 
             # ── Context Setup ────────────────────────────────────────────
-            await self._handle_role_based_identity_swap(requested_model=pre_mapped_model)
+            await self._handle_role_based_identity_swap(
+                requested_model=pre_mapped_model
+            )
             if self.assistant_id != _original_assistant_id:
                 await self._ensure_config_loaded()
 
@@ -285,7 +293,9 @@ class VLLMDefaultBaseWorker(
         if running_loop is None:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            agen = self.stream(thread_id, message_id, run_id, assistant_id, model, **kwargs)
+            agen = self.stream(
+                thread_id, message_id, run_id, assistant_id, model, **kwargs
+            )
             try:
                 while True:
                     try:
@@ -312,7 +322,9 @@ class VLLMDefaultBaseWorker(
             queue_ref.append(q)
 
             async def _drain() -> None:
-                agen = self.stream(thread_id, message_id, run_id, assistant_id, model, **kwargs)
+                agen = self.stream(
+                    thread_id, message_id, run_id, assistant_id, model, **kwargs
+                )
                 try:
                     async for item in agen:
                         if stop_flag.is_set():

@@ -15,7 +15,9 @@ def main():
 
     # Verify input data exists
     if os.path.exists(args.data):
-        print(f"✅ [SIMULATOR] Staged data found. Size: {os.path.getsize(args.data)} bytes")
+        print(
+            f"✅ [SIMULATOR] Staged data found. Size: {os.path.getsize(args.data)} bytes"
+        )
     else:
         print(f"❌ [SIMULATOR] Error: Staged data not found at {args.data}")
         exit(1)
@@ -23,7 +25,9 @@ def main():
     # Simulate Training progress
     for i in range(1, 6):
         progress = i * 20
-        print(f"⏳ [SIMULATOR] Training Epoch {i}/5... {progress}% complete (Loss: {0.5 / i:.4f})")
+        print(
+            f"⏳ [SIMULATOR] Training Epoch {i}/5... {progress}% complete (Loss: {0.5 / i:.4f})"
+        )
         time.sleep(2)
 
     # Simulate saving weights

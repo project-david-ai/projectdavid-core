@@ -1,8 +1,9 @@
 import os
 
 from entities_api.clients.unified_async_client import get_cached_client
-from entities_api.orchestration.workers.base_workers.hermes_type_default_base import \
-    HermesDefaultBaseWorker
+from entities_api.orchestration.workers.base_workers.hermes_type_default_base import (
+    HermesDefaultBaseWorker,
+)
 
 
 class TogetherHermesDefaultWorker(HermesDefaultBaseWorker):

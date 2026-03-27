@@ -31,7 +31,9 @@ except ImportError:
 # (Note: Change 'DATABASE_URL' if your database.py expects a different name like 'DB_URL')
 db_var_names = ["DATABASE_URL", "DB_URL", "SQLALCHEMY_DATABASE_URI"]
 if not any(os.environ.get(var) for var in db_var_names):
-    print("⚠️ No Database URL found in environment. Injecting dummy SQLite URL to prevent crash.")
+    print(
+        "⚠️ No Database URL found in environment. Injecting dummy SQLite URL to prevent crash."
+    )
     for var in db_var_names:
         os.environ[var] = "sqlite:///:memory:"
 # =================================================================

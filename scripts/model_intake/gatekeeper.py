@@ -139,7 +139,9 @@ def verify_model(model_info):
 
     payload = {
         "model": model_info["id"],
-        "messages": [{"role": "user", "content": "What is the flight time from NYC to LON?"}],
+        "messages": [
+            {"role": "user", "content": "What is the flight time from NYC to LON?"}
+        ],
         "tools": [TEST_TOOL],
         "tool_choice": "auto",
         "max_tokens": 300,
@@ -147,7 +149,9 @@ def verify_model(model_info):
     }
 
     start_t = time.time()
-    response_data, error = raw_request(config["chat_url"], "POST", config["api_key"], payload)
+    response_data, error = raw_request(
+        config["chat_url"], "POST", config["api_key"], payload
+    )
     latency = round(time.time() - start_t, 2)
 
     result = {
@@ -208,7 +212,9 @@ def generate_files(results):
     with open(REPORT_FILE, "w", encoding="utf-8") as f:
         f.write(f"# Model Health Report\n**Generated:** {datetime.now()}\n\n")
         f.write(f"**Total:** {len(results)} | **Alive:** {len(alive)}\n\n")
-        f.write("| Provider | Model | Proto | Latency | Status |\n|---|---|---|---|---|\n")
+        f.write(
+            "| Provider | Model | Proto | Latency | Status |\n|---|---|---|---|---|\n"
+        )
         for r in sorted(results, key=lambda x: (x["provider"], x["status"])):
             icon = "🟢" if r["status"] == "alive" else "🔴"
             f.write(
@@ -247,7 +253,9 @@ def inject_python(valid_models):
 
     # Filter sets
     hyp_str = build_dict_str([m for m in valid_models if m["provider"] == "hyperbolic"])
-    tog_str = build_dict_str([m for m in valid_models if m["provider"] == "together-ai"])
+    tog_str = build_dict_str(
+        [m for m in valid_models if m["provider"] == "together-ai"]
+    )
 
     # Added encoding="utf-8" for safe reading
     with open(TARGET_FILE, "r", encoding="utf-8") as f:
@@ -284,7 +292,9 @@ def main():
     candidates.extend(fetch_model_list("hyperbolic"))
     candidates.extend(fetch_model_list("together-ai"))
 
-    print(f"📋 Verification started for {len(candidates)} models (Threads={CONCURRENCY})...")
+    print(
+        f"📋 Verification started for {len(candidates)} models (Threads={CONCURRENCY})..."
+    )
 
     # 2. Threaded Verification
     results = []

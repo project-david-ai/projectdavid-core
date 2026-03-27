@@ -14,19 +14,19 @@ from typing import Any, AsyncGenerator, Dict, Generator, List, Optional, Union
 from dotenv import load_dotenv
 from entities_api.cache.assistant_cache import AssistantCache
 from entities_api.clients.delta_normalizer import DeltaNormalizer
-from entities_api.platform_tools.delegated_model_map.delegation_model_map import \
-    get_delegated_model
+from entities_api.platform_tools.delegated_model_map.delegation_model_map import (
+    get_delegated_model,
+)
 from projectdavid import StreamEvent
 from projectdavid_common.utilities.logging_service import LoggingUtility
 from projectdavid_common.validation import StatusEnum
 
 # --- DEPENDENCIES ---
 from src.api.entities_api.dependencies import get_redis, get_redis_sync
-from src.api.entities_api.orchestration.engine.orchestrator_core import \
-    OrchestratorCore
+from src.api.entities_api.orchestration.engine.orchestrator_core import OrchestratorCore
+
 # --- MIXINS ---
-from src.api.entities_api.orchestration.mixins.provider_mixins import \
-    _ProviderMixins
+from src.api.entities_api.orchestration.mixins.provider_mixins import _ProviderMixins
 
 load_dotenv()
 LOG = LoggingUtility()
@@ -85,7 +85,9 @@ class HermesDefaultBaseWorker(
         self._assistant_cache: AssistantCache | None = None
         if assistant_cache_service:
             self._assistant_cache = assistant_cache_service
-        elif "assistant_cache" in extra and isinstance(extra["assistant_cache"], AssistantCache):
+        elif "assistant_cache" in extra and isinstance(
+            extra["assistant_cache"], AssistantCache
+        ):
             self._assistant_cache = extra["assistant_cache"]
 
         # 4. Setup Config
@@ -101,7 +103,9 @@ class HermesDefaultBaseWorker(
         self.base_url = base_url or os.getenv("BASE_URL")
         self.api_key = api_key or extra.get("api_key")
 
-        self.model_name = extra.get("model_name", "deepcogito/cogito-v2-preview-llama-405B")
+        self.model_name = extra.get(
+            "model_name", "deepcogito/cogito-v2-preview-llama-405B"
+        )
         self.max_context_window = extra.get("max_context_window", 128000)
         self.threshold_percentage = extra.get("threshold_percentage", 0.8)
 
@@ -172,7 +176,9 @@ class HermesDefaultBaseWorker(
         pre_mapped_model = model
         try:
             # 2. Model Mapping
-            if hasattr(self, "_get_model_map") and (mapped := self._get_model_map(model)):
+            if hasattr(self, "_get_model_map") and (
+                mapped := self._get_model_map(model)
+            ):
                 model = mapped
 
             self.assistant_id = assistant_id
@@ -200,7 +206,9 @@ class HermesDefaultBaseWorker(
             )
             research_worker_setting = str(
                 is_worker_val
-            ).lower() == "true" or self.assistant_config.get("is_research_worker", False)
+            ).lower() == "true" or self.assistant_config.get(
+                "is_research_worker", False
+            )
 
             # Check for "junior_engineer"
             is_junior_val = raw_meta.get(
@@ -231,7 +239,8 @@ class HermesDefaultBaseWorker(
                 # --------------------------------------------------------
                 delegation_model = get_delegated_model(requested_model=pre_mapped_model)
                 await self._native_exec.update_run_fields(
-                    run_id, meta_data={"api_key": api_key, "delegated_model": delegation_model}
+                    run_id,
+                    meta_data={"api_key": api_key, "delegated_model": delegation_model},
                 )
 
             elif research_worker_setting:
@@ -299,7 +308,9 @@ class HermesDefaultBaseWorker(
             # ------------------------------------------------------------------
             # 5. IDENTITY SWAP & RELOAD (Supervisor roles only)
             # ------------------------------------------------------------------
-            await self._handle_role_based_identity_swap(requested_model=pre_mapped_model)
+            await self._handle_role_based_identity_swap(
+                requested_model=pre_mapped_model
+            )
 
             # --- CRITICAL FIX: Reload config if identity was swapped! ---
             if self.assistant_id != _original_assistant_id:
@@ -314,7 +325,9 @@ class HermesDefaultBaseWorker(
             if not self._scratch_pad_thread:
                 self._scratch_pad_thread = thread_id
 
-            LOG.info("STREAM ▸ Scratchpad thread pinned to: %s", self._scratch_pad_thread)
+            LOG.info(
+                "STREAM ▸ Scratchpad thread pinned to: %s", self._scratch_pad_thread
+            )
 
             # 3. Context Setup
             ctx = await self._set_up_context_window(
@@ -382,13 +395,19 @@ class HermesDefaultBaseWorker(
                 try:
                     self._decision_payload = json.loads(decision_buffer.strip())
                 except Exception:
-                    LOG.warning(f"Failed to parse decision buffer: {decision_buffer[:50]}...")
+                    LOG.warning(
+                        f"Failed to parse decision buffer: {decision_buffer[:50]}..."
+                    )
 
-            yield json.dumps({"type": "status", "status": "processing", "run_id": run_id})
+            yield json.dumps(
+                {"type": "status", "status": "processing", "run_id": run_id}
+            )
 
             # 6. Parse Tools & Sync IDs
             # The parser ensures every tool in the list has a 'id' key.
-            tool_calls_batch = self.parse_and_set_function_calls(accumulated, assistant_reply)
+            tool_calls_batch = self.parse_and_set_function_calls(
+                accumulated, assistant_reply
+            )
 
             message_to_save = assistant_reply
             final_status = StatusEnum.completed.value
@@ -421,7 +440,9 @@ class HermesDefaultBaseWorker(
                 # CRITICAL: We overwrite message_to_save with the standard tool structure
                 message_to_save = json.dumps(tool_calls_structure)
 
-                LOG.info(f"\n🚀[L3 AGENT MANIFEST] Turn 1 Batch of {len(tool_calls_structure)}")
+                LOG.info(
+                    f"\n🚀[L3 AGENT MANIFEST] Turn 1 Batch of {len(tool_calls_structure)}"
+                )
 
             # Persistence: Assistant Plan/Actions saved to Thread
             if message_to_save:
@@ -433,7 +454,9 @@ class HermesDefaultBaseWorker(
             await self._native_exec.update_run_status(run_id, final_status)
 
             if not tool_calls_batch:
-                yield json.dumps({"type": "status", "status": "complete", "run_id": run_id})
+                yield json.dumps(
+                    {"type": "status", "status": "complete", "run_id": run_id}
+                )
 
         except Exception as exc:
             LOG.error(f"DEBUG: Stream Exception: {exc}")
@@ -493,7 +516,9 @@ class HermesDefaultBaseWorker(
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                agen = self.stream(thread_id, message_id, run_id, assistant_id, model, **kwargs)
+                agen = self.stream(
+                    thread_id, message_id, run_id, assistant_id, model, **kwargs
+                )
                 while True:
                     try:
                         yield loop.run_until_complete(agen.__anext__())
@@ -522,7 +547,9 @@ class HermesDefaultBaseWorker(
             queue_ref.append(q)
 
             async def _drain() -> None:
-                agen = self.stream(thread_id, message_id, run_id, assistant_id, model, **kwargs)
+                agen = self.stream(
+                    thread_id, message_id, run_id, assistant_id, model, **kwargs
+                )
                 try:
                     async for item in agen:
                         q.put(item)

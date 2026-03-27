@@ -45,7 +45,9 @@ HYPERBOLIC_API_KEY = os.getenv("HYPERBOLIC_API_KEY")
 # ------------------------------------------------------------------
 def get_flight_times(tool_name: str, arguments: dict) -> str:
     """Fake flight-time lookup."""
-    print(f"\n{YELLOW}[LOCAL EXEC] Tool invoked: {tool_name} | Args: {arguments}{RESET}")
+    print(
+        f"\n{YELLOW}[LOCAL EXEC] Tool invoked: {tool_name} | Args: {arguments}{RESET}"
+    )
 
     return json.dumps(
         {
@@ -175,13 +177,17 @@ if tool_detected and tool_args_buffer:
                 elif c_type == "status":
                     row_color = GREY
 
-                print(f"{row_color}{c_type:<20} | {json.dumps(chunk, default=str)}{RESET}")
+                print(
+                    f"{row_color}{c_type:<20} | {json.dumps(chunk, default=str)}{RESET}"
+                )
 
         else:
             print(f"{RED}[!] Tool execution failed.{RESET}")
 
     except json.JSONDecodeError:
-        print(f"{RED}[!] Failed to parse captured JSON arguments: {tool_args_buffer}{RESET}")
+        print(
+            f"{RED}[!] Failed to parse captured JSON arguments: {tool_args_buffer}{RESET}"
+        )
     except Exception as e:
         print(f"{RED}[!] Error during fast-path execution: {e}{RESET}")
 

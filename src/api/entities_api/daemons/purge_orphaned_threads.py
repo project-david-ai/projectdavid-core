@@ -107,7 +107,9 @@ DRY_RUN: bool = os.getenv("DRY_RUN", "false").lower() == "true"
 
 
 def _cutoff_epoch(retention_days: int) -> int:
-    return int((datetime.now(tz=timezone.utc) - timedelta(days=retention_days)).timestamp())
+    return int(
+        (datetime.now(tz=timezone.utc) - timedelta(days=retention_days)).timestamp()
+    )
 
 
 def _batch_delete(session, batch_ids: list[str], label: str) -> tuple[int, int]:
@@ -124,13 +126,15 @@ def _batch_delete(session, batch_ids: list[str], label: str) -> tuple[int, int]:
     if label == "orphaned":
         # Message.thread_id has no FK cascade — must delete manually.
         msg_result = session.execute(
-            text(f"DELETE FROM messages WHERE thread_id IN ({in_clause})"),
+            text(
+                f"DELETE FROM messages WHERE thread_id IN ({in_clause})"  # nosec B608
+            ),  # nosec B608
             id_params,
         )
         msg_count = msg_result.rowcount
 
     thr_result = session.execute(
-        text(f"DELETE FROM threads WHERE id IN ({in_clause})"),
+        text(f"DELETE FROM threads WHERE id IN ({in_clause})"),  # nosec B608
         id_params,
     )
     # thread_participants cascades automatically on thread deletion.
@@ -176,7 +180,9 @@ def purge_orphaned_threads(session) -> tuple[int, int]:
         return 0, 0
 
     if DRY_RUN:
-        log.info("[orphaned][DRY_RUN] Would delete %d thread(s) and their messages.", total)
+        log.info(
+            "[orphaned][DRY_RUN] Would delete %d thread(s) and their messages.", total
+        )
         return total, 0
 
     threads_deleted = messages_deleted = 0
@@ -310,7 +316,7 @@ def purge_abandoned_threads(session) -> int:
 
         try:
             result = session.execute(
-                text(f"DELETE FROM threads WHERE id IN ({in_clause})"),
+                text(f"DELETE FROM threads WHERE id IN ({in_clause})"),  # nosec B608
                 id_params,
             )
             # thread_participants cascade automatically — no manual step needed.
@@ -395,7 +401,9 @@ def run_daemon() -> None:
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Orphaned + abandoned thread cleanup daemon")
+    parser = argparse.ArgumentParser(
+        description="Orphaned + abandoned thread cleanup daemon"
+    )
     parser.add_argument(
         "--once",
         action="store_true",

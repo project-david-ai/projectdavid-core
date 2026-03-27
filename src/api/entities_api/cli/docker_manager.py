@@ -10,7 +10,7 @@ import re
 import secrets
 import shutil
 import socket
-import subprocess
+import subprocess  # nosec B404
 import sys
 import time
 from pathlib import Path
@@ -59,7 +59,9 @@ DEFAULT_DB_CONTAINER_PORT = "3306"
 DEFAULT_DB_HOST_PORT = "3307"  # Port mapped to Windows host
 DEFAULT_DB_SERVICE_NAME = "db"
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 log = logging.getLogger(__name__)
 
 app = typer.Typer(
@@ -185,7 +187,12 @@ class DockerManager:
             "VLLM_BASE_URL",
             "OLLAMA_BASE_URL",
         ],
-        "AI Model Configuration": ["HF_TOKEN", "HF_CACHE_PATH", "VLLM_MODEL", "TRAINING_PROFILE"],
+        "AI Model Configuration": [
+            "HF_TOKEN",
+            "HF_CACHE_PATH",
+            "VLLM_MODEL",
+            "TRAINING_PROFILE",
+        ],
         "Database Configuration": [
             "DATABASE_URL",
             "SPECIAL_DB_URL",
@@ -220,7 +227,11 @@ class DockerManager:
             "SHARED_PATH",
             "AUTO_MIGRATE",
         ],
-        "Admin Configuration": ["ADMIN_USER_EMAIL", "ADMIN_USER_ID", "ADMIN_KEY_PREFIX"],
+        "Admin Configuration": [
+            "ADMIN_USER_EMAIL",
+            "ADMIN_USER_ID",
+            "ADMIN_KEY_PREFIX",
+        ],
         "SMB Client Configuration": [
             "SMBCLIENT_SERVER",
             "SMBCLIENT_SHARE",
@@ -309,8 +320,12 @@ class DockerManager:
                         {
                             "base_model": row[0],
                             # Map relative DB path to internal vLLM mount path
-                            "adapter_path": f"/mnt/training_data/{row[1]}" if row[1] else None,
-                            "ftm_id": row[2],  # Used as the name in --lora-modules name=path
+                            "adapter_path": (
+                                f"/mnt/training_data/{row[1]}" if row[1] else None
+                            ),
+                            "ftm_id": row[
+                                2
+                            ],  # Used as the name in --lora-modules name=path
                         }
                     )
 
@@ -375,7 +390,13 @@ class DockerManager:
         return flags
 
     def _run_command(
-        self, cmd_list, check=True, capture_output=False, text=True, suppress_logs=False, **kwargs
+        self,
+        cmd_list,
+        check=True,
+        capture_output=False,
+        text=True,
+        suppress_logs=False,
+        **kwargs,
     ):
         if not suppress_logs:
             self.log.info("Running command: %s", " ".join(cmd_list))
@@ -385,12 +406,14 @@ class DockerManager:
                 check=check,
                 capture_output=capture_output,
                 text=text,
-                shell=self.is_windows,
+                shell=self.is_windows,  # nosec B602
                 **kwargs,
             )
             return result
         except subprocess.CalledProcessError as e:
-            self.log.error("Command failed: %s\nReturn Code: %s", " ".join(cmd_list), e.returncode)
+            self.log.error(
+                "Command failed: %s\nReturn Code: %s", " ".join(cmd_list), e.returncode
+            )
             if check:
                 raise
             return e
@@ -445,11 +468,16 @@ class DockerManager:
         if not sys.stdin.isatty():
             self.log.warning("Non-interactive environment detected. Prompting skipped.")
             return
-        typer.echo("\n" + "=" * 60 + "\n  Optional: User-Supplied Configuration\n" + "=" * 60)
+        typer.echo(
+            "\n" + "=" * 60 + "\n  Optional: User-Supplied Configuration\n" + "=" * 60
+        )
         for key, (label, help_text, hide) in self._USER_REQUIRED.items():
             typer.echo(f"  {help_text}\n")
             value = typer.prompt(
-                f"  {label} (press Enter to skip)", default="", show_default=False, hide_input=hide
+                f"  {label} (press Enter to skip)",
+                default="",
+                show_default=False,
+                hide_input=hide,
             )
             if value.strip():
                 env_values[key] = value.strip()
@@ -521,7 +549,9 @@ class DockerManager:
         for key in sorted(set(env_values.keys()) - processed_keys):
             val = str(env_values[key]).replace("\\", "\\\\").replace('"', '\\"')
             env_lines.append(
-                f'{key}="{val}"' if any(c in val for c in [" ", "#", "="]) else f"{key}={val}"
+                f'{key}="{val}"'
+                if any(c in val for c in [" ", "#", "="])
+                else f"{key}={val}"
             )
 
         Path(self._ENV_FILE).write_text("\n".join(env_lines), encoding="utf-8")
@@ -552,7 +582,8 @@ class DockerManager:
             val = os.environ.get(key, "")
             if val in self._INSECURE_VALUES:
                 self.log.error(
-                    "Insecure or missing value for '%s'. Delete .env and re-run to regenerate.", key
+                    "Insecure or missing value for '%s'. Delete .env and re-run to regenerate.",
+                    key,
                 )
                 failed = True
         if failed:
@@ -566,7 +597,14 @@ class DockerManager:
             return False
         try:
             result = self._run_command(
-                ["docker", "ps", "--filter", f"name=^{container_name}$", "--format", "{{.Names}}"],
+                [
+                    "docker",
+                    "ps",
+                    "--filter",
+                    f"name=^{container_name}$",
+                    "--format",
+                    "{{.Names}}",
+                ],
                 capture_output=True,
                 check=False,
                 suppress_logs=True,
@@ -583,7 +621,9 @@ class DockerManager:
             cmd = shutil.which("nvidia-smi")
         if cmd:
             try:
-                self._run_command([cmd], check=True, capture_output=True, suppress_logs=True)
+                self._run_command(
+                    [cmd], check=True, capture_output=True, suppress_logs=True
+                )
                 return True
             except (subprocess.CalledProcessError, FileNotFoundError):
                 pass
@@ -594,7 +634,9 @@ class DockerManager:
             return False
         container_name = self._OLLAMA_CONTAINER
         if self._is_container_running(container_name):
-            self.log.info("External Ollama container '%s' is already running.", container_name)
+            self.log.info(
+                "External Ollama container '%s' is already running.", container_name
+            )
             return True
         if not self._is_image_present(self._OLLAMA_IMAGE):
             self.log.info("Pulling Ollama image '%s'...", self._OLLAMA_IMAGE)
@@ -638,7 +680,9 @@ class DockerManager:
             return True
         self.log.info("--- External Ollama Setup ---")
         if os.path.exists("/.dockerenv") or "DOCKER_HOST" in os.environ:
-            self.log.warning("Running inside Docker; skipping external Ollama management.")
+            self.log.warning(
+                "Running inside Docker; skipping external Ollama management."
+            )
             return True
         if platform.system() == "Darwin" and use_gpu:
             self.log.warning(
@@ -668,7 +712,14 @@ class DockerManager:
                 )
 
             config_res = self._run_command(
-                ["docker", "compose", *self._get_compose_flags(), "config", "--format", "json"],
+                [
+                    "docker",
+                    "compose",
+                    *self._get_compose_flags(),
+                    "config",
+                    "--format",
+                    "json",
+                ],
                 capture_output=True,
                 check=True,
                 suppress_logs=True,
@@ -678,7 +729,9 @@ class DockerManager:
                 image_name = cfg.get("image")
                 if not image_name:
                     continue
-                self.log.info("--- History for image '%s' (service: %s) ---", image_name, svc)
+                self.log.info(
+                    "--- History for image '%s' (service: %s) ---", image_name, svc
+                )
                 history_res = self._run_command(
                     [
                         "docker",
@@ -749,7 +802,9 @@ class DockerManager:
                 if input("Remove volumes? (yes/no): ").lower().strip() == "yes":
                     down_cmd.append("--volumes")
             except EOFError:
-                self.log.error("Volume deletion confirmation requires interactive input. Aborting.")
+                self.log.error(
+                    "Volume deletion confirmation requires interactive input. Aborting."
+                )
                 raise SystemExit(1)
 
         if self.args.services:
@@ -761,7 +816,14 @@ class DockerManager:
             return
         try:
             config_res = self._run_command(
-                ["docker", "compose", *self._get_compose_flags(), "config", "--format", "json"],
+                [
+                    "docker",
+                    "compose",
+                    *self._get_compose_flags(),
+                    "config",
+                    "--format",
+                    "json",
+                ],
                 capture_output=True,
                 check=True,
                 suppress_logs=True,
@@ -777,7 +839,9 @@ class DockerManager:
                 new_tag = f"{base_image}:{tag}"
                 self.log.info("Tagging: %s  ->  %s", image_name, new_tag)
                 self._run_command(
-                    ["docker", "tag", image_name, new_tag], check=True, suppress_logs=True
+                    ["docker", "tag", image_name, new_tag],
+                    check=True,
+                    suppress_logs=True,
                 )
         except Exception as e:
             self.log.error("Error during image tagging: %s", e)
@@ -793,9 +857,13 @@ class DockerManager:
         try:
             self._run_command(build_cmd, check=True)
             if self.args.tag:
-                self._tag_images(self.args.tag, targeted_services=self.args.services or None)
+                self._tag_images(
+                    self.args.tag, targeted_services=self.args.services or None
+                )
         except subprocess.CalledProcessError as e:
-            self.log.critical("Docker build failed (code %s). Check logs above.", e.returncode)
+            self.log.critical(
+                "Docker build failed (code %s). Check logs above.", e.returncode
+            )
             raise SystemExit(1)
 
     def _handle_logs(self):
@@ -825,11 +893,15 @@ class DockerManager:
         excluded = set(self.args.exclude or [])
 
         # 1. Resolve targeted services
-        profile_services = {name for name, cfg in all_services.items() if cfg.get("profiles")}
+        profile_services = {
+            name for name, cfg in all_services.items() if cfg.get("profiles")
+        }
         if "nginx" in profile_services:
             profile_services.remove("nginx")
 
-        default_services = [name for name in all_services.keys() if name not in profile_services]
+        default_services = [
+            name for name in all_services.keys() if name not in profile_services
+        ]
 
         if requested:
             final_services = requested - excluded
@@ -851,19 +923,23 @@ class DockerManager:
 
             if deployments:
                 # Use the backbone assigned in the ledger
-                base_model = deployments[0]['base_model']
+                base_model = deployments[0]["base_model"]
                 self.log.info(
-                    "🌐 MESH RESOLVED: Node '%s' -> Backbone: %s", self.node_id, base_model
+                    "🌐 MESH RESOLVED: Node '%s' -> Backbone: %s",
+                    self.node_id,
+                    base_model,
                 )
                 os.environ["VLLM_MODEL"] = base_model
 
                 lora_bundles = []
                 for dep in deployments:
-                    if dep.get('ftm_id') and dep.get('adapter_path'):
+                    if dep.get("ftm_id") and dep.get("adapter_path"):
                         lora_bundles.append(f"{dep['ftm_id']}={dep['adapter_path']}")
 
                 if lora_bundles:
-                    self.log.info("🧠 MESH: Mounting %d LoRA adapters.", len(lora_bundles))
+                    self.log.info(
+                        "🧠 MESH: Mounting %d LoRA adapters.", len(lora_bundles)
+                    )
                     modules_string = " ".join(lora_bundles)
                     os.environ["VLLM_EXTRA_FLAGS"] = (
                         f"--enable-lora --lora-modules {modules_string}"
@@ -895,7 +971,9 @@ class DockerManager:
         # 2. Determine Profiles to Activate
         active_profiles: Set[str] = set()
         service_to_profiles: Dict[str, List[str]] = {
-            name: cfg.get("profiles") for name, cfg in all_services.items() if cfg.get("profiles")
+            name: cfg.get("profiles")
+            for name, cfg in all_services.items()
+            if cfg.get("profiles")
         }
         for svc in final_services_list:
             if svc in service_to_profiles:
@@ -906,7 +984,13 @@ class DockerManager:
             profile_flags.extend(["--profile", profile])
 
         # 3. Final Command Assembly
-        base_compose_cmd = ["docker", "compose", *self._get_compose_flags(), *profile_flags, "up"]
+        base_compose_cmd = [
+            "docker",
+            "compose",
+            *self._get_compose_flags(),
+            *profile_flags,
+            "up",
+        ]
         if not self.args.attached:
             base_compose_cmd.append("-d")
         if self.args.force_recreate:
@@ -1068,8 +1152,7 @@ def docker_manager(
     )
 
     try:
-        from entities_api.cli.generate_docker_compose import \
-            generate_dev_docker_compose
+        from entities_api.cli.generate_docker_compose import generate_dev_docker_compose
 
         generate_dev_docker_compose()
         time.sleep(0.5)
@@ -1102,7 +1185,9 @@ def configure(
     if set_var:
         for item in set_var:
             if "=" not in item:
-                typer.echo(f"[error] Invalid format '{item}'. Expected KEY=VALUE.", err=True)
+                typer.echo(
+                    f"[error] Invalid format '{item}'. Expected KEY=VALUE.", err=True
+                )
                 raise SystemExit(1)
             key, _, value = item.partition("=")
             updates[key.strip()] = value.strip()

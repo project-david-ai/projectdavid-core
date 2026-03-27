@@ -13,8 +13,7 @@ from projectdavid_common import UtilsInterface, ValidationInterface
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
-from src.api.entities_api.models.models import (Assistant, VectorStore,
-                                                VectorStoreFile)
+from src.api.entities_api.models.models import Assistant, VectorStore, VectorStoreFile
 
 StatusEnum = ValidationInterface.StatusEnum
 logging_utility = UtilsInterface.LoggingUtility()
@@ -78,7 +77,9 @@ class VectorStoreDBService:
             return ValidationInterface.VectorStoreRead.model_validate(new_store)
         except IntegrityError as e:
             self.db.rollback()
-            if "Duplicate entry" in str(e.orig) or "violates unique constraint" in str(e.orig):
+            if "Duplicate entry" in str(e.orig) or "violates unique constraint" in str(
+                e.orig
+            ):
                 raise DatabaseConflictError(f"Store ID '{shared_id}' exists.") from e
             else:
                 raise VectorStoreDBError(f"DB error creating store: {e}") from e
@@ -87,7 +88,9 @@ class VectorStoreDBService:
             logging_utility.error(
                 f"Unexpected error creating vector store or validating result: {e}"
             )
-            raise VectorStoreDBError(f"Unexpected error creating vector store: {e}") from e
+            raise VectorStoreDBError(
+                f"Unexpected error creating vector store: {e}"
+            ) from e
 
     def mark_vector_store_deleted(
         self, vector_store_id: str
@@ -132,7 +135,9 @@ class VectorStoreDBService:
     ) -> Optional[ValidationInterface.VectorStoreRead]:
         """Retrieves a vector store by its primary ID."""
         store = self.db.get(VectorStore, vector_store_id)
-        return ValidationInterface.VectorStoreRead.model_validate(store) if store else None
+        return (
+            ValidationInterface.VectorStoreRead.model_validate(store) if store else None
+        )
 
     def get_vector_store_by_collection_name(
         self, collection_name: str
@@ -143,16 +148,25 @@ class VectorStoreDBService:
             .filter(VectorStore.collection_name == collection_name)
             .first()
         )
-        return ValidationInterface.VectorStoreRead.model_validate(store) if store else None
+        return (
+            ValidationInterface.VectorStoreRead.model_validate(store) if store else None
+        )
 
-    def get_stores_by_user(self, user_id: str) -> List[ValidationInterface.VectorStoreRead]:
+    def get_stores_by_user(
+        self, user_id: str
+    ) -> List[ValidationInterface.VectorStoreRead]:
         """Retrieves all non-deleted vector stores owned by a specific user."""
         stores = (
             self.db.query(VectorStore)
-            .filter(VectorStore.user_id == user_id, VectorStore.status != StatusEnum.deleted)
+            .filter(
+                VectorStore.user_id == user_id, VectorStore.status != StatusEnum.deleted
+            )
             .all()
         )
-        return [ValidationInterface.VectorStoreRead.model_validate(store) for store in stores]
+        return [
+            ValidationInterface.VectorStoreRead.model_validate(store)
+            for store in stores
+        ]
 
     def create_vector_store_file(
         self,
@@ -193,8 +207,10 @@ class VectorStoreDBService:
             self.db.commit()
             self.db.refresh(db_file_record)
             try:
-                validated_model = ValidationInterface.VectorStoreFileRead.model_validate(
-                    db_file_record
+                validated_model = (
+                    ValidationInterface.VectorStoreFileRead.model_validate(
+                        db_file_record
+                    )
                 )
                 return validated_model
             except Exception as e:
@@ -205,7 +221,9 @@ class VectorStoreDBService:
                 raise validation_error
         except IntegrityError as e:
             self.db.rollback()
-            if "Duplicate entry" in str(e.orig) or "violates unique constraint" in str(e.orig):
+            if "Duplicate entry" in str(e.orig) or "violates unique constraint" in str(
+                e.orig
+            ):
                 raise DatabaseConflictError(f"File ID '{file_id}' exists.") from e
             else:
                 raise VectorStoreDBError(f"DB error creating file record: {e}") from e
@@ -216,9 +234,13 @@ class VectorStoreDBService:
                     f"Validation failed for created file record: {str(validation_error)}"
                 ) from validation_error
             else:
-                raise VectorStoreDBError(f"Unexpected error creating file record: {str(e)}") from e
+                raise VectorStoreDBError(
+                    f"Unexpected error creating file record: {str(e)}"
+                ) from e
 
-    def delete_vector_store_file_by_path(self, vector_store_id: str, file_path: str) -> bool:
+    def delete_vector_store_file_by_path(
+        self, vector_store_id: str, file_path: str
+    ) -> bool:
         """Deletes a VectorStoreFile record by path and decrements file count."""
         store = self.db.get(VectorStore, vector_store_id)
         if not store:
@@ -256,7 +278,9 @@ class VectorStoreDBService:
         validated_files = []
         for f in files:
             try:
-                validated_files.append(ValidationInterface.VectorStoreFileRead.model_validate(f))
+                validated_files.append(
+                    ValidationInterface.VectorStoreFileRead.model_validate(f)
+                )
             except Exception as e:
                 logging_utility.error(
                     f"Pydantic validation failed for file ID {f.id} during list: {e}"
@@ -285,11 +309,15 @@ class VectorStoreDBService:
             self.db.rollback()
             raise VectorStoreDBError(f"DB error updating file status: {e}") from e
 
-    def attach_vector_store_to_assistant(self, vector_store_id: str, assistant_id: str) -> bool:
+    def attach_vector_store_to_assistant(
+        self, vector_store_id: str, assistant_id: str
+    ) -> bool:
         """Attach a vector‑store to an assistant (idempotent)."""
         store: VectorStore | None = self.db.get(VectorStore, vector_store_id)
         if not store or store.status == StatusEnum.deleted:
-            raise VectorStoreNotFoundError(f"Store '{vector_store_id}' not found or deleted.")
+            raise VectorStoreNotFoundError(
+                f"Store '{vector_store_id}' not found or deleted."
+            )
         assistant: Assistant | None = self.db.get(Assistant, assistant_id)
         if not assistant:
             raise AssistantNotFoundError(f"Assistant '{assistant_id}' not found.")
@@ -305,7 +333,9 @@ class VectorStoreDBService:
                 f"DB error attaching store '{vector_store_id}' to assistant '{assistant_id}': {e}"
             ) from e
 
-    def detach_vector_store_from_assistant(self, vector_store_id: str, assistant_id: str) -> bool:
+    def detach_vector_store_from_assistant(
+        self, vector_store_id: str, assistant_id: str
+    ) -> bool:
         """Detach a vector‑store from an assistant (idempotent)."""
         assistant: Assistant | None = (
             self.db.query(Assistant)
@@ -315,7 +345,9 @@ class VectorStoreDBService:
         )
         if not assistant:
             raise AssistantNotFoundError(f"Assistant '{assistant_id}' not found.")
-        match = next((vs for vs in assistant.vector_stores if vs.id == vector_store_id), None)
+        match = next(
+            (vs for vs in assistant.vector_stores if vs.id == vector_store_id), None
+        )
         if not match:
             return True
         assistant.vector_stores.remove(match)
@@ -340,5 +372,7 @@ class VectorStoreDBService:
         )
         if not assistant:
             return []
-        active = [vs for vs in assistant.vector_stores if vs.status != StatusEnum.deleted]
+        active = [
+            vs for vs in assistant.vector_stores if vs.status != StatusEnum.deleted
+        ]
         return [ValidationInterface.VectorStoreRead.model_validate(vs) for vs in active]

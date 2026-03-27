@@ -31,7 +31,9 @@ class UniversalWebReader:
         self.converter.ignore_links = False
 
         # --- RICH MEDIA CONFIGURATION ---
-        self.converter.ignore_images = False  # ALLOW images (rendered as markdown links)
+        self.converter.ignore_images = (
+            False  # ALLOW images (rendered as markdown links)
+        )
         self.converter.images_to_alt = True  # Use alt text for accessibility
         self.converter.ignore_tables = False
         self.converter.body_width = 0
@@ -94,7 +96,9 @@ class UniversalWebReader:
     # --- INTERNAL HELPERS ---
 
     def _chunk_text(self, text: str) -> List[str]:
-        return [text[i : i + self.CHUNK_SIZE] for i in range(0, len(text), self.CHUNK_SIZE)]
+        return [
+            text[i : i + self.CHUNK_SIZE] for i in range(0, len(text), self.CHUNK_SIZE)
+        ]
 
     async def perform_serp_search(self, query: str) -> str:
         """

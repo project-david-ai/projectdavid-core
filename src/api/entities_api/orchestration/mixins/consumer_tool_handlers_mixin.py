@@ -97,7 +97,9 @@ class ConsumerToolHandlersMixin:
             # 2. Mark the specific Action as finished — only if we have one.
             if action_id:
                 # ── REPLACED: was self.project_david_client.actions.update_action(...)
-                await self._native_exec.update_action_status(action_id, final_status.value)
+                await self._native_exec.update_action_status(
+                    action_id, final_status.value
+                )
             else:
                 LOG.warning(
                     "submit_tool_output ▸ action is None for tool_call_id=%s — "
@@ -139,7 +141,9 @@ class ConsumerToolHandlersMixin:
         finally:
             if action_id:
                 # ── REPLACED: was self.project_david_client.actions.update_action(...)
-                await self._native_exec.update_action_status(action_id, StatusEnum.failed.value)
+                await self._native_exec.update_action_status(
+                    action_id, StatusEnum.failed.value
+                )
             else:
                 LOG.warning(
                     "_submit_fallback_error ▸ action is None for tool_call_id=%s — "
@@ -193,7 +197,9 @@ class ConsumerToolHandlersMixin:
 
         # 3. Pause the run state. SDK loop will resume by initiating a new turn.
         # ── REPLACED: was self.project_david_client.runs.update_run_status(...)
-        await self._native_exec.update_run_status(run_id, StatusEnum.pending_action.value)
+        await self._native_exec.update_run_status(
+            run_id, StatusEnum.pending_action.value
+        )
         return
 
     async def finalize_conversation(

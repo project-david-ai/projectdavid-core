@@ -130,13 +130,15 @@ class DeltaNormalizer:
         """
         state_int = _PY_STATE_TO_INT.get(state_str, _C.ST_CONTENT)
 
-        events_raw, new_buf, new_state_int, new_depth, new_het, new_xml = _C.process_buffer(
-            buffer,
-            state_int,
-            json_depth,
-            int(has_emitted_text),
-            xml_tool_buffer,
-            run_id,
+        events_raw, new_buf, new_state_int, new_depth, new_het, new_xml = (
+            _C.process_buffer(
+                buffer,
+                state_int,
+                json_depth,
+                int(has_emitted_text),
+                xml_tool_buffer,
+                run_id,
+            )
         )
 
         # Post-process events: resolve tool_call_raw_xml → tool_call
@@ -251,10 +253,18 @@ class DeltaNormalizer:
                     tool_data = pending_tool_calls[t_index]
                     if fn_name:
                         tool_data["function"]["name"] += fn_name
-                        yield {"type": "call_arguments", "content": fn_name, "run_id": run_id}
+                        yield {
+                            "type": "call_arguments",
+                            "content": fn_name,
+                            "run_id": run_id,
+                        }
                     if fn_args:
                         tool_data["function"]["arguments"] += fn_args
-                        yield {"type": "call_arguments", "content": fn_args, "run_id": run_id}
+                        yield {
+                            "type": "call_arguments",
+                            "content": fn_args,
+                            "run_id": run_id,
+                        }
 
             seg = seg or ""
 
@@ -300,10 +310,18 @@ class DeltaNormalizer:
                     yielded_something = False
 
                     if state == "content":
-                        if "<" not in buffer and "`" not in buffer and "{" not in buffer:
+                        if (
+                            "<" not in buffer
+                            and "`" not in buffer
+                            and "{" not in buffer
+                        ):
                             if buffer.strip():
                                 has_emitted_text = True
-                            yield {"type": "content", "content": buffer, "run_id": run_id}
+                            yield {
+                                "type": "content",
+                                "content": buffer,
+                                "run_id": run_id,
+                            }
                             buffer = ""
                             break
 
@@ -319,7 +337,11 @@ class DeltaNormalizer:
                         if not indices:
                             if buffer.strip():
                                 has_emitted_text = True
-                            yield {"type": "content", "content": buffer, "run_id": run_id}
+                            yield {
+                                "type": "content",
+                                "content": buffer,
+                                "run_id": run_id,
+                            }
                             buffer = ""
                             break
 
@@ -329,7 +351,11 @@ class DeltaNormalizer:
                             text_chunk = buffer[:cutoff]
                             if text_chunk.strip():
                                 has_emitted_text = True
-                            yield {"type": "content", "content": text_chunk, "run_id": run_id}
+                            yield {
+                                "type": "content",
+                                "content": text_chunk,
+                                "run_id": run_id,
+                            }
                             buffer = buffer[cutoff:]
 
                         all_tags = [
@@ -399,13 +425,21 @@ class DeltaNormalizer:
                             end_tag, type_name = cls.DEC_END, "decision"
 
                         if "<" not in buffer:
-                            yield {"type": type_name, "content": buffer, "run_id": run_id}
+                            yield {
+                                "type": type_name,
+                                "content": buffer,
+                                "run_id": run_id,
+                            }
                             buffer = ""
                             break
 
                         lt_idx = buffer.find("<")
                         if lt_idx > 0:
-                            yield {"type": type_name, "content": buffer[:lt_idx], "run_id": run_id}
+                            yield {
+                                "type": type_name,
+                                "content": buffer[:lt_idx],
+                                "run_id": run_id,
+                            }
                             buffer = buffer[lt_idx:]
 
                         if buffer.startswith(end_tag):
@@ -417,11 +451,20 @@ class DeltaNormalizer:
                         if end_tag.startswith(buffer):
                             break
 
-                        yield {"type": type_name, "content": buffer[0], "run_id": run_id}
+                        yield {
+                            "type": type_name,
+                            "content": buffer[0],
+                            "run_id": run_id,
+                        }
                         buffer = buffer[1:]
                         yielded_something = True
 
-                    elif state in ["fc", "tool_call_xml", "tool_code_xml", "md_json_block"]:
+                    elif state in [
+                        "fc",
+                        "tool_call_xml",
+                        "tool_code_xml",
+                        "md_json_block",
+                    ]:
                         end_tag = {
                             "fc": cls.FC_END,
                             "tool_call_xml": cls.TC_END,
@@ -463,7 +506,11 @@ class DeltaNormalizer:
 
                         if idx == -1:
                             xml_tool_buffer += buffer
-                            yield {"type": "call_arguments", "content": buffer, "run_id": run_id}
+                            yield {
+                                "type": "call_arguments",
+                                "content": buffer,
+                                "run_id": run_id,
+                            }
                             buffer = ""
                             break
                         elif idx > 0:
@@ -477,7 +524,11 @@ class DeltaNormalizer:
                             yielded_something = True
                         else:
                             xml_tool_buffer += buffer[0]
-                            yield {"type": "call_arguments", "content": buffer[0], "run_id": run_id}
+                            yield {
+                                "type": "call_arguments",
+                                "content": buffer[0],
+                                "run_id": run_id,
+                            }
                             buffer = buffer[1:]
                             yielded_something = True
 
@@ -496,7 +547,11 @@ class DeltaNormalizer:
                                 complete_json = True
                                 break
                         chunk = buffer[:chars_processed]
-                        yield {"type": "call_arguments", "content": chunk, "run_id": run_id}
+                        yield {
+                            "type": "call_arguments",
+                            "content": chunk,
+                            "run_id": run_id,
+                        }
                         buffer = buffer[chars_processed:]
                         if complete_json:
                             state = "content"
@@ -542,7 +597,11 @@ class DeltaNormalizer:
                             continue
                         if cls.KIMI_TC_END.startswith(buffer):
                             break
-                        yield {"type": "call_arguments", "content": buffer[0], "run_id": run_id}
+                        yield {
+                            "type": "call_arguments",
+                            "content": buffer[0],
+                            "run_id": run_id,
+                        }
                         buffer = buffer[1:]
                         yielded_something = True
 
@@ -585,7 +644,11 @@ class DeltaNormalizer:
                         check_tags = [cls.UNICODE_SEP, cls.UNICODE_CALL_END]
                         if any(tag.startswith(buffer) for tag in check_tags):
                             break
-                        yield {"type": "call_arguments", "content": buffer[0], "run_id": run_id}
+                        yield {
+                            "type": "call_arguments",
+                            "content": buffer[0],
+                            "run_id": run_id,
+                        }
                         buffer = buffer[1:]
                         yielded_something = True
 
@@ -597,7 +660,11 @@ class DeltaNormalizer:
                             continue
                         if cls.UNICODE_CALL_END.startswith(buffer):
                             break
-                        yield {"type": "call_arguments", "content": buffer[0], "run_id": run_id}
+                        yield {
+                            "type": "call_arguments",
+                            "content": buffer[0],
+                            "run_id": run_id,
+                        }
                         buffer = buffer[1:]
                         yielded_something = True
 
@@ -615,7 +682,11 @@ class DeltaNormalizer:
                         specials = [cls.CH_FINAL, cls.CH_COMMENTARY]
                         if any(tag.startswith(buffer) for tag in specials):
                             break
-                        yield {"type": "reasoning", "content": buffer[0], "run_id": run_id}
+                        yield {
+                            "type": "reasoning",
+                            "content": buffer[0],
+                            "run_id": run_id,
+                        }
                         buffer = buffer[1:]
                         yielded_something = True
 
@@ -635,16 +706,24 @@ class DeltaNormalizer:
                     elif state == "channel_tool_payload":
                         exit_tags = [cls.CALL_TAG, cls.CH_FINAL, cls.CH_ANALYSIS]
                         if any(buffer.startswith(t) for t in exit_tags):
-                            matched_t = next(t for t in exit_tags if buffer.startswith(t))
+                            matched_t = next(
+                                t for t in exit_tags if buffer.startswith(t)
+                            )
                             state = (
-                                "channel_reasoning" if matched_t == cls.CH_ANALYSIS else "content"
+                                "channel_reasoning"
+                                if matched_t == cls.CH_ANALYSIS
+                                else "content"
                             )
                             buffer = buffer[len(matched_t) :]
                             yielded_something = True
                             continue
                         if any(t.startswith(buffer) for t in exit_tags):
                             break
-                        yield {"type": "call_arguments", "content": buffer[0], "run_id": run_id}
+                        yield {
+                            "type": "call_arguments",
+                            "content": buffer[0],
+                            "run_id": run_id,
+                        }
                         buffer = buffer[1:]
                         yielded_something = True
 

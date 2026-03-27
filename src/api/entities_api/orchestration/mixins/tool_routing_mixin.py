@@ -74,7 +74,9 @@ class ToolRoutingMixin:
     def get_tool_response_state(self) -> bool:
         return self._tool_response
 
-    def set_function_call_state(self, value: Optional[Union[Dict, List[Dict]]] = None) -> None:
+    def set_function_call_state(
+        self, value: Optional[Union[Dict, List[Dict]]] = None
+    ) -> None:
         if value is None:
             self._function_calls = []
         elif isinstance(value, dict):
@@ -112,13 +114,16 @@ class ToolRoutingMixin:
     def parse_and_set_function_calls(
         self, accumulated_content: str, assistant_reply: str
     ) -> List[Dict]:
-        from src.api.entities_api.orchestration.mixins.json_utils_mixin import \
-            JsonUtilsMixin
+        from src.api.entities_api.orchestration.mixins.json_utils_mixin import (
+            JsonUtilsMixin,
+        )
 
         if not isinstance(self, JsonUtilsMixin):
             raise TypeError("ToolRoutingMixin must be mixed with JsonUtilsMixin")
 
-        body_to_scan = re.sub(r"<plan>.*?</plan>", "", accumulated_content, flags=re.DOTALL)
+        body_to_scan = re.sub(
+            r"<plan>.*?</plan>", "", accumulated_content, flags=re.DOTALL
+        )
 
         matches = self.FC_REGEX.finditer(body_to_scan)
         results = []
@@ -191,7 +196,9 @@ class ToolRoutingMixin:
 
             if not name and decision:
                 inferred_name = (
-                    decision.get("tool") or decision.get("function") or decision.get("name")
+                    decision.get("tool")
+                    or decision.get("function")
+                    or decision.get("name")
                 )
                 if inferred_name:
                     name = inferred_name
@@ -199,7 +206,9 @@ class ToolRoutingMixin:
                         args = fc
 
             if not name:
-                LOG.error("TOOL-ROUTER ▸ Failed to resolve tool name for item in batch.")
+                LOG.error(
+                    "TOOL-ROUTER ▸ Failed to resolve tool name for item in batch."
+                )
                 continue
 
             LOG.info(f"TOOL-ROUTER ▸ scratchpad thread id: {scratch_pad_thread}")

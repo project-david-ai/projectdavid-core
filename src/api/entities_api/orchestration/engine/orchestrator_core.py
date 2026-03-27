@@ -35,9 +35,11 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 from entities_api.cache.assistant_cache import AssistantCache
 from entities_api.dependencies import get_redis_sync
-from entities_api.platform_tools.delegated_model_map.delegation_model_map import \
-    get_delegated_model
+from entities_api.platform_tools.delegated_model_map.delegation_model_map import (
+    get_delegated_model,
+)
 from entities_api.utils.assistant_manager import AssistantManager
+
 # -------------------------------------------------------------------------
 # IMPORTS
 # -------------------------------------------------------------------------
@@ -46,27 +48,32 @@ from projectdavid_common import ToolValidator
 from projectdavid_common.utilities.logging_service import LoggingUtility
 
 from src.api.entities_api.constants.platform import PLATFORM_TOOLS
+
 # Mixins
-from src.api.entities_api.orchestration.mixins.assistant_cache_mixin import \
-    AssistantCacheMixin
-from src.api.entities_api.orchestration.mixins.code_interpreter_mixin import \
-    CodeInterpreterMixin
-from src.api.entities_api.orchestration.mixins.consumer_tool_handlers_mixin import \
-    ConsumerToolHandlersMixin
-from src.api.entities_api.orchestration.mixins.context_mixin import \
-    ContextMixin
-from src.api.entities_api.orchestration.mixins.json_utils_mixin import \
-    JsonUtilsMixin
-from src.api.entities_api.orchestration.mixins.platform_tool_handlers_mixin import \
-    PlatformToolHandlersMixin
-from src.api.entities_api.orchestration.mixins.service_registry_mixin import \
-    ServiceRegistryMixin
-from src.api.entities_api.orchestration.mixins.shell_execution_mixin import \
-    ShellExecutionMixin
-from src.api.entities_api.orchestration.mixins.streaming_mixin import \
-    StreamingMixin
-from src.api.entities_api.orchestration.mixins.tool_routing_mixin import \
-    ToolRoutingMixin
+from src.api.entities_api.orchestration.mixins.assistant_cache_mixin import (
+    AssistantCacheMixin,
+)
+from src.api.entities_api.orchestration.mixins.code_interpreter_mixin import (
+    CodeInterpreterMixin,
+)
+from src.api.entities_api.orchestration.mixins.consumer_tool_handlers_mixin import (
+    ConsumerToolHandlersMixin,
+)
+from src.api.entities_api.orchestration.mixins.context_mixin import ContextMixin
+from src.api.entities_api.orchestration.mixins.json_utils_mixin import JsonUtilsMixin
+from src.api.entities_api.orchestration.mixins.platform_tool_handlers_mixin import (
+    PlatformToolHandlersMixin,
+)
+from src.api.entities_api.orchestration.mixins.service_registry_mixin import (
+    ServiceRegistryMixin,
+)
+from src.api.entities_api.orchestration.mixins.shell_execution_mixin import (
+    ShellExecutionMixin,
+)
+from src.api.entities_api.orchestration.mixins.streaming_mixin import StreamingMixin
+from src.api.entities_api.orchestration.mixins.tool_routing_mixin import (
+    ToolRoutingMixin,
+)
 
 LOG = LoggingUtility()
 
@@ -124,7 +131,9 @@ class OrchestratorCore(
         #    a ready-made instance, bypassing all fallback paths.
         if assistant_cache_service:
             self._assistant_cache = assistant_cache_service
-        elif "assistant_cache" in extra and isinstance(extra["assistant_cache"], AssistantCache):
+        elif "assistant_cache" in extra and isinstance(
+            extra["assistant_cache"], AssistantCache
+        ):
             self._assistant_cache = extra["assistant_cache"]
         # If neither is provided, AssistantCacheMixin will resolve lazily
         # via ServiceRegistry or self.redis on first access.
@@ -192,7 +201,9 @@ class OrchestratorCore(
         Populates self.assistant_config from Redis if not already set.
         """
         if not self.assistant_config and self.assistant_id:
-            self.assistant_config = await self.assistant_cache.retrieve(self.assistant_id) or {}
+            self.assistant_config = (
+                await self.assistant_cache.retrieve(self.assistant_id) or {}
+            )
             LOG.debug(f"Loaded config for {self.assistant_id}")
 
     async def _handle_role_based_identity_swap(self, requested_model: Any) -> None:
@@ -233,10 +244,14 @@ class OrchestratorCore(
         # ==========================================
         if self.is_deep_research:
             LOG.critical("██████ [DEEP_RESEARCH_MODE_ACTIVE] ██████")
-            ephemeral_lead = await assistant_manager.create_ephemeral_research_supervisor(
+            ephemeral_lead = (
+                await assistant_manager.create_ephemeral_research_supervisor(
+                    user_id=user_id
+                )
+            )
+            self._worker_thread = await assistant_manager.create_ephemeral_thread(
                 user_id=user_id
             )
-            self._worker_thread = await assistant_manager.create_ephemeral_thread(user_id=user_id)
 
         # ==========================================
         # PATH B: ENGINEER SWAP
@@ -246,7 +261,9 @@ class OrchestratorCore(
             ephemeral_lead = await assistant_manager.create_ephemeral_senior_engineer(
                 user_id=user_id
             )
-            self._worker_thread = await assistant_manager.create_ephemeral_thread(user_id=user_id)
+            self._worker_thread = await assistant_manager.create_ephemeral_thread(
+                user_id=user_id
+            )
 
         # ==========================================
         # COMMON IDENTITY SWAP LOGIC
@@ -386,14 +403,20 @@ class OrchestratorCore(
                     f"AgentMode: {self.assistant_config.get('agent_mode')}"
                 )
             else:
-                LOG.warning(f"⚠️ Cache Miss for {self.assistant_id} — fetching from source")
-                fresh_config = await self._fetch_assistant_config_from_db(self.assistant_id)
+                LOG.warning(
+                    f"⚠️ Cache Miss for {self.assistant_id} — fetching from source"
+                )
+                fresh_config = await self._fetch_assistant_config_from_db(
+                    self.assistant_id
+                )
                 if fresh_config:
                     self.assistant_config = fresh_config
                     await self.assistant_cache.store(self.assistant_id, fresh_config)
                     LOG.info(f"✅ Config rehydrated from DB for {self.assistant_id}")
                 else:
-                    LOG.error(f"❌ FATAL: No config found anywhere for {self.assistant_id}")
+                    LOG.error(
+                        f"❌ FATAL: No config found anywhere for {self.assistant_id}"
+                    )
 
         except Exception as e:
             LOG.error(f"❌ Error loading assistant config: {e}")
@@ -497,7 +520,9 @@ class OrchestratorCore(
                         yield chunk
 
                 except Exception as stream_exc:
-                    LOG.error(f"ORCHESTRATOR ▸ Turn {turn_count} stream failed: {stream_exc}")
+                    LOG.error(
+                        f"ORCHESTRATOR ▸ Turn {turn_count} stream failed: {stream_exc}"
+                    )
 
                     try:
                         await self._native_exec.update_run_fields(
@@ -582,7 +607,9 @@ class OrchestratorCore(
                 # RECURSION DECISION
                 # ------------------------------------------------------------------
                 if has_sdk_user_tool:
-                    LOG.info("ORCHESTRATOR ▸ SDK tool detected. Handing control to SDK.")
+                    LOG.info(
+                        "ORCHESTRATOR ▸ SDK tool detected. Handing control to SDK."
+                    )
                     return
 
                 LOG.info(

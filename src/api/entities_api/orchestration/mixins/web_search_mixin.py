@@ -304,14 +304,18 @@ class WebSearchMixin:
 
         return 1
 
-    def _get_or_create_session(self, run_id: str, query: Optional[str] = None) -> Dict[str, Any]:
+    def _get_or_create_session(
+        self, run_id: str, query: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Get or initialize research session for this run safely."""
         session = self._research_sessions[run_id]
 
         if query and session["query_tier"] is None:
             session["query_tier"] = self._classify_query_tier(query)
             session["initial_query"] = query
-            LOG.info(f"[{run_id}] Query classified as Tier {session['query_tier']}: {query}")
+            LOG.info(
+                f"[{run_id}] Query classified as Tier {session['query_tier']}: {query}"
+            )
 
         return session
 
@@ -371,7 +375,9 @@ class WebSearchMixin:
     # SCROLL GUARD
     # ------------------------------------------------------------------
 
-    def _check_scroll_allowed(self, run_id: str, target_url: str, page_num: int) -> Optional[str]:
+    def _check_scroll_allowed(
+        self, run_id: str, target_url: str, page_num: int
+    ) -> Optional[str]:
         """
         Enforces two scroll safety rules. Returns a blocking error string
         if the scroll should be intercepted, or None if it is permitted.
@@ -450,7 +456,9 @@ class WebSearchMixin:
         if not content:
             return ""
 
-        page_match = re.search(r"Page\s+(\d+)\s*(?:of|/)\s*(\d+)", content, re.IGNORECASE)
+        page_match = re.search(
+            r"Page\s+(\d+)\s*(?:of|/)\s*(\d+)", content, re.IGNORECASE
+        )
         if not page_match:
             return content
 
@@ -593,7 +601,8 @@ class WebSearchMixin:
                     )
 
                     final_content = (
-                        self._inject_navigation_guidance(raw_content, target_url) + progress_note
+                        self._inject_navigation_guidance(raw_content, target_url)
+                        + progress_note
                     )
 
             # ----------------------------------------------------------------
@@ -604,7 +613,9 @@ class WebSearchMixin:
                 page_num = arguments_dict["page"]
 
                 # --- SCROLL GUARD ---
-                scroll_block_msg = self._check_scroll_allowed(run_id, target_url, page_num)
+                scroll_block_msg = self._check_scroll_allowed(
+                    run_id, target_url, page_num
+                )
                 if scroll_block_msg:
                     LOG.warning(
                         f"[{run_id}] scroll_web_page INTERCEPTED for '{target_url}' "
@@ -652,9 +663,7 @@ class WebSearchMixin:
 
                 if not self._is_tool_response_usable(raw_content):
                     is_soft_failure = True
-                    final_content = (
-                        f"Tool execution returned no scroll content for page {page_num}."
-                    )
+                    final_content = f"Tool execution returned no scroll content for page {page_num}."
                 else:
                     session["url_scroll_counts"][target_url] = attempted_scroll
                     scroll_count = session["url_scroll_counts"][target_url]
@@ -697,9 +706,7 @@ class WebSearchMixin:
 
                 if not self._is_tool_response_usable(raw_content):
                     is_soft_failure = True
-                    final_content = (
-                        f"Tool execution returned no search results for query '{query_val}'."
-                    )
+                    final_content = f"Tool execution returned no search results for query '{query_val}'."
                 else:
                     session = self._get_or_create_session(run_id)
                     session["urls_searched"].add(target_url)
@@ -739,7 +746,9 @@ class WebSearchMixin:
                 is_soft_failure = True
 
             if is_soft_failure:
-                yield _status(run_id, tool_name, "Encountered external error...", status="warning")
+                yield _status(
+                    run_id, tool_name, "Encountered external error...", status="warning"
+                )
                 final_content = self._format_web_tool_error(
                     tool_name, final_content, arguments_dict
                 )
@@ -782,9 +791,13 @@ class WebSearchMixin:
         except Exception as exc:
             # --- [7] HARD FAILURE ---
             LOG.error(f"[{run_id}] {tool_name} HARD FAILURE: {exc}")
-            yield _status(run_id, tool_name, f"Critical failure: {str(exc)}", status="error")
+            yield _status(
+                run_id, tool_name, f"Critical failure: {str(exc)}", status="error"
+            )
 
-            error_hint = self._format_web_tool_error(tool_name, str(exc), arguments_dict)
+            error_hint = self._format_web_tool_error(
+                tool_name, str(exc), arguments_dict
+            )
 
             try:
                 if action:

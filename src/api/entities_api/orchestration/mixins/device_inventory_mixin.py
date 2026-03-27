@@ -146,7 +146,9 @@ class NetworkInventoryMixin:
 
             elif tool_name == "get_device_info":
                 hostname = arguments_dict["hostname"]
-                yield _status(run_id, tool_name, f"Looking up device details for: '{hostname}'...")
+                yield _status(
+                    run_id, tool_name, f"Looking up device details for: '{hostname}'..."
+                )
                 res = await asyncio.to_thread(
                     self.project_david_client.engineer.get_device_info,
                     hostname=hostname,
@@ -159,20 +161,28 @@ class NetworkInventoryMixin:
             # --- [5] RESULT ANALYSIS & RESPONSE ---
             if res:
                 final_content = json.dumps(res, indent=2)
-                yield _status(run_id, tool_name, "Data retrieved successfully.", status="success")
+                yield _status(
+                    run_id, tool_name, "Data retrieved successfully.", status="success"
+                )
                 is_error = False
             else:
                 final_content = self._format_engineer_tool_error(
                     tool_name, "Empty result (not found)", arguments_dict
                 )
-                yield _status(run_id, tool_name, "Query yielded no results.", status="warning")
+                yield _status(
+                    run_id, tool_name, "Query yielded no results.", status="warning"
+                )
                 is_error = True
 
             # --- [6] UPDATE DB & SUBMIT OUTPUT ---
             await asyncio.to_thread(
                 self.project_david_client.actions.update_action,
                 action_id=action.id,
-                status=(StatusEnum.completed.value if not is_error else StatusEnum.failed.value),
+                status=(
+                    StatusEnum.completed.value
+                    if not is_error
+                    else StatusEnum.failed.value
+                ),
             )
             await self.submit_tool_output(
                 thread_id=thread_id,
@@ -193,8 +203,12 @@ class NetworkInventoryMixin:
         except Exception as exc:
             # --- [7] HARD FAILURE ---
             LOG.error(f"[{run_id}] {tool_name} HARD FAILURE: {exc}", exc_info=True)
-            yield _status(run_id, tool_name, f"Critical failure: {str(exc)}", status="error")
-            error_hint = self._format_engineer_tool_error(tool_name, str(exc), arguments_dict)
+            yield _status(
+                run_id, tool_name, f"Critical failure: {str(exc)}", status="error"
+            )
+            error_hint = self._format_engineer_tool_error(
+                tool_name, str(exc), arguments_dict
+            )
             await asyncio.to_thread(
                 self.project_david_client.actions.update_action,
                 action_id=action.id,

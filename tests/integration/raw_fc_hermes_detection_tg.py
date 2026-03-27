@@ -117,12 +117,16 @@ def parse_hermes_style(content: str):
                 pass
         except json.JSONDecodeError:
             # Fallback: Regex extraction for FunctionName { args }
-            func_match = re.match(r"^\s*([a-zA-Z0-9_]+)\s*(\{.*)", cleaned_json, re.DOTALL)
+            func_match = re.match(
+                r"^\s*([a-zA-Z0-9_]+)\s*(\{.*)", cleaned_json, re.DOTALL
+            )
             if func_match:
                 try:
                     name = func_match.group(1)
                     args = json.loads(func_match.group(2))
-                    tools_found.append({"type": "hermes_text", "name": name, "arguments": args})
+                    tools_found.append(
+                        {"type": "hermes_text", "name": name, "arguments": args}
+                    )
                 except Exception:
                     pass
 
@@ -208,7 +212,9 @@ def run_turn(messages):
                         if fn.get("name"):
                             tool_calls_buffer[idx]["function"]["name"] += fn["name"]
                         if fn.get("arguments"):
-                            tool_calls_buffer[idx]["function"]["arguments"] += fn["arguments"]
+                            tool_calls_buffer[idx]["function"]["arguments"] += fn[
+                                "arguments"
+                            ]
 
                     # Visual feedback for Native
                     sys.stdout.write("N")
@@ -294,7 +300,9 @@ if __name__ == "__main__":
 
     # A. Handle Native
     if protocol == "native":
-        print(f"[SYSTEM] Native Tool Calls Detected: {len(assistant_msg['tool_calls'])}")
+        print(
+            f"[SYSTEM] Native Tool Calls Detected: {len(assistant_msg['tool_calls'])}"
+        )
         for tc in assistant_msg["tool_calls"]:
             tools_to_execute.append(
                 {
@@ -360,7 +368,9 @@ if __name__ == "__main__":
                 # Hermes Style: <tool_response> JSON </tool_response>
                 # Usually sent as "role": "tool" (newer) or "role": "user" (classic Hermes)
                 # We will use "role": "tool" with the XML wrapper as it is the most robust hybrid approach.
-                hermes_response_content = f"<tool_response>\n{result_str}\n</tool_response>"
+                hermes_response_content = (
+                    f"<tool_response>\n{result_str}\n</tool_response>"
+                )
                 conversation_history.append(
                     {
                         "role": "tool",

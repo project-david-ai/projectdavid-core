@@ -30,7 +30,9 @@ OWNER_KEY = os.getenv("OWNER_API_KEY")
 INTRUDER_KEY = os.getenv("INTRUDER_API_KEY")
 
 if not OWNER_KEY or not INTRUDER_KEY:
-    raise RuntimeError("Set OWNER_API_KEY and INTRUDER_API_KEY in your environment or .env file.")
+    raise RuntimeError(
+        "Set OWNER_API_KEY and INTRUDER_API_KEY in your environment or .env file."
+    )
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -127,7 +129,9 @@ def run_sweep() -> dict:
         print(f"  run.status  : {owner_run.status}")
 
     # ── Test 2: Intruder creates run against owner's assistant ────────────────
-    print("\n--- Test 2: Intruder creates run against owner's assistant (expecting 403) ---")
+    print(
+        "\n--- Test 2: Intruder creates run against owner's assistant (expecting 403) ---"
+    )
     intruder_thread = expect_success(
         "Test 2 setup: Intruder creates own thread",
         intruder_client.threads.create_thread,
@@ -186,9 +190,13 @@ def run_sweep() -> dict:
             owner_run.id,
         )
         if cancelled:
-            cancelled_id = cancelled.get("id") if isinstance(cancelled, dict) else cancelled.id
+            cancelled_id = (
+                cancelled.get("id") if isinstance(cancelled, dict) else cancelled.id
+            )
             cancelled_status = (
-                cancelled.get("status") if isinstance(cancelled, dict) else cancelled.status
+                cancelled.get("status")
+                if isinstance(cancelled, dict)
+                else cancelled.status
             )
             print(f"  cancelled.id     : {cancelled_id}")
             print(f"  cancelled.status : {cancelled_status}")
@@ -227,7 +235,11 @@ def run_sweep() -> dict:
                 f"{len(leaked)} foreign run(s) leaked" if leaked else "",
             )
         else:
-            record("Test 7: No cross-user leakage in run list", True, "no owner_user_id to compare")
+            record(
+                "Test 7: No cross-user leakage in run list",
+                True,
+                "no owner_user_id to compare",
+            )
     except Exception as exc:
         record("Test 7: No cross-user leakage in run list", False, str(exc))
 

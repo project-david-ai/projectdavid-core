@@ -53,7 +53,7 @@ PROFILES = [
         "prompt": (
             "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n"
             "You are a helpful assistant with access to tools.\n"
-            "Tools: [{\"name\": \"get_weather\", \"parameters\": {\"location\": {\"type\": \"string\"}}}]"
+            'Tools: [{"name": "get_weather", "parameters": {"location": {"type": "string"}}}]'
             "<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n"
             "What is the weather in London?<|eot_id|>"
             "<|start_header_id|>assistant<|end_header_id|>\n\n"
@@ -219,7 +219,9 @@ def profile_vllm_raw(profile: dict):
         for m in ["<tool_call>", "[TOOL_CALLS]", "<|python_tag|>", "<think>"]:
             pos = running.find(m)
             if pos != -1 and pos >= prev:
-                print(f"  Marker {repr(m)} first seen in chunk [{i:03d}]: {repr(chunk)}")
+                print(
+                    f"  Marker {repr(m)} first seen in chunk [{i:03d}]: {repr(chunk)}"
+                )
                 surrounding = raw_chunks[max(0, i - 1) : i + 3]
                 print(f"  Context chunks: {surrounding}")
 
@@ -231,7 +233,9 @@ def profile_vllm_raw(profile: dict):
         "full_output": full_output,
         "chunk_count": len(raw_chunks),
         "chunks": raw_chunks,
-        "markers": {m: full_output.find(m) for m in markers if full_output.find(m) != -1},
+        "markers": {
+            m: full_output.find(m) for m in markers if full_output.find(m) != -1
+        },
     }
 
     fname = f"vllm_profile_{name.replace('/', '_').replace('-', '_')}.json"

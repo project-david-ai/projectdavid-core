@@ -2,10 +2,10 @@ from typing import Any, Generator, Optional, Type
 
 from projectdavid_common.utilities.logging_service import LoggingUtility
 
-from src.api.entities_api.orchestration.engine.inference_arbiter import \
-    InferenceArbiter
-from src.api.entities_api.orchestration.workers.deepseek.deepseek_chat_inference import \
-    DeepSeekChatInference
+from src.api.entities_api.orchestration.engine.inference_arbiter import InferenceArbiter
+from src.api.entities_api.orchestration.workers.deepseek.deepseek_chat_inference import (
+    DeepSeekChatInference,
+)
 
 LOG = LoggingUtility()
 
@@ -24,7 +24,9 @@ class DeepseekHandler:
 
     def __init__(self, arbiter: InferenceArbiter):
         self.arbiter = arbiter
-        self._sorted_sub_routes = sorted(self.SUBMODEL_CLASS_MAP.keys(), key=len, reverse=True)
+        self._sorted_sub_routes = sorted(
+            self.SUBMODEL_CLASS_MAP.keys(), key=len, reverse=True
+        )
         LOG.info("HyperbolicHandler dispatcher initialized.")
 
     def _get_specific_handler_instance(self, unified_model_id: str) -> Any:
@@ -62,7 +64,9 @@ class DeepseekHandler:
                 f"Failed to obtain handler instance: {SpecificHandlerClass.__name__}",
                 exc_info=True,
             )
-            raise ValueError(f"Handler resolution failed for model: {unified_model_id}") from e
+            raise ValueError(
+                f"Handler resolution failed for model: {unified_model_id}"
+            ) from e
 
     def process_conversation(
         self,

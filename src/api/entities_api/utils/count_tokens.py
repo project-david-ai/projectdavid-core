@@ -14,4 +14,6 @@ def count_tokens(input_string: str, tokenizer_name: str = "gpt2") -> int:
         tokens = tokenizer.encode(input_string, add_special_tokens=False)
         return len(tokens)
     except Exception as e:
-        raise Exception(f"Failed to load or use the tokenizer '{tokenizer_name}': {str(e)}")
+        raise Exception(
+            f"Failed to load or use the tokenizer '{tokenizer_name}': {str(e)}"
+        )

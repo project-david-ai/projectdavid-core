@@ -80,7 +80,9 @@ def get_flight_times(tool_name: str, arguments) -> str:
     # Simulate slight processing time
     # time.sleep(0.1)
 
-    print(f"\n{YELLOW}[LOCAL EXEC] Tool invoked: {tool_name} | Args: {arguments}{RESET}")
+    print(
+        f"\n{YELLOW}[LOCAL EXEC] Tool invoked: {tool_name} | Args: {arguments}{RESET}"
+    )
     return json.dumps(
         {
             "status": "success",

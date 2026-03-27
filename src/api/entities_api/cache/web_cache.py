@@ -40,7 +40,7 @@ class WebSessionCache:
         We hash the URL to create a safe, consistent Redis key.
         Prefix: 'web_session:'
         """
-        url_hash = hashlib.md5(url.encode("utf-8")).hexdigest()
+        url_hash = hashlib.md5(url.encode("utf-8"), usedforsecurity=False).hexdigest()
         return f"web_session:{url_hash}"
 
     async def get_session(self, url: str) -> Optional[Dict]:

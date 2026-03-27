@@ -46,7 +46,9 @@ class FileSearchMixin:
         try:
             config = await self.assistant_cache.retrieve(assistant_id)
             tool_resources: dict = config.get("tool_resources") or {}
-            ids: list = tool_resources.get("file_search", {}).get("vector_store_ids", [])
+            ids: list = tool_resources.get("file_search", {}).get(
+                "vector_store_ids", []
+            )
             return [vid for vid in ids if vid]
         except Exception as exc:
             LOG.error(
@@ -75,9 +77,7 @@ class FileSearchMixin:
 
         if validation_error:
             LOG.warning(f"FileSearch ▸ Validation Failed: {validation_error}")
-            error_msg = (
-                f"{validation_error}\nPlease provide a valid 'query_text' string for the search."
-            )
+            error_msg = f"{validation_error}\nPlease provide a valid 'query_text' string for the search."
 
             await self._native_exec.submit_failed_tool_execution(
                 tool_name="file_search",
@@ -151,7 +151,9 @@ class FileSearchMixin:
                     store_info = await self._native_exec.get_vector_store(vid)
 
                     if not store_info:
-                        raise Exception(f"Vector store '{vid}' not found in the database.")
+                        raise Exception(
+                            f"Vector store '{vid}' not found in the database."
+                        )
 
                     # B: Local Embedding (Reusing SDK's loaded model to save RAM)
                     file_processor = self.project_david_client.vectors.file_processor
@@ -161,7 +163,9 @@ class FileSearchMixin:
                         )
                         vector_field = "caption_vector"
                     else:
-                        vec_array = await asyncio.to_thread(file_processor.encode_text, query_text)
+                        vec_array = await asyncio.to_thread(
+                            file_processor.encode_text, query_text
+                        )
                         vector_field = None
 
                     query_vector = vec_array.tolist()
@@ -183,7 +187,9 @@ class FileSearchMixin:
                 except Exception as exc:
                     return vid, None, exc
 
-            outcomes = await asyncio.gather(*[_search_one(vid) for vid in vector_store_ids])
+            outcomes = await asyncio.gather(
+                *[_search_one(vid) for vid in vector_store_ids]
+            )
 
             # 3. Aggregate results
             aggregated: list = []
@@ -206,7 +212,9 @@ class FileSearchMixin:
                     "No relevant document snippets found across all attached vector stores.",
                     query_text,
                 )
-                LOG.warning("FileSearch ▸ No results... Triggering self-correction turn.")
+                LOG.warning(
+                    "FileSearch ▸ No results... Triggering self-correction turn."
+                )
 
             elif not has_results and store_errors:
                 is_soft_failure = True
@@ -218,7 +226,9 @@ class FileSearchMixin:
 
             else:
                 if store_errors:
-                    LOG.warning("FileSearch ▸ Partial failure. Errors: %s", store_errors)
+                    LOG.warning(
+                        "FileSearch ▸ Partial failure. Errors: %s", store_errors
+                    )
                 aggregated.sort(key=lambda x: x.get("score", 0), reverse=True)
                 final_content = json.dumps(aggregated, indent=2)
 
@@ -233,7 +243,11 @@ class FileSearchMixin:
             )
 
             # 6. Mark Native Action Status
-            status_val = StatusEnum.failed.value if is_soft_failure else StatusEnum.completed.value
+            status_val = (
+                StatusEnum.failed.value
+                if is_soft_failure
+                else StatusEnum.completed.value
+            )
             await self._native_exec.update_action_status(action.id, status_val)
 
             LOG.info(
@@ -246,11 +260,15 @@ class FileSearchMixin:
             )
 
         except Exception as exc:
-            LOG.error("[%s] file_search HARD FAILURE action=%s exc=%s", run_id, action.id, exc)
+            LOG.error(
+                "[%s] file_search HARD FAILURE action=%s exc=%s", run_id, action.id, exc
+            )
             error_hint = self._format_level2_search_error(str(exc), query_text)
 
             try:
-                await self._native_exec.update_action_status(action.id, StatusEnum.failed.value)
+                await self._native_exec.update_action_status(
+                    action.id, StatusEnum.failed.value
+                )
                 await self._native_exec.submit_tool_output(
                     thread_id=thread_id,
                     assistant_id=assistant_id,
@@ -260,4 +278,6 @@ class FileSearchMixin:
                     is_error=True,
                 )
             except Exception as inner:
-                LOG.exception("[%s] Critical failure during error surfacing: %s", run_id, inner)
+                LOG.exception(
+                    "[%s] Critical failure during error surfacing: %s", run_id, inner
+                )

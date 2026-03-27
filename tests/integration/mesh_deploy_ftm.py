@@ -22,7 +22,9 @@ TARGET_FTM = "ftm_7i8THeyHtMvMk6Ns5TGxZ9"
 
 
 def run_ftm_deployment():
-    print(f"\n{MAGENTA}🧠 STAGE 1: Requesting Mesh Deployment for LoRA: {TARGET_FTM}{RESET}")
+    print(
+        f"\n{MAGENTA}🧠 STAGE 1: Requesting Mesh Deployment for LoRA: {TARGET_FTM}{RESET}"
+    )
 
     # 1. Trigger the Cluster Scheduler
     try:
@@ -40,7 +42,9 @@ def run_ftm_deployment():
 
     model = client.models.retrieve(TARGET_FTM)
     if model.is_active and model.node_id:
-        print(f"{GREEN}✅ DB Record Updated: {model.id} is now ACTIVE on {model.node_id}{RESET}")
+        print(
+            f"{GREEN}✅ DB Record Updated: {model.id} is now ACTIVE on {model.node_id}{RESET}"
+        )
 
     print(f"\n{MAGENTA}🚀 FINAL STEP: Check the 'training_worker' logs.{RESET}")
     print(f"The supervisor will stop any old vLLM and restart with:")

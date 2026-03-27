@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "entities_api"
-version = "1.27.1"
+version = "1.28.1"
 description = "Unified multi vendor AI inference API"
 readme = "README.md"
 
@@ -36,17 +36,24 @@ dependencies = [
   "typer>=0.12.0",
   "PyYAML>=6.0",
   "pymysql",
-  "projectdavid-common"
+  "projectdavid-common",
 ]
 
 [project.optional-dependencies]
 dev = [
-  "black>=23.3",
-  "isort>=5.12",
+  "black==24.1.1",
+  "isort==5.13.2",
+  "ruff>=0.4.0",
   "pytest>=7.2",
+  "pytest-cov",
   "mypy>=1.0",
+  "bandit",
+  "safety",
   "build",
-  "twine"
+  "twine",
+  "types-PyYAML",
+  "types-requests",
+  "types-aiofiles",
 ]
 
 [project.scripts]
@@ -64,26 +71,17 @@ package-dir = { "" = "src/api" }
 where = ["src/api"]
 exclude = ["tests", "docs"]
 
-[tool.mypy]
-python_version = "3.9"
-strict = true
-
+# ── Unified Formatting (SDK Parity) ───────────────────────────────────────
 [tool.black]
-line-length = 100
-target-version = ["py39"]
-skip-string-normalization = true
+line-length = 88
+target-version = ["py39", "py310", "py311", "py312"]
 
-[tool.flake8]
-max-line-length = 200
-extend-ignore = ["E203"]
-exclude = [".venv", ".git", "__pycache__", "build", "dist"]
-
-[tool.semantic_release]
-version_source = "tag"
-upload_to_pypi = false
+[tool.isort]
+profile = "black"
+line_length = 88
 
 [tool.ruff]
-line-length = 100
+line-length = 88
 
 [tool.ruff.lint.per-file-ignores]
 "src/api/entities_api/daemons/*.py" = ["E402"]

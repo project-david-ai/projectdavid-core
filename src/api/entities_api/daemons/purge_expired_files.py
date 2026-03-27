@@ -192,7 +192,9 @@ def purge_expired(session) -> tuple[int, int]:
 
 
 def run_once() -> None:
-    log.info("=== One-shot cleanup | SHARED_PATH=%s | DRY_RUN=%s ===", SHARED_PATH, DRY_RUN)
+    log.info(
+        "=== One-shot cleanup | SHARED_PATH=%s | DRY_RUN=%s ===", SHARED_PATH, DRY_RUN
+    )
     db = SessionLocal()
     try:
         attempted, deleted = purge_expired(db)

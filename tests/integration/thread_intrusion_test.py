@@ -31,7 +31,9 @@ OWNER_KEY = os.getenv("OWNER_API_KEY")
 INTRUDER_KEY = os.getenv("INTRUDER_API_KEY")
 
 if not OWNER_KEY or not INTRUDER_KEY:
-    raise RuntimeError("Set OWNER_API_KEY and INTRUDER_API_KEY in your environment or .env file.")
+    raise RuntimeError(
+        "Set OWNER_API_KEY and INTRUDER_API_KEY in your environment or .env file."
+    )
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers

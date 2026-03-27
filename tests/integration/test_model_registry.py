@@ -20,7 +20,9 @@ def test_registry():
         print(f"✅ Found {models.total} models in the registry.")
 
         if models.total == 0:
-            print("❓ No models found. Ensure the worker successfully finished at least one job.")
+            print(
+                "❓ No models found. Ensure the worker successfully finished at least one job."
+            )
             return
 
         for m in models.data:
@@ -53,7 +55,9 @@ def test_activation():
     print(f"🧐 Database Check: {updated.id} Is Active? {updated.is_active}")
 
     if updated.is_active:
-        print("\n✨ PIPELINE COMPLETE: You have successfully trained and deployed a custom model!")
+        print(
+            "\n✨ PIPELINE COMPLETE: You have successfully trained and deployed a custom model!"
+        )
 
 
 if __name__ == "__main__":

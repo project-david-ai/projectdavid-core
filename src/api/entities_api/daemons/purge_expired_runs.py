@@ -105,7 +105,11 @@ DRY_RUN: bool = os.getenv("DRY_RUN", "false").lower() == "true"
 
 def _stuck_cutoff_epoch() -> int:
     """Unix epoch seconds for now - STUCK_MAX_AGE_HOURS."""
-    return int((datetime.now(tz=timezone.utc) - timedelta(hours=STUCK_MAX_AGE_HOURS)).timestamp())
+    return int(
+        (
+            datetime.now(tz=timezone.utc) - timedelta(hours=STUCK_MAX_AGE_HOURS)
+        ).timestamp()
+    )
 
 
 def _batch_delete_runs(session, where_clause: str, params: dict, label: str) -> int:
@@ -116,7 +120,7 @@ def _batch_delete_runs(session, where_clause: str, params: dict, label: str) -> 
     Returns total runs deleted.
     """
     count_row = session.execute(
-        text(f"SELECT COUNT(*) AS cnt FROM runs WHERE {where_clause}"),
+        text(f"SELECT COUNT(*) AS cnt FROM runs WHERE {where_clause}"),  # nosec B608
         params,
     ).fetchone()
 
@@ -135,7 +139,9 @@ def _batch_delete_runs(session, where_clause: str, params: dict, label: str) -> 
 
     while True:
         rows = session.execute(
-            text(f"SELECT id FROM runs WHERE {where_clause} LIMIT :batch_size"),
+            text(
+                f"SELECT id FROM runs WHERE {where_clause} LIMIT :batch_size"  # nosec B608
+            ),  # nosec B602
             {**params, "batch_size": BATCH_SIZE},
         ).fetchall()
 
@@ -148,7 +154,7 @@ def _batch_delete_runs(session, where_clause: str, params: dict, label: str) -> 
 
         try:
             result = session.execute(
-                text(f"DELETE FROM runs WHERE id IN ({in_clause})"),
+                text(f"DELETE FROM runs WHERE id IN ({in_clause})"),  # nosec B608
                 id_params,
             )
             session.commit()
@@ -277,7 +283,9 @@ def run_daemon() -> None:
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Expired and zombie run cleanup daemon")
+    parser = argparse.ArgumentParser(
+        description="Expired and zombie run cleanup daemon"
+    )
     parser.add_argument(
         "--once",
         action="store_true",

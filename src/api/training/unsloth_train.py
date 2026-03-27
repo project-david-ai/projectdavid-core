@@ -52,7 +52,7 @@ def main():
     # TRL 0.24.0+ requires that the pad_token and eos_token exist in the vocab.
     # We force the tokenizer to use its own native EOS for padding.
     if tokenizer.eos_token is None:
-        tokenizer.eos_token = "<|endoftext|>"
+        tokenizer.eos_token = "<|endoftext|>"  # nosec B105
 
     tokenizer.pad_token = tokenizer.eos_token
     # ──────────────────────────────────────────────────────────────────────────
@@ -85,7 +85,9 @@ def main():
         for messages in examples["messages"]:
             # Standardizing to the 'text' field
             texts.append(
-                tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
+                tokenizer.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=False
+                )
             )
         return {"text": texts}
 
@@ -116,7 +118,8 @@ def main():
             weight_decay=0.01,
             lr_scheduler_type="linear",
             seed=3407,
-            output_dir="/tmp/outputs",
+            # — container-only training scratch space
+            output_dir="/tmp/outputs",  # nosec B108
             report_to="none",
             packing=False,
             # This is the secret sauce: tells TRL not to touch the tokens
@@ -128,7 +131,9 @@ def main():
     )
 
     # 6. Execute Training
-    print(f"🔥 Starting GPU Training kernels (Laptop Mode: {p['max_seq_length']} ctx)...")
+    print(
+        f"🔥 Starting GPU Training kernels (Laptop Mode: {p['max_seq_length']} ctx)..."
+    )
     trainer.train()
 
     # 7. Save Artifacts

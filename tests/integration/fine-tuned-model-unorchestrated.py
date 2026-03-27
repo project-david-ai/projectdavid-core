@@ -19,7 +19,7 @@ print("🤔 Querying the fine-tuned brain...")
 response = requests.post(url, headers=headers, json=payload)
 
 if response.status_code == 200:
-    content = response.json()['choices'][0]['message']['content']
+    content = response.json()["choices"][0]["message"]["content"]
     print(f"\n✨ [david-ft]: {content}")
 else:
     print(f"❌ Error: {response.status_code}")

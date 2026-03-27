@@ -31,7 +31,9 @@ OWNER_KEY = os.getenv("OWNER_API_KEY")
 INTRUDER_KEY = os.getenv("INTRUDER_API_KEY")
 
 if not OWNER_KEY or not INTRUDER_KEY:
-    raise RuntimeError("Set OWNER_API_KEY and INTRUDER_API_KEY in your environment or .env file.")
+    raise RuntimeError(
+        "Set OWNER_API_KEY and INTRUDER_API_KEY in your environment or .env file."
+    )
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -81,9 +83,17 @@ def expect_error_or_none(label: str, fn, *args, **kwargs):
         result = fn(*args, **kwargs)
         if result is None:
             # SDK swallowed the error and returned None — access was still denied
-            record(label, True, "client returned None (error swallowed by SDK — access denied)")
+            record(
+                label,
+                True,
+                "client returned None (error swallowed by SDK — access denied)",
+            )
         else:
-            record(label, False, f"Expected denial but received content: {str(result)[:80]}")
+            record(
+                label,
+                False,
+                f"Expected denial but received content: {str(result)[:80]}",
+            )
         return result
     except Exception as exc:
         msg = str(exc)
@@ -166,7 +176,9 @@ def run_sweep() -> dict:
             print(f"  retrieved.filename : {retrieved.filename}")
 
     # ── Test 3: Intruder retrieves owner's file metadata ─────────────────────
-    print("\n--- Test 3: Intruder retrieves owner's file metadata (expecting 403/404) ---")
+    print(
+        "\n--- Test 3: Intruder retrieves owner's file metadata (expecting 403/404) ---"
+    )
     if owner_file_id:
         expect_error(
             "Test 3: Intruder retrieves owner's file metadata",
@@ -179,7 +191,9 @@ def run_sweep() -> dict:
     # NOTE: the SDK's get_file_as_base64 catches HTTP errors internally and
     # returns None instead of re-raising.  We use expect_error_or_none so that
     # a None return (access denied, error swallowed) is treated as a pass.
-    print("\n--- Test 4: Intruder requests Base64 of owner's file (expecting 403/404) ---")
+    print(
+        "\n--- Test 4: Intruder requests Base64 of owner's file (expecting 403/404) ---"
+    )
     if owner_file_id:
         expect_error_or_none(
             "Test 4: Intruder requests Base64 of owner's file",
@@ -200,7 +214,9 @@ def run_sweep() -> dict:
 
     # ── Test 6: Intruder requests signed URL for owner's file ─────────────────
     # NOTE: same SDK swallowing issue as Test 4 — use expect_error_or_none.
-    print("\n--- Test 6: Intruder requests signed URL for owner's file (expecting 403/404) ---")
+    print(
+        "\n--- Test 6: Intruder requests signed URL for owner's file (expecting 403/404) ---"
+    )
     if owner_file_id:
         expect_error_or_none(
             "Test 6: Intruder requests signed URL for owner's file",

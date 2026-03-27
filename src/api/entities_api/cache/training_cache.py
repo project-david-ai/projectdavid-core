@@ -194,7 +194,9 @@ class TrainingCache:
         if isinstance(self.redis, AsyncRedis):
             await self.redis.set(key, data, ex=REDIS_TRAINING_STATUS_TTL)
         else:
-            await asyncio.to_thread(self.redis.set, key, data, ex=REDIS_TRAINING_STATUS_TTL)
+            await asyncio.to_thread(
+                self.redis.set, key, data, ex=REDIS_TRAINING_STATUS_TTL
+            )
 
         LOG.info("TrainingCache: job %s → %s", job_id, status)
 
@@ -260,7 +262,9 @@ class TrainingCache:
         if isinstance(self.redis, AsyncRedis):
             raw_list = await self.redis.lrange(TRAINING_QUEUE_KEY, 0, -1)
         else:
-            raw_list = await asyncio.to_thread(self.redis.lrange, TRAINING_QUEUE_KEY, 0, -1)
+            raw_list = await asyncio.to_thread(
+                self.redis.lrange, TRAINING_QUEUE_KEY, 0, -1
+            )
 
         result = []
         for raw in raw_list:

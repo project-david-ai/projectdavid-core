@@ -11,7 +11,9 @@ class LoggingUtility:
         # Configure formatter based on caller info requirement
         log_format = "%(asctime)s - %(levelname)s - %(message)s"
         if self.include_caller_info:
-            log_format = "%(asctime)s - %(levelname)s - %(pathname)s:%(lineno)d - %(message)s"
+            log_format = (
+                "%(asctime)s - %(levelname)s - %(pathname)s:%(lineno)d - %(message)s"
+            )
 
         self.formatter = logging.Formatter(log_format)
 

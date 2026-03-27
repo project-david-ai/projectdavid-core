@@ -33,7 +33,9 @@ class FunctionCallFilterMixin:
         lead4 = raw.lstrip()[:4].lower()
         self._fc_force_block = lead4.startswith("<fc")
         if self._fc_force_block:
-            LOG.debug("PeekGate: leading <fc> detected — global function-call suppression ON")
+            LOG.debug(
+                "PeekGate: leading <fc> detected — global function-call suppression ON"
+            )
 
     def _filter_out_fc(self, payload_str: str) -> Optional[str]:
         """

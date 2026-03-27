@@ -38,7 +38,11 @@ def generate_and_save_candidates():
                         status_field = parts[4].lower()
 
                         # Identify Dead
-                        if "💀" in status_field or "dead" in status_field or "404" in status_field:
+                        if (
+                            "💀" in status_field
+                            or "dead" in status_field
+                            or "404" in status_field
+                        ):
                             known_dead_ids.add(raw_id)
                         else:
                             # It is Alive -> Add to candidates

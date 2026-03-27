@@ -50,7 +50,9 @@ def get_flight_times(tool_name: str, arguments) -> str:
     if tool_name != "get_flight_times":
         return json.dumps({"status": "error", "message": f"unknown tool '{tool_name}'"})
 
-    print(f"\n{YELLOW}[LOCAL EXEC] Tool invoked: {tool_name} | Args: {arguments}{RESET}")
+    print(
+        f"\n{YELLOW}[LOCAL EXEC] Tool invoked: {tool_name} | Args: {arguments}{RESET}"
+    )
 
     return json.dumps(
         {

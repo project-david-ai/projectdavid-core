@@ -46,16 +46,24 @@ def get_db():
 
 def _wait_for_engine(engine_to_check, db_name: str, retries: int = 30, delay: int = 3):
     host_hint = str(engine_to_check.url).split("@")[-1]
-    logging_utility.info("Training service — waiting for database '%s'... [%s]", db_name, host_hint)
+    logging_utility.info(
+        "Training service — waiting for database '%s'... [%s]", db_name, host_hint
+    )
     for i in range(retries):
         try:
             with engine_to_check.connect() as conn:
                 conn.execute(text("SELECT 1"))
-            logging_utility.info("Training service — database '%s' is connected.", db_name)
+            logging_utility.info(
+                "Training service — database '%s' is connected.", db_name
+            )
             return
         except Exception as e:
             logging_utility.warning(
-                "Attempt %d/%d: DB '%s' not ready. Error: %s", i + 1, retries, db_name, e
+                "Attempt %d/%d: DB '%s' not ready. Error: %s",
+                i + 1,
+                retries,
+                db_name,
+                e,
             )
             if i < retries - 1:
                 time.sleep(delay)

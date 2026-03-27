@@ -11,6 +11,7 @@ import os
 
 from config_orc_fc import config
 from dotenv import load_dotenv
+
 # Import the project classes
 from projectdavid import ContentEvent, Entity, ToolCallRequestEvent
 
@@ -35,7 +36,9 @@ HYPERBOLIC_API_KEY = os.getenv("HYPERBOLIC_API_KEY")
 MODEL_ID = config.get("model", "together-ai/mistralai/Ministral-3-14B-Instruct-2512")
 PROVIDER_KW = config.get("provider", "Hyperbolic")
 ASSISTANT_ID = config.get("assistant_id", "asst_13HyDgBnZxVwh5XexYu74F")
-TEST_PROMPT = config.get("test_prompt", "Please fetch me the flight times between LAX and JFK.")
+TEST_PROMPT = config.get(
+    "test_prompt", "Please fetch me the flight times between LAX and JFK."
+)
 
 print(f"{GREY}[CONFIG] Model: {MODEL_ID} | Provider: {PROVIDER_KW}{RESET}")
 
@@ -86,7 +89,9 @@ stream.validator.schema_registry["get_flight_times"] = [
 ]
 
 print(f"\n{MAGENTA}[SIMULATION] Injected 'passenger_name' as a required field.{RESET}")
-print(f"{MAGENTA}The LLM will fail Turn 1 because it doesn't know to provide this.{RESET}\n")
+print(
+    f"{MAGENTA}The LLM will fail Turn 1 because it doesn't know to provide this.{RESET}\n"
+)
 
 # ------------------------------------------------------------------
 # 4. Unified Recursive Stream
@@ -100,7 +105,9 @@ try:
             print(f"{GREEN}Assistant: {event.content}{RESET}")
 
         if isinstance(event, ToolCallRequestEvent):
-            print(f"\n{YELLOW}[LOCAL] AI successfully passed validation with: {event.args}{RESET}")
+            print(
+                f"\n{YELLOW}[LOCAL] AI successfully passed validation with: {event.args}{RESET}"
+            )
             handler = TOOL_REGISTRY.get(event.tool_name)
             if handler:
                 event.execute(handler)

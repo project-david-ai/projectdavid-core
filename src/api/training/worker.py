@@ -1,7 +1,9 @@
 import json
 import os
 import socket
-import subprocess
+
+# — required for Ray training process management
+import subprocess  # nosec B404
 import threading
 import time
 from typing import List, Optional
@@ -16,8 +18,12 @@ from sqlalchemy.orm import Session
 
 import docker  # Required: pip install docker
 from src.api.training.db.database import SessionLocal
-from src.api.training.models.models import (Dataset, FineTunedModel,
-                                            InferenceDeployment, TrainingJob)
+from src.api.training.models.models import (
+    Dataset,
+    FineTunedModel,
+    InferenceDeployment,
+    TrainingJob,
+)
 from src.api.training.services.file_service import SambaClient
 
 logging_utility = UtilsInterface.LoggingUtility()
@@ -25,11 +31,14 @@ logging_utility = UtilsInterface.LoggingUtility()
 # ─── CONFIGURATION ──────────────────────────────────────────────────────────
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 QUEUE_NAME = "training_jobs"
-LOCAL_SCRATCH = "/tmp/training"
+# — container-only path, not a shared host tmp
+LOCAL_SCRATCH = "/tmp/training"  # nosec B108
 SHARED_PATH = os.getenv("SHARED_PATH", "/mnt/training_data")
 HF_CACHE_PATH = os.getenv("HF_CACHE_PATH", "/root/.cache/huggingface")
 
-DOCKER_NETWORK_NAME = os.getenv("DOCKER_NETWORK_NAME", "projectdavid-core_my_custom_network")
+DOCKER_NETWORK_NAME = os.getenv(
+    "DOCKER_NETWORK_NAME", "projectdavid-core_my_custom_network"
+)
 
 NODE_ID = os.getenv("NODE_ID", f"node_{socket.gethostname()}")
 
@@ -83,14 +92,17 @@ def _resolve_container_ip(container, network_name: str) -> Optional[str]:
         if network_name in networks:
             ip = networks[network_name].get("IPAddress")
             if ip:
-                logging_utility.info(f"🔍 Container {container.name} IP on '{network_name}': {ip}")
+                logging_utility.info(
+                    f"🔍 Container {container.name} IP on '{network_name}': {ip}"
+                )
                 return ip
 
         for net_name, net_cfg in networks.items():
             ip = net_cfg.get("IPAddress")
             if ip:
                 logging_utility.warning(
-                    f"⚠️  Network '{network_name}' not found; " f"using IP from '{net_name}': {ip}"
+                    f"⚠️  Network '{network_name}' not found; "
+                    f"using IP from '{net_name}': {ip}"
                 )
                 return ip
 
@@ -98,12 +110,15 @@ def _resolve_container_ip(container, network_name: str) -> Optional[str]:
         logging_utility.error(f"IP resolution failed for {container.name}: {e}")
 
     logging_utility.warning(
-        f"⚠️  Could not resolve IP for {container.name}; " f"falling back to container name."
+        f"⚠️  Could not resolve IP for {container.name}; "
+        f"falling back to container name."
     )
     return container.name
 
 
-def manage_vllm_container(deployment: InferenceDeployment, action: str = "start") -> Optional[str]:
+def manage_vllm_container(
+    deployment: InferenceDeployment, action: str = "start"
+) -> Optional[str]:
     """
     Physically manages the vLLM container lifecycle on the host machine.
 
@@ -129,7 +144,9 @@ def manage_vllm_container(deployment: InferenceDeployment, action: str = "start"
             logging_utility.info(f"🛑 Stopped vLLM container: {container_name}")
             return container_name
         except Exception as e:
-            logging_utility.warning(f"⚠️  Could not stop container {container_name}: {e}")
+            logging_utility.warning(
+                f"⚠️  Could not stop container {container_name}: {e}"
+            )
             return container_name
 
     # ── Resolve tensor parallel size from the deployment record ───────────
@@ -293,7 +310,10 @@ class DeploymentSupervisor:
             )
             if dep.fine_tuned_model_id:
                 adapter_path = f"/mnt/training_data/{dep.fine_tuned_model.storage_path}"
-                cmd += f" --enable-lora " f"--lora-modules {dep.fine_tuned_model_id}={adapter_path}"
+                cmd += (
+                    f" --enable-lora "
+                    f"--lora-modules {dep.fine_tuned_model_id}={adapter_path}"
+                )
             try:
                 shared = _os.getenv("SHARED_PATH", "/mnt/training_data")
                 hf = _os.getenv("HF_CACHE_PATH", "/root/.cache/huggingface")
@@ -303,7 +323,9 @@ class DeploymentSupervisor:
                     if "8000/tcp" in pb:
                         bp = pb["8000/tcp"][0].get("HostPort")
                         if bp == str(dep.port):
-                            _log.warning(f"🧹 Port {dep.port} hogged by {c.name}. Evicting...")
+                            _log.warning(
+                                f"🧹 Port {dep.port} hogged by {c.name}. Evicting..."
+                            )
                             c.remove(force=True)
                 gpu = _docker.types.DeviceRequest(
                     count=-1, capabilities=[["gpu", "compute", "utility"]]
@@ -397,7 +419,9 @@ def process_job(job_id: str, user_id: str):
         job.started_at = int(time.time())
         db.commit()
 
-        storage = db.query(FileStorage).filter(FileStorage.file_id == dataset.file_id).first()
+        storage = (
+            db.query(FileStorage).filter(FileStorage.file_id == dataset.file_id).first()
+        )
         local_data_path = os.path.join(LOCAL_SCRATCH, f"{job_id}.jsonl")
         smb = get_samba_client()
         smb.download_file(storage.storage_path, local_data_path)
@@ -419,7 +443,11 @@ def process_job(job_id: str, user_id: str):
             "--profile",
             os.getenv("TRAINING_PROFILE", "laptop"),
         ]
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+        # — cmd is internally constructed from validated config
+        process = subprocess.Popen(  # nosec B603
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+        )
 
         for line in process.stdout:
             print(f"[{job_id}] {line.strip()}", flush=True)
@@ -469,7 +497,8 @@ def main():
         address=ray_address,
         ignore_reinit_error=True,
         include_dashboard=True,
-        dashboard_host="0.0.0.0",
+        # — Ray dashboard intentionally binds all interfaces inside container
+        dashboard_host="0.0.0.0",  # nosec B104
         dashboard_port=int(os.getenv("RAY_DASHBOARD_PORT", "8265")),
         logging_level="WARNING",
     )
@@ -504,14 +533,19 @@ def main():
             if result:
                 _, data = result
                 payload = json.loads(data)
-                if payload.get("target_node") and payload.get("target_node") != ray_node_id:
+                if (
+                    payload.get("target_node")
+                    and payload.get("target_node") != ray_node_id
+                ):
                     r.rpush(QUEUE_NAME, data)
                     time.sleep(1)
                     continue
 
                 job_id = payload["job_id"]
                 user_id = payload["user_id"]
-                logging_utility.info(f"📬 Submitting job {job_id} to Ray cluster as remote task")
+                logging_utility.info(
+                    f"📬 Submitting job {job_id} to Ray cluster as remote task"
+                )
                 process_job_remote.remote(job_id, user_id)
 
         except Exception as e:

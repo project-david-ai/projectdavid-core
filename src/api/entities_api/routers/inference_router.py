@@ -8,12 +8,13 @@ from projectdavid_common.utilities.logging_service import LoggingUtility
 from redis import Redis
 
 from src.api.entities_api.dependencies import get_redis
-from src.api.entities_api.orchestration.engine.inference_arbiter import \
-    InferenceArbiter
-from src.api.entities_api.orchestration.engine.inference_provider_selector import \
-    InferenceProviderSelector
-from src.api.entities_api.services.native_execution_service import \
-    NativeExecutionService
+from src.api.entities_api.orchestration.engine.inference_arbiter import InferenceArbiter
+from src.api.entities_api.orchestration.engine.inference_provider_selector import (
+    InferenceProviderSelector,
+)
+from src.api.entities_api.services.native_execution_service import (
+    NativeExecutionService,
+)
 
 router = APIRouter()
 logging_utility = LoggingUtility()
@@ -166,7 +167,9 @@ async def completions(
                 )
             finally:
                 elapsed = time.time() - start_time
-                logging_utility.info(f"Stream finished: {chunk_count} chunks in {elapsed:.2f}s")
+                logging_utility.info(
+                    f"Stream finished: {chunk_count} chunks in {elapsed:.2f}s"
+                )
 
         return StreamingResponse(
             stream_generator(),
@@ -222,7 +225,9 @@ async def completions(
 
             elif chunk_type == "error":
                 # Capture the first error and abort assembly
-                error_message = parsed.get("message") or parsed.get("error", "Unknown error")
+                error_message = parsed.get("message") or parsed.get(
+                    "error", "Unknown error"
+                )
                 logging_utility.error(
                     f"[{run_id}] Buffered mode — error chunk received: {error_message}"
                 )
@@ -234,7 +239,9 @@ async def completions(
                 # computer_output, code_interpreter_file, computer_file,
                 # scratchpad_status, engineer_status, reasoning) —
                 # all execute normally, logged here for observability.
-                logging_utility.info(f"[{run_id}] Buffered side-effect: type={chunk_type}")
+                logging_utility.info(
+                    f"[{run_id}] Buffered side-effect: type={chunk_type}"
+                )
 
     except Exception as e:
         logging_utility.error(f"Buffered generator error: {e}", exc_info=True)

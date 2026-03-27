@@ -3,12 +3,14 @@ from datetime import datetime
 from typing import Optional
 
 import redis.asyncio as aioredis
+
 # --- CACHE IMPORTS ---
 from entities_api.cache.assistant_cache import AssistantCache
 from entities_api.cache.inventory_cache import InventoryCache
 from entities_api.cache.message_cache import MessageCache
 from entities_api.cache.scratchpad_cache import ScratchpadCache
 from entities_api.cache.web_cache import WebSessionCache
+
 # --- SERVICE IMPORTS ---
 from entities_api.services.scratchpad_service import ScratchpadService
 from entities_api.services.web_reader import UniversalWebReader
@@ -72,7 +74,11 @@ async def get_api_key(
             headers={"WWW-Authenticate": "APIKey"},
         )
 
-    key = db.query(ApiKey).filter(ApiKey.prefix == prefix, ApiKey.is_active.is_(True)).first()
+    key = (
+        db.query(ApiKey)
+        .filter(ApiKey.prefix == prefix, ApiKey.is_active.is_(True))
+        .first()
+    )
 
     if not key or not key.verify_key(api_key_header):
         raise HTTPException(

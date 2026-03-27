@@ -10,7 +10,9 @@ class LoggingUtility:
         self.logger = logging.getLogger(__name__)
         log_format = "%(asctime)s - %(levelname)s - %(message)s"
         if self.include_caller_info:
-            log_format = "%(asctime)s - %(levelname)s - %(pathname)s:%(lineno)d - %(message)s"
+            log_format = (
+                "%(asctime)s - %(levelname)s - %(pathname)s:%(lineno)d - %(message)s"
+            )
         self.formatter = logging.Formatter(log_format)
         self.console_handler = logging.StreamHandler()
         self.console_handler.setLevel(logging.DEBUG)

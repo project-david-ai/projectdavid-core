@@ -2,16 +2,21 @@
 import logging
 import os
 import socket
-import subprocess
+
+# — required for GPU introspection
+import subprocess  # nosec B404
 
 
 def get_gpu_info():
     """Queries nvidia-smi for the local GPU profile."""
     try:
         # Query memory.total, gpu_name
-        cmd = "nvidia-smi --query-gpu=memory.total,gpu_name --format=csv,nounits,noheader"
-        output = subprocess.check_output(cmd, shell=True).decode().strip()
-        total_mib, name = output.split(', ')
+        cmd = (
+            "nvidia-smi --query-gpu=memory.total,gpu_name --format=csv,nounits,noheader"
+        )
+        # — hardcoded nvidia-smi command
+        output = subprocess.check_output(cmd, shell=True).decode().strip()  # nosec B602
+        total_mib, name = output.split(", ")
         return {"name": name, "total_gb": round(float(total_mib) / 1024, 2)}
     except Exception:
         return {"name": "CPU-Only / Unknown", "total_gb": 0.0}
