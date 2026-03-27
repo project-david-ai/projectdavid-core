@@ -242,7 +242,9 @@ class ScratchpadMixin:
             )
 
     async def handle_read_scratchpad(self, *args, **kwargs):
-        async for s in self._execute_scratchpad_logic("read_scratchpad", "read", *args, **kwargs):
+        async for s in self._execute_scratchpad_logic(
+            "read_scratchpad", "read", *args, **kwargs
+        ):
             yield s
 
     async def handle_update_scratchpad(self, *args, **kwargs):

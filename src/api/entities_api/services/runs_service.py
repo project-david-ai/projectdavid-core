@@ -170,9 +170,15 @@ class RunService:
     # CRUD
     # ──────────────────────────────────────────────────────────────────
 
-    def create_run(self, run_data: validator.RunCreate, *, user_id: str) -> validator.Run:
+    def create_run(
+        self, run_data: validator.RunCreate, *, user_id: str
+    ) -> validator.Run:
         with SessionLocal() as db:
-            assistant = db.query(Assistant).filter(Assistant.id == run_data.assistant_id).first()
+            assistant = (
+                db.query(Assistant)
+                .filter(Assistant.id == run_data.assistant_id)
+                .first()
+            )
             if not assistant:
                 raise HTTPException(status_code=404, detail="Assistant not found")
 
@@ -181,11 +187,16 @@ class RunService:
 
             tools_override = getattr(run_data, "tools", None)
             effective_tools = (
-                tools_override if tools_override is not None else (assistant.tool_configs or [])
+                tools_override
+                if tools_override is not None
+                else (assistant.tool_configs or [])
             )
 
             ts_value = "auto"
-            if hasattr(run_data, "truncation_strategy") and run_data.truncation_strategy:
+            if (
+                hasattr(run_data, "truncation_strategy")
+                and run_data.truncation_strategy
+            ):
                 ts_value = getattr(
                     run_data.truncation_strategy, "value", run_data.truncation_strategy
                 )
@@ -204,7 +215,10 @@ class RunService:
                 max_turns=assistant.max_turns,
                 agent_mode=assistant.agent_mode,
                 meta_data=run_data.meta_data or {},
-                tool_resources=getattr(run_data, "tool_resources", assistant.tool_resources) or {},
+                tool_resources=getattr(
+                    run_data, "tool_resources", assistant.tool_resources
+                )
+                or {},
                 created_at=int(time.time()),
                 expires_at=int(time.time() + 3600),
                 object="thread.run",
@@ -253,7 +267,9 @@ class RunService:
             try:
                 run.status = StatusEnum(new_status)
             except ValueError:
-                raise HTTPException(status_code=400, detail=f"Invalid status: {new_status}")
+                raise HTTPException(
+                    status_code=400, detail=f"Invalid status: {new_status}"
+                )
             db.commit()
             db.refresh(run)
             return self._to_read_model(run)
@@ -324,7 +340,9 @@ class RunService:
             if thread_id:
                 q = q.filter(Run.thread_id == thread_id)
 
-            q = q.order_by(Run.created_at.asc() if order == "asc" else Run.created_at.desc())
+            q = q.order_by(
+                Run.created_at.asc() if order == "asc" else Run.created_at.desc()
+            )
 
             rows = q.limit(limit + 1).all()
             has_more = len(rows) > limit

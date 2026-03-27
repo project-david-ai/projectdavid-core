@@ -82,7 +82,11 @@ class AsyncDeepSeekClient:
                         if chunk.get("object") == "error":
                             msg = chunk.get("message", "Unknown DeepSeek error")
                             raise RuntimeError(msg)
-                        delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                        delta = (
+                            chunk.get("choices", [{}])[0]
+                            .get("delta", {})
+                            .get("content", "")
+                        )
                         if delta:
                             yield delta
                     return

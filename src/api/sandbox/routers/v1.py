@@ -4,8 +4,7 @@ import os
 import jwt
 from dotenv import load_dotenv
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, status
-from sandbox.services.code_execution_service import \
-    StreamingCodeExecutionHandler
+from sandbox.services.code_execution_service import StreamingCodeExecutionHandler
 from sandbox.services.logging_service import LoggingUtility
 from sandbox.services.room_manager import RoomManager
 from sandbox.services.shell_session import PersistentShellSession
@@ -49,15 +48,21 @@ async def validate_token(websocket: WebSocket, token: str) -> str | None:
 
     except jwt.ExpiredSignatureError:
         logging_utility.warning("Connection rejected: Token expired")
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Token expired")
+        await websocket.close(
+            code=status.WS_1008_POLICY_VIOLATION, reason="Token expired"
+        )
         return None
     except jwt.InvalidTokenError:
         logging_utility.warning("Connection rejected: Invalid token")
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token")
+        await websocket.close(
+            code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token"
+        )
         return None
     except Exception as e:
         logging_utility.error(f"Token validation error: {str(e)}")
-        await websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason="Authentication error")
+        await websocket.close(
+            code=status.WS_1011_INTERNAL_ERROR, reason="Authentication error"
+        )
         return None
 
 
@@ -118,7 +123,9 @@ async def websocket_endpoint(
     room: str = Query(..., description="The Thread/Room ID"),
     elevated: bool = Query(False),
     token: str = Query(..., description="Signed JWT from Main API"),
-    role: str = Query("executor", description="Role of the client (viewer or executor)"),
+    role: str = Query(
+        "executor", description="Role of the client (viewer or executor)"
+    ),
 ):
     """
     SECURED: Interactive Shell Session.

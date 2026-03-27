@@ -23,8 +23,7 @@ import time
 from threading import Thread
 
 import torch
-from transformers import (AutoModelForCausalLM, AutoTokenizer,
-                          TextIteratorStreamer)
+from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -39,7 +38,10 @@ TOOL_SCHEMA = {
         "parameters": {
             "type": "object",
             "properties": {
-                "location": {"type": "string", "description": "City and country, e.g. London, UK"},
+                "location": {
+                    "type": "string",
+                    "description": "City and country, e.g. London, UK",
+                },
                 "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]},
             },
             "required": ["location"],
@@ -185,7 +187,9 @@ for meta in chunk_metadata:
     for m in ["<tool_call>", "</tool_call>", "<think>", "</think>"]:
         pos = running.find(m)
         if pos != -1 and pos >= prev_len:
-            print(f"  Marker {repr(m):20s} first appears in chunk [{meta['index']:03d}]")
+            print(
+                f"  Marker {repr(m):20s} first appears in chunk [{meta['index']:03d}]"
+            )
             print(f"    chunk content: {repr(meta['chunk'])}")
 
 # ══════════════════════════════════════════════════════════════════════════════

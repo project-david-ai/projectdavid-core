@@ -43,7 +43,9 @@ class RoomManager:
 
     # ── Session registry ──────────────────────────────────────────────────
 
-    async def register_session(self, room: str, session: "PersistentShellSession") -> None:
+    async def register_session(
+        self, room: str, session: "PersistentShellSession"
+    ) -> None:
         """
         Register a new session for a room.  If a stale session already exists
         for this room, tear it down first so we never have two PTY processes
@@ -64,7 +66,9 @@ class RoomManager:
             self.sessions[room] = session
         logger.info("Session registered for room %s", room)
 
-    async def unregister_session(self, room: str, session: "PersistentShellSession") -> None:
+    async def unregister_session(
+        self, room: str, session: "PersistentShellSession"
+    ) -> None:
         """Remove a session from the registry (only if it is still the current one)."""
         async with self._lock:
             if self.sessions.get(room) is session:
@@ -83,6 +87,10 @@ class RoomManager:
         if not sockets:
             return
 
-        coros = [ws.send_json(message) for ws in sockets if ws.client_state.name == "CONNECTED"]
+        coros = [
+            ws.send_json(message)
+            for ws in sockets
+            if ws.client_state.name == "CONNECTED"
+        ]
         if coros:
             await asyncio.gather(*coros, return_exceptions=True)

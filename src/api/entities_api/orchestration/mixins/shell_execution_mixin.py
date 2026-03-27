@@ -8,8 +8,9 @@ import time
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import jwt
-from entities_api.platform_tools.handlers.computer.shell_command_interface import \
-    run_shell_commands_async
+from entities_api.platform_tools.handlers.computer.shell_command_interface import (
+    run_shell_commands_async,
+)
 from projectdavid_common.utilities.tool_validator import ToolValidator
 from projectdavid_common.validation import StatusEnum
 
@@ -126,7 +127,9 @@ class ShellExecutionMixin:
 
         if validation_error:
             LOG.warning("ShellExecution ▸ Validation Failed: %s", validation_error)
-            yield self._shell_status(f"Validation failed: {validation_error}", "error", run_id)
+            yield self._shell_status(
+                f"Validation failed: {validation_error}", "error", run_id
+            )
 
             action = None
             try:
@@ -219,8 +222,12 @@ class ShellExecutionMixin:
 
                 # Filter out known benign sandbox startup warnings
                 chunk_lower = chunk.lower()
-                eval_chunk = chunk_lower.replace("bash: /root/.bashrc: permission denied", "")
-                eval_chunk = eval_chunk.replace("warning: an existing sandbox was detected", "")
+                eval_chunk = chunk_lower.replace(
+                    "bash: /root/.bashrc: permission denied", ""
+                )
+                eval_chunk = eval_chunk.replace(
+                    "warning: an existing sandbox was detected", ""
+                )
 
                 if any(
                     marker in eval_chunk
@@ -303,7 +310,9 @@ class ShellExecutionMixin:
         raw_output = "".join(text_chunks).strip()
 
         if execution_had_error:
-            llm_content = self._format_level2_shell_error(raw_output or "Unknown shell failure.")
+            llm_content = self._format_level2_shell_error(
+                raw_output or "Unknown shell failure."
+            )
         else:
             llm_content = raw_output or "[Shell commands executed successfully.]"
 
@@ -337,7 +346,9 @@ class ShellExecutionMixin:
             )
         except Exception as e:
             LOG.error("ShellExecution ▸ Tool output submission failed: %s", e)
-            yield self._shell_status(f"Tool output submission failed: {e}", "error", run_id)
+            yield self._shell_status(
+                f"Tool output submission failed: {e}", "error", run_id
+            )
             return
 
         # ── Update action status ───────────────────────────────────────────────

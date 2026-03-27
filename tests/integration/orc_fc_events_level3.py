@@ -13,10 +13,16 @@ import time
 
 from config_orc_fc import config
 from dotenv import load_dotenv
+
 # Import the project classes
 from projectdavid import PlanEvent  # [NEW] Imported for Level 3 visibility
-from projectdavid import (ContentEvent, DecisionEvent, Entity, ReasoningEvent,
-                          ToolCallRequestEvent)
+from projectdavid import (
+    ContentEvent,
+    DecisionEvent,
+    Entity,
+    ReasoningEvent,
+    ToolCallRequestEvent,
+)
 
 # ------------------------------------------------------------------
 # 0. CONFIGURATION & SDK INIT
@@ -42,7 +48,9 @@ PROVIDER_KW = config.get("provider", "Hyperbolic")
 ASSISTANT_ID = config.get("assistant_id", "asst_13HyDgBnZxVwh5XexYu74F")
 
 # L3 PROMPT: Asks for two different things to trigger parallel planning
-TEST_PROMPT = "What is the weather in London and what are the flight times from JFK to LHR?"
+TEST_PROMPT = (
+    "What is the weather in London and what are the flight times from JFK to LHR?"
+)
 
 print(f"{GREY}[CONFIG] Model: {MODEL_ID} | Provider: {PROVIDER_KW}{RESET}")
 

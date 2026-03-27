@@ -5,7 +5,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.api.entities_api.orchestration.engine.inference_provider_selector import (
-    TOP_LEVEL_ROUTING_MAP, InferenceProviderSelector)
+    TOP_LEVEL_ROUTING_MAP,
+    InferenceProviderSelector,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -78,8 +80,9 @@ def test_select_provider_routes_known_prefix(selector, model_id, expected_prefix
 
 def test_select_provider_returns_mapped_model_name(selector):
     """If model_id is in MODEL_MAP, api_model_name should be the mapped value."""
-    from src.api.entities_api.orchestration.engine.inference_provider_selector import \
-        MODEL_MAP
+    from src.api.entities_api.orchestration.engine.inference_provider_selector import (
+        MODEL_MAP,
+    )
 
     # Find a model_id that is actually in MODEL_MAP and has a known prefix
     mappable = {

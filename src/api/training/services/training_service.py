@@ -11,8 +11,9 @@ from projectdavid_common.utilities.identifier_service import IdentifierService
 from sqlalchemy.orm import Session
 
 from src.api.training.models.models import TrainingJob
-from src.api.training.services.cluster_service import \
-    select_best_node  # New Cluster Import
+from src.api.training.services.cluster_service import (  # New Cluster Import
+    select_best_node,
+)
 from src.api.training.services.dataset_service import get_dataset
 
 logging_utility = UtilsInterface.LoggingUtility()
@@ -37,7 +38,9 @@ def create_training_job(
 
     # Coerce to string/value to avoid Enum vs String comparison mismatches
     current_status = (
-        dataset.status.value if hasattr(dataset.status, 'value') else str(dataset.status)
+        dataset.status.value
+        if hasattr(dataset.status, "value")
+        else str(dataset.status)
     )
 
     if current_status != StatusEnum.active.value:
@@ -81,12 +84,16 @@ def create_training_job(
         db.commit()
         db.refresh(job)
         logging_utility.info(
-            "Training job %s registered. Assigned Node: %s", job_id, target_node_id or "PENDING"
+            "Training job %s registered. Assigned Node: %s",
+            job_id,
+            target_node_id or "PENDING",
         )
     except Exception as e:
         db.rollback()
         logging_utility.error("DB commit failed for training job %s: %s", job_id, e)
-        raise HTTPException(status_code=500, detail="Failed to save training job to database.")
+        raise HTTPException(
+            status_code=500, detail="Failed to save training job to database."
+        )
 
     # ──────────────────────────────────────────────────────────────────────────
     # 4. REDIS ENQUEUE: Push targeted payload for the worker mesh
@@ -110,7 +117,9 @@ def create_training_job(
         job.status = StatusEnum.failed
         job.config = {**(job.config or {}), "queue_error": str(e)}
         db.commit()
-        raise HTTPException(status_code=500, detail="Failed to enqueue training job to worker.")
+        raise HTTPException(
+            status_code=500, detail="Failed to enqueue training job to worker."
+        )
 
     return job
 
@@ -127,7 +136,9 @@ def get_training_job(db: Session, job_id: str, user_id: str) -> TrainingJob:
     )
 
     if not job:
-        raise HTTPException(status_code=404, detail=f"Training Job '{job_id}' not found.")
+        raise HTTPException(
+            status_code=404, detail=f"Training Job '{job_id}' not found."
+        )
     return job
 
 
@@ -143,7 +154,9 @@ def list_training_jobs(
     )
     if status:
         query = query.filter(TrainingJob.status == status)
-    return query.order_by(TrainingJob.created_at.desc()).offset(offset).limit(limit).all()
+    return (
+        query.order_by(TrainingJob.created_at.desc()).offset(offset).limit(limit).all()
+    )
 
 
 def cancel_training_job(db: Session, job_id: str, user_id: str) -> dict:
@@ -159,10 +172,14 @@ def cancel_training_job(db: Session, job_id: str, user_id: str) -> dict:
 
     try:
         db.commit()
-        logging_utility.info("Training job %s marked for cancellation by user %s", job_id, user_id)
+        logging_utility.info(
+            "Training job %s marked for cancellation by user %s", job_id, user_id
+        )
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail="Database error during cancellation.")
+        raise HTTPException(
+            status_code=500, detail="Database error during cancellation."
+        )
 
     return {"status": "cancelling", "job_id": job_id}
 

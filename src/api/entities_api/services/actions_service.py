@@ -70,7 +70,9 @@ class ActionService:
             action.meta_data = current_meta
             db.commit()
 
-    def update_action_output(self, action_id: str, new_content: str, is_partial: bool = True):
+    def update_action_output(
+        self, action_id: str, new_content: str, is_partial: bool = True
+    ):
         with SessionLocal() as db:
             action = db.query(Action).get(action_id)
             if not action:
@@ -100,7 +102,9 @@ class ActionService:
             action.result = current_result
             db.commit()
 
-    def create_action(self, action_data: validator.ActionCreate) -> validator.ActionRead:
+    def create_action(
+        self, action_data: validator.ActionCreate
+    ) -> validator.ActionRead:
         """
         Creates a new action.
         COMPATIBILITY FIX: Now persists tool_name, decision_payload, and confidence_score.
@@ -155,7 +159,9 @@ class ActionService:
                 )
             except IntegrityError as e:
                 db.rollback()
-                logging_utility.error("IntegrityError during action creation: %s", str(e))
+                logging_utility.error(
+                    "IntegrityError during action creation: %s", str(e)
+                )
                 raise HTTPException(status_code=400, detail="Invalid action data")
             except Exception as e:
                 db.rollback()
@@ -177,7 +183,9 @@ class ActionService:
         with SessionLocal() as db:
             action = db.query(Action).filter(Action.id == action_id).first()
             if not action:
-                raise HTTPException(status_code=404, detail=f"Action {action_id} not found")
+                raise HTTPException(
+                    status_code=404, detail=f"Action {action_id} not found"
+                )
 
             return validator.ActionRead(
                 id=action.id,
@@ -227,7 +235,9 @@ class ActionService:
     ) -> List[validator.ActionRead]:
         with SessionLocal() as db:
             actions = (
-                db.query(Action).filter(Action.run_id == run_id, Action.status == status).all()
+                db.query(Action)
+                .filter(Action.run_id == run_id, Action.status == status)
+                .all()
             )
             return [
                 validator.ActionRead(

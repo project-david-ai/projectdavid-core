@@ -4,8 +4,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import Depends, HTTPException, Security, status
-from fastapi.security import (APIKeyHeader, HTTPAuthorizationCredentials,
-                              HTTPBearer)
+from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 from projectdavid_common import UtilsInterface
 from projectdavid_orm.projectdavid_orm.models import ApiKey
 from sqlalchemy.orm import Session
@@ -46,8 +45,10 @@ def get_current_user_id(
     # 2. Bcrypt Safety Check
     # The 'bcrypt' algorithm used by the ORM has a hard limit of 72 bytes.
     # If the provided string is longer, it is mathematically impossible to be a valid key.
-    if len(api_key.encode('utf-8')) > 72:
-        logging_utility.warning("Auth attempt with over-sized token (>72 bytes). Rejecting.")
+    if len(api_key.encode("utf-8")) > 72:
+        logging_utility.warning(
+            "Auth attempt with over-sized token (>72 bytes). Rejecting."
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API Key format (too long).",
@@ -100,6 +101,8 @@ def get_current_user_id(
             detail="API Key has expired.",
         )
 
-    logging_utility.info("Training API — Direct Auth Successful: %s", key_record.user_id)
+    logging_utility.info(
+        "Training API — Direct Auth Successful: %s", key_record.user_id
+    )
 
     return key_record.user_id

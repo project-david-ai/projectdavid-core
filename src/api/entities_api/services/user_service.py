@@ -9,9 +9,16 @@ from sqlalchemy import orm
 from sqlalchemy.orm import Session
 
 from src.api.entities_api.db.database import SessionLocal
-from src.api.entities_api.models.models import (Assistant, AuditLog, File,
-                                                FileStorage, Message, Thread,
-                                                User, VectorStore)
+from src.api.entities_api.models.models import (
+    Assistant,
+    AuditLog,
+    File,
+    FileStorage,
+    Message,
+    Thread,
+    User,
+    VectorStore,
+)
 from src.api.entities_api.services.logging_service import LoggingUtility
 from src.api.entities_api.utils.samba_client import SambaClient
 
@@ -237,7 +244,9 @@ class UserService:
         )
         db.add(log_entry)
         db.flush()
-        logging_utility.info("Audit log entry written for erasure of user_id=%s", user_id)
+        logging_utility.info(
+            "Audit log entry written for erasure of user_id=%s", user_id
+        )
 
     # ─────────────────────────────────────────────────────────────────────────
     # Standard CRUD (unchanged)
@@ -248,7 +257,9 @@ class UserService:
     ) -> ValidationInterface.UserRead:
         with SessionLocal() as db:
             if user_create.email:
-                existing_user = db.query(User).filter(User.email == user_create.email).first()
+                existing_user = (
+                    db.query(User).filter(User.email == user_create.email).first()
+                )
                 if existing_user:
                     raise HTTPException(
                         status_code=status.HTTP_409_CONFLICT,
@@ -293,7 +304,8 @@ class UserService:
             if not user and email and email_verified:
                 potential_user = db.query(User).filter(User.email == email).first()
                 if potential_user and (
-                    not potential_user.oauth_provider or potential_user.oauth_provider == provider
+                    not potential_user.oauth_provider
+                    or potential_user.oauth_provider == provider
                 ):
                     user = potential_user
                     user.oauth_provider = provider
@@ -316,7 +328,9 @@ class UserService:
                     user.email = email
                     user.email_verified = email_verified or False
                     update_occurred = True
-                elif email_verified is not None and user.email_verified != email_verified:
+                elif (
+                    email_verified is not None and user.email_verified != email_verified
+                ):
                     user.email_verified = email_verified
                     update_occurred = True
                 if update_occurred:
@@ -344,7 +358,9 @@ class UserService:
         with SessionLocal() as db:
             user = db.query(User).filter(User.id == user_id).first()
             if not user:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+                )
             return ValidationInterface.UserRead.model_validate(user)
 
     def get_user_by_email(self, email: str) -> Optional[ValidationInterface.UserRead]:
@@ -354,7 +370,9 @@ class UserService:
                 return None
             return ValidationInterface.UserRead.model_validate(user)
 
-    def get_users(self, skip: int = 0, limit: int = 100) -> List[ValidationInterface.UserRead]:
+    def get_users(
+        self, skip: int = 0, limit: int = 100
+    ) -> List[ValidationInterface.UserRead]:
         with SessionLocal() as db:
             users = db.query(User).offset(skip).limit(limit).all()
             return [ValidationInterface.UserRead.model_validate(u) for u in users]
@@ -365,7 +383,9 @@ class UserService:
         with SessionLocal() as db:
             db_user = db.query(User).filter(User.id == user_id).first()
             if not db_user:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+                )
             update_data = user_update.model_dump(exclude_unset=True)
             updated = False
             for key, value in update_data.items():
@@ -386,11 +406,15 @@ class UserService:
         with SessionLocal() as db:
             db_user = db.query(User).filter(User.id == user_id).first()
             if not db_user:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+                )
             db.delete(db_user)
             db.commit()
 
-    def get_or_create_user(self, user_id: Optional[str] = None) -> ValidationInterface.UserRead:
+    def get_or_create_user(
+        self, user_id: Optional[str] = None
+    ) -> ValidationInterface.UserRead:
         if user_id:
             with SessionLocal() as db:
                 user = db.query(User).filter(User.id == user_id).first()
@@ -403,7 +427,9 @@ class UserService:
         minimal_user_data = ValidationInterface.UserCreate(oauth_provider="local")
         return self.create_user(minimal_user_data)
 
-    def list_assistants_by_user(self, user_id: str) -> List[ValidationInterface.AssistantRead]:
+    def list_assistants_by_user(
+        self, user_id: str
+    ) -> List[ValidationInterface.AssistantRead]:
         with SessionLocal() as db:
             user = (
                 db.query(User)
@@ -412,5 +438,10 @@ class UserService:
                 .first()
             )
             if not user:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-            return [ValidationInterface.AssistantRead.model_validate(a) for a in user.assistants]
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+                )
+            return [
+                ValidationInterface.AssistantRead.model_validate(a)
+                for a in user.assistants
+            ]

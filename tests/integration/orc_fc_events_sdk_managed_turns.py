@@ -13,9 +13,15 @@ import time
 
 from config_orc_fc import config
 from dotenv import load_dotenv
+
 # Import the project classes
-from projectdavid import (ContentEvent, DecisionEvent, Entity, ReasoningEvent,
-                          ToolCallRequestEvent)
+from projectdavid import (
+    ContentEvent,
+    DecisionEvent,
+    Entity,
+    ReasoningEvent,
+    ToolCallRequestEvent,
+)
 
 # ------------------------------------------------------------------
 # 0. CONFIGURATION & SDK INIT
@@ -40,7 +46,9 @@ TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
 MODEL_ID = config.get("model", "together-ai/mistralai/Ministral-3-14B-Instruct-2512")
 PROVIDER_KW = config.get("provider", "Hyperbolic")
 ASSISTANT_ID = config.get("assistant_id", "asst_13HyDgBnZxVwh5XexYu74F")
-TEST_PROMPT = config.get("test_prompt", "Please fetch me the flight times between LAX and JFK.")
+TEST_PROMPT = config.get(
+    "test_prompt", "Please fetch me the flight times between LAX and JFK."
+)
 
 print(f"{GREY}[CONFIG] Model: {MODEL_ID} | Provider: {PROVIDER_KW}{RESET}")
 
@@ -55,7 +63,9 @@ def get_flight_times(tool_name: str, arguments: dict) -> str:
     Fake tool.
     TESTING TIP: Raise an exception here to test Level 2 Self-Correction!
     """
-    print(f"{YELLOW}   -> [TOOL EXEC] {tool_name} for {arguments.get('departure')}...{RESET}")
+    print(
+        f"{YELLOW}   -> [TOOL EXEC] {tool_name} for {arguments.get('departure')}...{RESET}"
+    )
 
     # Example logic:
     return json.dumps(
@@ -164,7 +174,9 @@ try:
                 )
             else:
                 # Handle cases where AI hallucinates a tool name not in our registry
-                print(f"{RED}[!] No local handler found for tool: {event.tool_name}{RESET}")
+                print(
+                    f"{RED}[!] No local handler found for tool: {event.tool_name}{RESET}"
+                )
                 # Level 2 Tip: You could call messages_client.submit_tool_output
                 # with an error here to tell the AI it's using a non-existent tool.
 

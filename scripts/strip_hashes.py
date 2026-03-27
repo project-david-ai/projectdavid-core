@@ -86,13 +86,17 @@ def process_and_clean_file(source_path: Path, output_path: Path):
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(output_content, encoding="utf-8")
-        logging.info(f"✅ Wrote {len(cleaned_lines)} cleaned lines to {output_path.name}")
+        logging.info(
+            f"✅ Wrote {len(cleaned_lines)} cleaned lines to {output_path.name}"
+        )
     except Exception as e:
         logging.error(f"❌ Error writing {output_path}: {e}")
 
 
 if __name__ == "__main__":
-    logging.info("--- Processing requirements files (Cleaned: No Blanks, No Hashes) ---")
+    logging.info(
+        "--- Processing requirements files (Cleaned: No Blanks, No Hashes) ---"
+    )
     for src, dst in FILES:
         process_and_clean_file(src, dst)
     logging.info("--- Done ---")

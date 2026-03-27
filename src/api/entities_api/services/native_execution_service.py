@@ -95,7 +95,8 @@ class NativeExecutionService:
                         assistant.owner_id,
                     )
                     raise HTTPException(
-                        status_code=403, detail="You do not have access to this assistant."
+                        status_code=403,
+                        detail="You do not have access to this assistant.",
                     )
 
         await asyncio.to_thread(_check)
@@ -150,10 +151,14 @@ class NativeExecutionService:
             kwargs["top_p"] = top_p
 
         req = self.val_interface.AssistantCreate(**kwargs)
-        return await asyncio.to_thread(self.assistant_svc.create_assistant, req, user_id)
+        return await asyncio.to_thread(
+            self.assistant_svc.create_assistant, req, user_id
+        )
 
     async def retrieve_assistant(self, assistant_id: str) -> Any:
-        return await asyncio.to_thread(self.assistant_svc.retrieve_assistant_internal, assistant_id)
+        return await asyncio.to_thread(
+            self.assistant_svc.retrieve_assistant_internal, assistant_id
+        )
 
     async def delete_assistant(
         self,
@@ -333,7 +338,9 @@ class NativeExecutionService:
         return await asyncio.to_thread(self.message_svc.create_message_internal, req)
 
     async def delete_thread(self, thread_id: str, user_id: str) -> Any:
-        return await asyncio.to_thread(self.thread_svc.delete_thread, thread_id, user_id)
+        return await asyncio.to_thread(
+            self.thread_svc.delete_thread, thread_id, user_id
+        )
 
     # ------------------------------------------------------------------
     # Message history — three distinct paths, use the right one
@@ -350,7 +357,9 @@ class NativeExecutionService:
 
         Never pass this output directly to the LLM — call hydrate_messages() first.
         """
-        return await asyncio.to_thread(self.message_svc.get_raw_messages_internal, thread_id)
+        return await asyncio.to_thread(
+            self.message_svc.get_raw_messages_internal, thread_id
+        )
 
     async def get_formatted_messages(self, thread_id: str) -> list:
         """
@@ -360,7 +369,9 @@ class NativeExecutionService:
         FOR ORCHESTRATOR / LLM USE ONLY.
         Do NOT use this to populate Redis — use get_raw_messages() instead.
         """
-        return await asyncio.to_thread(self.message_svc.get_formatted_messages_internal, thread_id)
+        return await asyncio.to_thread(
+            self.message_svc.get_formatted_messages_internal, thread_id
+        )
 
     async def hydrate_messages(self, msgs: list) -> list:
         """
@@ -391,8 +402,7 @@ class NativeExecutionService:
         """
         from src.api.entities_api.db.database import SessionLocal
         from src.api.entities_api.services.file_service import FileService
-        from src.api.entities_api.services.message_service import \
-            _detect_mime_from_b64
+        from src.api.entities_api.services.message_service import _detect_mime_from_b64
 
         def _do_hydrate(msgs):
             hydrated = []
@@ -401,7 +411,9 @@ class NativeExecutionService:
 
                 for msg in msgs:
                     attachments = msg.get("attachments") or []
-                    image_attachments = [a for a in attachments if a.get("type") == "image"]
+                    image_attachments = [
+                        a for a in attachments if a.get("type") == "image"
+                    ]
 
                     if not image_attachments:
                         # No images — pass through, strip attachments key if present
@@ -439,7 +451,9 @@ class NativeExecutionService:
                         clean = {k: v for k, v in msg.items() if k != "attachments"}
                         hydrated.append(clean)
                     else:
-                        hydrated.append({"role": msg["role"], "content": content_blocks})
+                        hydrated.append(
+                            {"role": msg["role"], "content": content_blocks}
+                        )
 
             return hydrated
 
@@ -462,7 +476,9 @@ class NativeExecutionService:
             tool_call_id=tool_call_id,
             meta_data={"action_id": action_id, "is_error": is_error},
         )
-        return await asyncio.to_thread(self.message_svc.submit_tool_output_internal, msg_req)
+        return await asyncio.to_thread(
+            self.message_svc.submit_tool_output_internal, msg_req
+        )
 
     async def submit_failed_tool_execution(
         self,
@@ -487,7 +503,9 @@ class NativeExecutionService:
             action_id = action.id
             await self.update_action_status(action_id, StatusEnum.failed.value)
         except Exception as e:
-            LOG.error(f"NativeExec ▸ Failed to create/update failure action for {tool_name}: {e}")
+            LOG.error(
+                f"NativeExec ▸ Failed to create/update failure action for {tool_name}: {e}"
+            )
 
         await self.submit_tool_output(
             thread_id=thread_id,
@@ -499,7 +517,9 @@ class NativeExecutionService:
         )
 
     async def update_run_status(self, run_id: str, new_status: str) -> Any:
-        return await asyncio.to_thread(self.run_svc.update_run_status, run_id, new_status)
+        return await asyncio.to_thread(
+            self.run_svc.update_run_status, run_id, new_status
+        )
 
     async def update_run_fields(self, run_id: str, **fields) -> Any:
         return await asyncio.to_thread(self.run_svc.update_run_fields, run_id, **fields)

@@ -22,13 +22,17 @@ TARGET_BASE = "unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit"
 
 
 def run_base_deployment():
-    print(f"\n{CYAN}🌐 STAGE 1: Requesting Mesh Deployment for Base Model: {TARGET_BASE}{RESET}")
+    print(
+        f"\n{CYAN}🌐 STAGE 1: Requesting Mesh Deployment for Base Model: {TARGET_BASE}{RESET}"
+    )
 
     # 1. Trigger the Cluster Scheduler
     # This creates the 'pending' Deployment record and locks the VRAM Ledger
     try:
         result = client.models.activate_base(TARGET_BASE)
-        print(f"{GREEN}✅ API Response: {result['status']} on Node: {result['node']}{RESET}")
+        print(
+            f"{GREEN}✅ API Response: {result['status']} on Node: {result['node']}{RESET}"
+        )
         print(f"💡 Instruction: {result['next_step']}")
     except Exception as e:
         print(f"❌ API Error: {e}")
@@ -36,7 +40,9 @@ def run_base_deployment():
 
     # 2. Poll the Mesh Ledger
     # We wait for the Node Agent (Worker) to see the ticket and start the container
-    print(f"\n{CYAN}⏳ STAGE 2: Waiting for Node Agent to physically provision vLLM...{RESET}")
+    print(
+        f"\n{CYAN}⏳ STAGE 2: Waiting for Node Agent to physically provision vLLM...{RESET}"
+    )
     for i in range(20):
         # We check the actual deployment list
         # Note: We look for the deployment where fine_tuned_model_id is None
@@ -46,7 +52,9 @@ def run_base_deployment():
         print(f"   - Polling cluster state (Attempt {i+1})...", end="\r")
         time.sleep(3)
 
-    print(f"\n\n{YELLOW}✨ MESH VERIFICATION: Check your 'training_worker' terminal.{RESET}")
+    print(
+        f"\n\n{YELLOW}✨ MESH VERIFICATION: Check your 'training_worker' terminal.{RESET}"
+    )
     print(f"You should see: '🚢 Spawning vLLM... for model {TARGET_BASE}'")
 
 

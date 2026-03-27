@@ -35,12 +35,16 @@ def create_assistant(
         ) from exc
 
 
-@router.get("/assistants/{assistant_id}", response_model=ValidationInterface.AssistantRead)
+@router.get(
+    "/assistants/{assistant_id}", response_model=ValidationInterface.AssistantRead
+)
 def retrieve_assistant(
     assistant_id: str,
     auth_key: ApiKeyModel = Depends(get_api_key),
 ):
-    logging_utility.info("User '%s' – get assistant id=%s", auth_key.user_id, assistant_id)
+    logging_utility.info(
+        "User '%s' – get assistant id=%s", auth_key.user_id, assistant_id
+    )
     service = AssistantService()
     try:
         # ── Forward user_id so the service can enforce ownership ────────────
@@ -54,13 +58,17 @@ def retrieve_assistant(
         ) from exc
 
 
-@router.put("/assistants/{assistant_id}", response_model=ValidationInterface.AssistantRead)
+@router.put(
+    "/assistants/{assistant_id}", response_model=ValidationInterface.AssistantRead
+)
 def update_assistant(
     assistant_id: str,
     assistant_update: ValidationInterface.AssistantUpdate,
     auth_key: ApiKeyModel = Depends(get_api_key),
 ):
-    logging_utility.info("User '%s' – update assistant id=%s", auth_key.user_id, assistant_id)
+    logging_utility.info(
+        "User '%s' – update assistant id=%s", auth_key.user_id, assistant_id
+    )
     service = AssistantService()
     try:
         return service.update_assistant(

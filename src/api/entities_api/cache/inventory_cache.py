@@ -95,7 +95,9 @@ class InventoryCache:
         if not hostnames_bytes:
             return []
 
-        hostnames = [h.decode("utf-8") if isinstance(h, bytes) else h for h in hostnames_bytes]
+        hostnames = [
+            h.decode("utf-8") if isinstance(h, bytes) else h for h in hostnames_bytes
+        ]
 
         async with self.redis.pipeline() as pipe:
             for host in hostnames:

@@ -182,7 +182,9 @@ def run_message_isolation_sweep() -> list[dict]:
     )
 
     # ── Test 7: Intruder injects a message into owner's thread (expecting 403)
-    print("\n--- Test 7: Intruder injects message into owner's thread (expecting 403) ---")
+    print(
+        "\n--- Test 7: Intruder injects message into owner's thread (expecting 403) ---"
+    )
     expect_error(
         "Test 7: Intruder injects message into owner's thread",
         intruder_client.messages.create_message,

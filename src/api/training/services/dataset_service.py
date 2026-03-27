@@ -7,13 +7,15 @@ from fastapi import HTTPException
 from projectdavid_common import UtilsInterface
 from projectdavid_common.schemas.enums import StatusEnum
 from projectdavid_common.utilities.identifier_service import IdentifierService
-from projectdavid_orm.projectdavid_orm.models import \
-    FileStorage  # Accessing the shared ORM
+from projectdavid_orm.projectdavid_orm.models import (  # Accessing the shared ORM
+    FileStorage,
+)
 from sqlalchemy.orm import Session
 
 from src.api.training.models.models import Dataset
-from src.api.training.services.file_service import \
-    SambaClient  # Using your provided wrapper
+from src.api.training.services.file_service import (  # Using your provided wrapper
+    SambaClient,
+)
 
 logging_utility = UtilsInterface.LoggingUtility()
 
@@ -53,7 +55,9 @@ def _split_and_validate(
     """
     import json
 
-    lines = [line.strip() for line in file_bytes.decode("utf-8").splitlines() if line.strip()]
+    lines = [
+        line.strip() for line in file_bytes.decode("utf-8").splitlines() if line.strip()
+    ]
 
     if not lines:
         raise ValueError("Dataset file is empty.")
@@ -146,7 +150,9 @@ def get_dataset(db: Session, dataset_id: str, user_id: str) -> Dataset:
         .first()
     )
     if not dataset:
-        raise HTTPException(status_code=404, detail=f"Dataset '{dataset_id}' not found.")
+        raise HTTPException(
+            status_code=404, detail=f"Dataset '{dataset_id}' not found."
+        )
     return dataset
 
 
@@ -231,7 +237,9 @@ async def _run_preparation(
             return
 
         # 1. Lookup physical storage in the shared Core API tables
-        storage_record = db_bg.query(FileStorage).filter(FileStorage.file_id == file_id).first()
+        storage_record = (
+            db_bg.query(FileStorage).filter(FileStorage.file_id == file_id).first()
+        )
         if not storage_record:
             raise ValueError(f"No storage record found for file_id {file_id}")
 
@@ -248,7 +256,9 @@ async def _run_preparation(
         )
 
         # 3. Validate and Split
-        train_samples, eval_samples = _split_and_validate(file_bytes, fmt=fmt, eval_ratio=0.1)
+        train_samples, eval_samples = _split_and_validate(
+            file_bytes, fmt=fmt, eval_ratio=0.1
+        )
 
         # 4. Success Update
         bg_dataset.train_samples = train_samples
@@ -267,14 +277,19 @@ async def _run_preparation(
         logging_utility.error("❌ Dataset %s preparation failed: %s", dataset_id, e)
         if bg_dataset:
             bg_dataset.status = StatusEnum.failed
-            bg_dataset.config = {**(bg_dataset.config or {}), "preparation_error": str(e)}
+            bg_dataset.config = {
+                **(bg_dataset.config or {}),
+                "preparation_error": str(e),
+            }
             bg_dataset.updated_at = int(time.time())
 
     finally:
         try:
             db_bg.commit()
         except Exception as e:
-            logging_utility.error("Failed to commit preparation result for %s: %s", dataset_id, e)
+            logging_utility.error(
+                "Failed to commit preparation result for %s: %s", dataset_id, e
+            )
             db_bg.rollback()
         finally:
             db_bg.close()

@@ -34,10 +34,21 @@ Import map
     entities_api.models.models.VectorStoreFile → projectdavid_orm.ormInterface.VectorStoreFile
     entities_api.models.models.AuditLog      → projectdavid_orm.ormInterface.AuditLog
 """
-from projectdavid_orm.ormInterface import (Action, ApiKey, Assistant, AuditLog,
-                                           File, FileStorage, Message, Run,
-                                           Sandbox, Thread, User, VectorStore,
-                                           VectorStoreFile)
+from projectdavid_orm.ormInterface import (
+    Action,
+    ApiKey,
+    Assistant,
+    AuditLog,
+    File,
+    FileStorage,
+    Message,
+    Run,
+    Sandbox,
+    Thread,
+    User,
+    VectorStore,
+    VectorStoreFile,
+)
 
 __all__ = [
     "Action",

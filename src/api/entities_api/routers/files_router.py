@@ -5,8 +5,16 @@ from datetime import datetime
 from urllib.parse import urlencode
 
 from dotenv import load_dotenv
-from fastapi import (APIRouter, Depends, File, Form, HTTPException, Query,
-                     UploadFile, status)
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 from fastapi.responses import StreamingResponse
 from projectdavid_common.utilities.logging_service import LoggingUtility
 from projectdavid_common.validation import FileDeleteResponse, FileResponse
@@ -164,7 +172,9 @@ def soft_delete_file_endpoint(
     user_id = auth_key.user_id
     logging_utility.info("User %s soft-deleting %s", user_id, file_id)
     if not FileService(db).soft_delete_file_by_id(file_id, user_id=user_id):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "File not found or already deleted")
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "File not found or already deleted"
+        )
     return FileDeleteResponse(id=file_id, object="file", deleted=True)
 
 
@@ -187,7 +197,9 @@ def generate_signed_url(
 
     # Validate file exists, is not soft-deleted, and caller owns it.
     file_record = (
-        db.query(FileModel).filter(FileModel.id == file_id, FileModel.deleted_at.is_(None)).first()
+        db.query(FileModel)
+        .filter(FileModel.id == file_id, FileModel.deleted_at.is_(None))
+        .first()
     )
     if not file_record:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "File not found")

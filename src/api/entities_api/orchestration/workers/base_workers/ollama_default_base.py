@@ -15,17 +15,16 @@ from dotenv import load_dotenv
 from entities_api.cache.assistant_cache import AssistantCache
 from entities_api.clients.delta_normalizer import DeltaNormalizer
 from entities_api.clients.ollama_client import OllamaNativeStream
-from entities_api.platform_tools.delegated_model_map.delegation_model_map import \
-    get_delegated_model
+from entities_api.platform_tools.delegated_model_map.delegation_model_map import (
+    get_delegated_model,
+)
 from projectdavid import StreamEvent
 from projectdavid_common.utilities.logging_service import LoggingUtility
 from projectdavid_common.validation import StatusEnum
 
 from src.api.entities_api.dependencies import get_redis, get_redis_sync
-from src.api.entities_api.orchestration.engine.orchestrator_core import \
-    OrchestratorCore
-from src.api.entities_api.orchestration.mixins.provider_mixins import \
-    _ProviderMixins
+from src.api.entities_api.orchestration.engine.orchestrator_core import OrchestratorCore
+from src.api.entities_api.orchestration.mixins.provider_mixins import _ProviderMixins
 
 load_dotenv()
 LOG = LoggingUtility()
@@ -83,7 +82,9 @@ class OllamaDefaultBaseWorker(
 
         if assistant_cache_service:
             self._assistant_cache = assistant_cache_service
-        elif "assistant_cache" in extra and isinstance(extra["assistant_cache"], AssistantCache):
+        elif "assistant_cache" in extra and isinstance(
+            extra["assistant_cache"], AssistantCache
+        ):
             self._assistant_cache = extra["assistant_cache"]
 
         legacy_config = extra.get("assistant_config") or extra.get("assistant_cache")
@@ -161,7 +162,9 @@ class OllamaDefaultBaseWorker(
 
         try:
             # ── Model alias resolution ────────────────────────────────────
-            if hasattr(self, "_get_model_map") and (mapped := self._get_model_map(model)):
+            if hasattr(self, "_get_model_map") and (
+                mapped := self._get_model_map(model)
+            ):
                 model = mapped
 
             # ── Config ───────────────────────────────────────────────────
@@ -190,7 +193,9 @@ class OllamaDefaultBaseWorker(
             )
             research_worker_setting = str(
                 is_worker_val
-            ).lower() == "true" or self.assistant_config.get("is_research_worker", False)
+            ).lower() == "true" or self.assistant_config.get(
+                "is_research_worker", False
+            )
 
             # Check for "junior_engineer"
             is_junior_val = raw_meta.get(
@@ -220,7 +225,8 @@ class OllamaDefaultBaseWorker(
                 # --------------------------------------------------------
                 delegation_model = get_delegated_model(requested_model=pre_mapped_model)
                 await self._native_exec.update_run_fields(
-                    run_id, meta_data={"api_key": api_key, "delegated_model": delegation_model}
+                    run_id,
+                    meta_data={"api_key": api_key, "delegated_model": delegation_model},
                 )
 
             elif junior_engineer_setting:
@@ -257,7 +263,9 @@ class OllamaDefaultBaseWorker(
                     custom_ollama_url = meta.get("ollama_base_url")
 
                 if self._batfish_owner_user_id is None:
-                    self._batfish_owner_user_id = meta.get("batfish_owner_user_id") or run.user_id
+                    self._batfish_owner_user_id = (
+                        meta.get("batfish_owner_user_id") or run.user_id
+                    )
 
                 if self._scratch_pad_thread is None and meta.get("scratch_pad_thread"):
                     self._scratch_pad_thread = meta["scratch_pad_thread"]
@@ -275,7 +283,9 @@ class OllamaDefaultBaseWorker(
             # ------------------------------------------------------------------
             # 5. IDENTITY SWAP & RELOAD (Supervisor roles only)
             # ------------------------------------------------------------------
-            await self._handle_role_based_identity_swap(requested_model=pre_mapped_model)
+            await self._handle_role_based_identity_swap(
+                requested_model=pre_mapped_model
+            )
 
             # --- CRITICAL FIX: Reload config if identity was swapped! ---
             if self.assistant_id != _original_assistant_id:
@@ -354,10 +364,14 @@ class OllamaDefaultBaseWorker(
                 try:
                     self._decision_payload = json.loads(decision_buffer.strip())
                 except Exception:
-                    LOG.warning(f"Failed to parse decision buffer: {decision_buffer[:50]}...")
+                    LOG.warning(
+                        f"Failed to parse decision buffer: {decision_buffer[:50]}..."
+                    )
 
             # 8b. Extract Tool Calls from accumulated stream output
-            tool_calls_batch = self.parse_and_set_function_calls(accumulated, assistant_reply)
+            tool_calls_batch = self.parse_and_set_function_calls(
+                accumulated, assistant_reply
+            )
 
             message_to_save = assistant_reply
             final_status = StatusEnum.completed.value
@@ -388,7 +402,9 @@ class OllamaDefaultBaseWorker(
                 # Persist the structural representation, not the raw text
                 message_to_save = json.dumps(tool_calls_structure)
 
-            yield json.dumps({"type": "status", "status": "processing", "run_id": run_id})
+            yield json.dumps(
+                {"type": "status", "status": "processing", "run_id": run_id}
+            )
 
             if message_to_save:
                 # [FIX]: Use self.assistant_id to save under the supervisor's ID (if applicable)
@@ -399,7 +415,9 @@ class OllamaDefaultBaseWorker(
             await self._native_exec.update_run_status(run_id, final_status)
 
             if not tool_calls_batch:
-                yield json.dumps({"type": "status", "status": "complete", "run_id": run_id})
+                yield json.dumps(
+                    {"type": "status", "status": "complete", "run_id": run_id}
+                )
 
         except Exception as exc:
             LOG.error("Stream exception: %s", exc, exc_info=True)
@@ -463,7 +481,9 @@ class OllamaDefaultBaseWorker(
         if running_loop is None:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            agen = self.stream(thread_id, message_id, run_id, assistant_id, model, **kwargs)
+            agen = self.stream(
+                thread_id, message_id, run_id, assistant_id, model, **kwargs
+            )
             try:
                 while True:
                     try:
@@ -484,7 +504,9 @@ class OllamaDefaultBaseWorker(
                     task.cancel()
                 if pending:
                     try:
-                        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                        loop.run_until_complete(
+                            asyncio.gather(*pending, return_exceptions=True)
+                        )
                     except Exception:
                         pass
                 loop.close()
@@ -503,7 +525,9 @@ class OllamaDefaultBaseWorker(
             queue_ref.append(q)
 
             async def _drain() -> None:
-                agen = self.stream(thread_id, message_id, run_id, assistant_id, model, **kwargs)
+                agen = self.stream(
+                    thread_id, message_id, run_id, assistant_id, model, **kwargs
+                )
                 try:
                     async for item in agen:
                         if stop_flag.is_set():

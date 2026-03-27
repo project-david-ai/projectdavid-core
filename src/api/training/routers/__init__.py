@@ -1,11 +1,11 @@
 from fastapi import APIRouter
 
 from src.api.training.routers.datasets_router import router as datasets_router
-from src.api.training.routers.fine_tuned_models_router import \
-    router as fine_tuned_models_router
+from src.api.training.routers.fine_tuned_models_router import (
+    router as fine_tuned_models_router,
+)
 from src.api.training.routers.registry_router import router as registry_router
-from src.api.training.routers.training_jobs_router import \
-    router as training_jobs_router
+from src.api.training.routers.training_jobs_router import router as training_jobs_router
 
 training_router = APIRouter()
 

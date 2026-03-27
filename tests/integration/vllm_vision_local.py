@@ -17,8 +17,13 @@ import time
 
 from config_orc_fc import config
 from dotenv import load_dotenv
-from projectdavid import (ContentEvent, DecisionEvent, Entity, ReasoningEvent,
-                          ToolCallRequestEvent)
+from projectdavid import (
+    ContentEvent,
+    DecisionEvent,
+    Entity,
+    ReasoningEvent,
+    ToolCallRequestEvent,
+)
 
 load_dotenv()
 
@@ -152,7 +157,9 @@ if isinstance(content, list):
     image_blocks = [b for b in content if b.get("type") == "image"]
     print(f"{GREEN}[✓] Hydrated image blocks: {len(image_blocks)}{RESET}\n")
 else:
-    print(f"{YELLOW}[!] Content is plain string — hydration did not produce image blocks{RESET}")
+    print(
+        f"{YELLOW}[!] Content is plain string — hydration did not produce image blocks{RESET}"
+    )
     print(f"{YELLOW}    content preview: {str(content)[:120]}{RESET}\n")
 
 # ------------------------------------------------------------------

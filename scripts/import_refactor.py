@@ -29,7 +29,9 @@ class ImportRefactor(ast.NodeTransformer):
         # Handle relative imports like `from ..services ...`
         if node.level > 0:  # e.g., level=1 for `from .`, level=2 for `from ..`
             # Calculate the path after moving up `level` directories
-            effective_path_parts = self.module_parts[: len(self.module_parts) - (node.level - 1)]
+            effective_path_parts = self.module_parts[
+                : len(self.module_parts) - (node.level - 1)
+            ]
 
             # Construct the new absolute path from src
             # Add the original module if it existed (e.g., the 'services' in '..services')

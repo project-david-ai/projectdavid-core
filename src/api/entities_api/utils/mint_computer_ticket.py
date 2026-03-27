@@ -9,7 +9,9 @@ SECRET_KEY = os.getenv("SANDBOX_AUTH_SECRET", "dev_secret_key_change_this")
 ALGORITHM = "HS256"
 
 
-def mint_computer_ticket(user_id: str, room_id: str, scopes: Optional[List[str]] = None) -> str:
+def mint_computer_ticket(
+    user_id: str, room_id: str, scopes: Optional[List[str]] = None
+) -> str:
     """
     SERVER SIDE ONLY.
     Creates a temporary, short-lived JWT for WebSocket connection.

@@ -1,5 +1,4 @@
-from entities_api.orchestration.instructions.assembler import \
-    assemble_instructions
+from entities_api.orchestration.instructions.assembler import assemble_instructions
 
 instructions = assemble_instructions(
     include_keys=[

@@ -11,8 +11,13 @@ import time
 
 from config_orc_fc import config
 from dotenv import load_dotenv
-from projectdavid import (ContentEvent, DecisionEvent, Entity, ReasoningEvent,
-                          ToolCallRequestEvent)
+from projectdavid import (
+    ContentEvent,
+    DecisionEvent,
+    Entity,
+    ReasoningEvent,
+    ToolCallRequestEvent,
+)
 
 load_dotenv()
 
@@ -34,9 +39,7 @@ BASE_URL = os.getenv("BASE_URL", "http://localhost:9000")
 API_KEY = os.getenv("ENTITIES_API_KEY")
 ASSISTANT_ID = config.get("assistant_id", "asst_YscCYmaK7xCVzGylYFe1pN")
 MODEL_ID = "ollama/qwen3:4b"
-TEST_PROMPT = (
-    "Please provide the flight times for a trip departing from Tokyo and arriving in Sydney?"
-)
+TEST_PROMPT = "Please provide the flight times for a trip departing from Tokyo and arriving in Sydney?"
 # TEST_PROMPT = "Fetch me today's top headlines"
 
 
@@ -122,7 +125,9 @@ try:
                 event.execute(handler)
                 print(f"{GREEN}[✓] Result submitted — resuming stream...{RESET}\n")
             else:
-                print(f"{RED}[!] Unknown tool: '{event.tool_name}' — not in registry{RESET}")
+                print(
+                    f"{RED}[!] Unknown tool: '{event.tool_name}' — not in registry{RESET}"
+                )
 
 except Exception as e:
     print(f"{RED}[ERROR] {e}{RESET}")

@@ -13,7 +13,9 @@ routes_data = []
 for route in app.routes:
     if isinstance(route, APIRoute):
         method_list = ", ".join(route.methods - {"HEAD", "OPTIONS"})
-        routes_data.append([route.path, method_list, route.name or "", route.summary or ""])
+        routes_data.append(
+            [route.path, method_list, route.name or "", route.summary or ""]
+        )
 headers = ["Path", "Method(s)", "Name", "Summary"]
 markdown_table = tabulate(routes_data, headers, tablefmt="github")
 print("# 📌 FastAPI Routes (Markdown View)\n")

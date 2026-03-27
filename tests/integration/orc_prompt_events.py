@@ -13,9 +13,16 @@ import time
 
 from config_orc_prompt import config
 from dotenv import load_dotenv
+
 # Import the new Event classes
-from projectdavid import (ContentEvent, DecisionEvent, Entity, ReasoningEvent,
-                          StatusEvent, ToolCallRequestEvent)
+from projectdavid import (
+    ContentEvent,
+    DecisionEvent,
+    Entity,
+    ReasoningEvent,
+    StatusEvent,
+    ToolCallRequestEvent,
+)
 
 # ------------------------------------------------------------------
 # 0. CONFIGURATION & SDK INIT
@@ -53,7 +60,9 @@ client = Entity(base_url=BASE_URL, api_key=ENTITIES_API_KEY)
 
 # Bind clients for synchronous inference
 if hasattr(client, "synchronous_inference_stream"):
-    client.synchronous_inference_stream.bind_clients(client.runs, client.actions, client.messages)
+    client.synchronous_inference_stream.bind_clients(
+        client.runs, client.actions, client.messages
+    )
 
 # ==================================================================
 # TIMER START

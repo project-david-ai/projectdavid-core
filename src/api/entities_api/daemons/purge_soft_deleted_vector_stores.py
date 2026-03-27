@@ -210,7 +210,9 @@ def run_daemon() -> None:
                 attempted, deleted = purge_soft_deleted(db)
             finally:
                 db.close()
-            log.info("Cycle complete. %d/%d vector stores hard-purged.", deleted, attempted)
+            log.info(
+                "Cycle complete. %d/%d vector stores hard-purged.", deleted, attempted
+            )
         except Exception as exc:
             log.error("Unexpected error during purge cycle: %s", exc, exc_info=True)
         log.info("Sleeping %ds until next cycle…", CHECK_INTERVAL)
@@ -220,9 +222,13 @@ def run_daemon() -> None:
 # ─── CLI ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Soft-deleted vector store hard-purge utility")
+    parser = argparse.ArgumentParser(
+        description="Soft-deleted vector store hard-purge utility"
+    )
     parser.add_argument("--once", action="store_true", help="Single pass then exit")
-    parser.add_argument("--skip-wait", action="store_true", help="Skip DB readiness check")
+    parser.add_argument(
+        "--skip-wait", action="store_true", help="Skip DB readiness check"
+    )
     args = parser.parse_args()
 
     if not args.skip_wait:

@@ -76,7 +76,9 @@ def update_run_status(
         f"[{auth_key.user_id}] Updating status of run {run_id} → {status_update.status}"
     )
     # Admin gate — ownership not checked; admin privilege is the guard here.
-    requesting_admin = db.query(UserModel).filter(UserModel.id == auth_key.user_id).first()
+    requesting_admin = (
+        db.query(UserModel).filter(UserModel.id == auth_key.user_id).first()
+    )
     if not requesting_admin or not requesting_admin.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -127,7 +129,9 @@ def update_run_fields(
     except HTTPException as e:
         raise e
     except Exception as e:
-        logging_utility.error("Unexpected error patching run %s fields: %s", run_id, str(e))
+        logging_utility.error(
+            "Unexpected error patching run %s fields: %s", run_id, str(e)
+        )
         raise HTTPException(status_code=500, detail="An unexpected error occurred.")
 
 

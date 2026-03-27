@@ -21,7 +21,9 @@ os.environ["TOGETHER_API_KEY"] = "dummy"
 #    We must mock the database module BEFORE importing main to skip that check.
 # -------------------------------------------------------------------------
 mock_db_module = MagicMock()
-mock_db_module.wait_for_databases = lambda: print(">> [MOCK] Skipping DB Connection Check")
+mock_db_module.wait_for_databases = lambda: print(
+    ">> [MOCK] Skipping DB Connection Check"
+)
 mock_db_module.engine = MagicMock()
 mock_db_module.SessionLocal = MagicMock()
 
@@ -63,7 +65,9 @@ try:
             # You can manually rename these here if you prefer client.runs.create()
             if "operationId" not in details:
                 # Fallback if FastAPI didn't set it (rare)
-                details["operationId"] = details.get("summary", "").replace(" ", "_").lower()
+                details["operationId"] = (
+                    details.get("summary", "").replace(" ", "_").lower()
+                )
 
     # ---------------------------------------------------------------------
     # 5. WRITE TO FILE
@@ -77,7 +81,9 @@ try:
 
 except ImportError as e:
     print(f"\n❌ IMPORT ERROR: {e}")
-    print("   Make sure you are running this from the project root and your virtualenv is active.")
+    print(
+        "   Make sure you are running this from the project root and your virtualenv is active."
+    )
 except Exception as e:
     print(f"\n❌ ERROR: {e}")
     import traceback

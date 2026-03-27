@@ -82,7 +82,9 @@ def _render_qwen(messages: List[Dict], tools: Optional[List] = None) -> str:
     for m in messages:
         role = m["role"]
         # TEXT ONLY — list content must never reach this renderer
-        content = m["content"] if isinstance(m["content"], str) else json.dumps(m["content"])
+        content = (
+            m["content"] if isinstance(m["content"], str) else json.dumps(m["content"])
+        )
         parts.append(f"<|im_start|>{role}\n{content}<|im_end|>")
 
     parts.append("<|im_start|>assistant\n")
@@ -122,14 +124,18 @@ def _render_llama3(messages: List[Dict], tools: Optional[List] = None) -> str:
 
     for m in messages:
         role = m["role"]
-        content = m["content"] if isinstance(m["content"], str) else json.dumps(m["content"])
+        content = (
+            m["content"] if isinstance(m["content"], str) else json.dumps(m["content"])
+        )
 
         if role == "system" and tools and not system_injected:
             tool_json = json.dumps(tools)
             content += f"\n\nTools available:\n{tool_json}"
             system_injected = True
 
-        parts.append(f"<|start_header_id|>{role}<|end_header_id|>\n\n{content}<|eot_id|>")
+        parts.append(
+            f"<|start_header_id|>{role}<|end_header_id|>\n\n{content}<|eot_id|>"
+        )
 
     parts.append("<|start_header_id|>assistant<|end_header_id|>\n\n")
     return "".join(parts)
@@ -216,7 +222,9 @@ def _normalise_for_chat(messages: List[Dict]) -> List[Dict]:
 
             else:
                 # Unknown block type — skip
-                LOG.warning("_normalise_for_chat: unknown block type '%s', skipping.", btype)
+                LOG.warning(
+                    "_normalise_for_chat: unknown block type '%s', skipping.", btype
+                )
 
         normalised.append({**m, "content": converted_blocks})
 
@@ -321,7 +329,12 @@ class VLLMRawStream:
             if stop:
                 payload["stop"] = stop
 
-        LOG.info("VLLMRawStream ▸ POST %s | model=%s | max_tokens=%d", endpoint, model, max_tokens)
+        LOG.info(
+            "VLLMRawStream ▸ POST %s | model=%s | max_tokens=%d",
+            endpoint,
+            model,
+            max_tokens,
+        )
 
         async for chunk in self._http_stream(endpoint, payload):
             yield chunk
@@ -400,7 +413,9 @@ class VLLMRawStream:
                         yield {
                             "choices": [
                                 {
-                                    "delta": {"content": f"[vLLM error {response.status_code}]"},
+                                    "delta": {
+                                        "content": f"[vLLM error {response.status_code}]"
+                                    },
                                     "finish_reason": "error",
                                 }
                             ]
@@ -412,7 +427,11 @@ class VLLMRawStream:
                             continue
                         raw = line[5:].strip()
                         if raw == "[DONE]":
-                            yield {"done": True, "done_reason": "stop", "message": {"content": ""}}
+                            yield {
+                                "done": True,
+                                "done_reason": "stop",
+                                "message": {"content": ""},
+                            }
                             return
                         try:
                             parsed = json.loads(raw)
@@ -435,17 +454,27 @@ class VLLMRawStream:
             LOG.error("VLLMRawStream ▸ connect error: %s", exc)
             yield {
                 "choices": [
-                    {"delta": {"content": "[vLLM connection failed]"}, "finish_reason": "error"}
+                    {
+                        "delta": {"content": "[vLLM connection failed]"},
+                        "finish_reason": "error",
+                    }
                 ]
             }
         except httpx.TimeoutException as exc:
             LOG.error("VLLMRawStream ▸ timeout: %s", exc)
-            yield {"choices": [{"delta": {"content": "[vLLM timeout]"}, "finish_reason": "error"}]}
+            yield {
+                "choices": [
+                    {"delta": {"content": "[vLLM timeout]"}, "finish_reason": "error"}
+                ]
+            }
         except Exception as exc:
             LOG.error("VLLMRawStream ▸ unexpected: %s", exc, exc_info=True)
             yield {
                 "choices": [
-                    {"delta": {"content": f"[vLLM stream error: {exc}]"}, "finish_reason": "error"}
+                    {
+                        "delta": {"content": f"[vLLM stream error: {exc}]"},
+                        "finish_reason": "error",
+                    }
                 ]
             }
 
@@ -476,7 +505,9 @@ class VLLMRawStream:
                         yield {
                             "choices": [
                                 {
-                                    "delta": {"content": f"[vLLM error {response.status_code}]"},
+                                    "delta": {
+                                        "content": f"[vLLM error {response.status_code}]"
+                                    },
                                     "finish_reason": "error",
                                 }
                             ]
@@ -488,7 +519,11 @@ class VLLMRawStream:
                             continue
                         raw = line[5:].strip()
                         if raw == "[DONE]":
-                            yield {"done": True, "done_reason": "stop", "message": {"content": ""}}
+                            yield {
+                                "done": True,
+                                "done_reason": "stop",
+                                "message": {"content": ""},
+                            }
                             return
                         try:
                             parsed = json.loads(raw)
@@ -512,16 +547,26 @@ class VLLMRawStream:
             LOG.error("VLLMRawStream ▸ chat connect error: %s", exc)
             yield {
                 "choices": [
-                    {"delta": {"content": "[vLLM connection failed]"}, "finish_reason": "error"}
+                    {
+                        "delta": {"content": "[vLLM connection failed]"},
+                        "finish_reason": "error",
+                    }
                 ]
             }
         except httpx.TimeoutException as exc:
             LOG.error("VLLMRawStream ▸ chat timeout: %s", exc)
-            yield {"choices": [{"delta": {"content": "[vLLM timeout]"}, "finish_reason": "error"}]}
+            yield {
+                "choices": [
+                    {"delta": {"content": "[vLLM timeout]"}, "finish_reason": "error"}
+                ]
+            }
         except Exception as exc:
             LOG.error("VLLMRawStream ▸ chat unexpected: %s", exc, exc_info=True)
             yield {
                 "choices": [
-                    {"delta": {"content": f"[vLLM stream error: {exc}]"}, "finish_reason": "error"}
+                    {
+                        "delta": {"content": f"[vLLM stream error: {exc}]"},
+                        "finish_reason": "error",
+                    }
                 ]
             }

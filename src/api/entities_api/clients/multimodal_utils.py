@@ -137,7 +137,9 @@ def normalise_for_chat(
                 images_included += 1
 
             else:
-                LOG.warning("normalise_for_chat: unknown block type '%s', skipping.", btype)
+                LOG.warning(
+                    "normalise_for_chat: unknown block type '%s', skipping.", btype
+                )
 
         normalised.append({**m, "content": converted_blocks})
 

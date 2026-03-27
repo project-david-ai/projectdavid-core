@@ -203,3 +203,5 @@ models/
 *.jsonl
 /scratch/
 /logs/
+
+.idea/

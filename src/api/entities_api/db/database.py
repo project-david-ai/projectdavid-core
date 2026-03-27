@@ -85,11 +85,15 @@ def _wait_for_engine(engine_to_check, db_name, logger, retries=30, delay=3):
             logger.info(f"✅ Database '{db_name}' is connected!")
             return
         except Exception as e:
-            logger.warning(f"Attempt {i+1}/{retries}: DB '{db_name}' not ready. Error: {e}")
+            logger.warning(
+                f"Attempt {i+1}/{retries}: DB '{db_name}' not ready. Error: {e}"
+            )
             if i < retries - 1:
                 time.sleep(delay)
             else:
-                logger.error(f"Could not connect to '{db_name}' after {retries} attempts.")
+                logger.error(
+                    f"Could not connect to '{db_name}' after {retries} attempts."
+                )
                 raise
 
 

@@ -50,7 +50,9 @@ def build_markdown_table(model_map: dict) -> str:
 # CLI handling
 # --------------------------------------------------------------------
 def parse_args():
-    parser = argparse.ArgumentParser(description="Generate a Markdown table of model identifiers.")
+    parser = argparse.ArgumentParser(
+        description="Generate a Markdown table of model identifiers."
+    )
     parser.add_argument(
         "output_file",
         nargs="?",

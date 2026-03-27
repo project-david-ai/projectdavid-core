@@ -2,8 +2,9 @@ import os
 
 from entities_api.clients.unified_async_client import get_cached_client
 
-from src.api.entities_api.orchestration.workers.base_workers.default_base import \
-    DefaultBaseWorker
+from src.api.entities_api.orchestration.workers.base_workers.default_base import (
+    DefaultBaseWorker,
+)
 
 
 class TogetherDefaultWorker(DefaultBaseWorker):

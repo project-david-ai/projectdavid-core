@@ -37,7 +37,9 @@ async def verify_computer_connection():
     # Construct the full URL with Auth Params
     # Pattern: ws://[HOST]:[PORT]/ws/computer?room=...&token=...
     full_ws_url = (
-        f"{base_ws_url}" f"?room={session_data['room_id']}" f"&token={session_data['token']}"
+        f"{base_ws_url}"
+        f"?room={session_data['room_id']}"
+        f"&token={session_data['token']}"
     )
 
     print(f"\n--- 2. Connecting to WebSocket ---\n   Target: {full_ws_url}")
@@ -67,7 +69,9 @@ async def verify_computer_connection():
                     # If you want to stop after a successful check, uncomment the break below:
                     # break
                 except websockets.exceptions.ConnectionClosed as e:
-                    print(f"\n⚠️ Server closed connection: Code {e.code} (Reason: {e.reason})")
+                    print(
+                        f"\n⚠️ Server closed connection: Code {e.code} (Reason: {e.reason})"
+                    )
                     break
 
     except InvalidStatus as e:

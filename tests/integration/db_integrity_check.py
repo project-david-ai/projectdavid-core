@@ -27,10 +27,19 @@ from dotenv import load_dotenv
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from src.api.entities_api.db.database import SessionLocal
-from src.api.entities_api.models.models import (Action, ApiKey, Assistant,
-                                                File, FileStorage, Message,
-                                                Run, Thread, User, VectorStore,
-                                                VectorStoreFile)
+from src.api.entities_api.models.models import (
+    Action,
+    ApiKey,
+    Assistant,
+    File,
+    FileStorage,
+    Message,
+    Run,
+    Thread,
+    User,
+    VectorStore,
+    VectorStoreFile,
+)
 
 load_dotenv()
 WIDTH = 68

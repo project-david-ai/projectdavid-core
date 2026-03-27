@@ -16,7 +16,10 @@ mock_data = [
         "messages": [
             {"role": "system", "content": "You are a helpful AI."},
             {"role": "user", "content": "Tell me a joke."},
-            {"role": "assistant", "content": "Why did the GPU go to jail? For too many cycles."},
+            {
+                "role": "assistant",
+                "content": "Why did the GPU go to jail? For too many cycles.",
+            },
         ]
     },
 ]

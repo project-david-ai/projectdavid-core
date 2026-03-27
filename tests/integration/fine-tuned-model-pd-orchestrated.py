@@ -14,8 +14,13 @@ import os
 import time
 
 from dotenv import load_dotenv
-from projectdavid import (ContentEvent, DecisionEvent, Entity, ReasoningEvent,
-                          ToolCallRequestEvent)
+from projectdavid import (
+    ContentEvent,
+    DecisionEvent,
+    Entity,
+    ReasoningEvent,
+    ToolCallRequestEvent,
+)
 
 load_dotenv()
 
@@ -77,7 +82,9 @@ def run_assistant_ft_test():
     # 3. Create Run
     # We pass the assistant_id to pull instructions,
     # and override the model to use our specific LoRA adapters.
-    run = client.runs.create_run(assistant_id=assistant.id, thread_id=thread.id, model=MODEL_ID)
+    run = client.runs.create_run(
+        assistant_id=assistant.id, thread_id=thread.id, model=MODEL_ID
+    )
 
     # 4. Setup the Stream
     stream = client.synchronous_inference_stream

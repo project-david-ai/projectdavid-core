@@ -7,8 +7,7 @@ from typing import Any, AsyncGenerator, Dict, Generator, Optional
 import websockets
 from dotenv import load_dotenv
 from projectdavid_common.utilities.logging_service import LoggingUtility
-from tenacity import (retry, retry_if_exception_type, stop_after_attempt,
-                      wait_fixed)
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 from websockets.legacy.protocol import WebSocketCommonProtocol
 
 load_dotenv()
@@ -78,12 +77,16 @@ class CodeExecutionClient:
             logging_utility.info("Successfully connected to WebSocket endpoint.")
         except asyncio.TimeoutError as e:
             logging_utility.error("Connection to %s timed out", self.config.endpoint)
-            raise ExecutionTimeoutError(f"Connection to {self.config.endpoint} timed out") from e
+            raise ExecutionTimeoutError(
+                f"Connection to {self.config.endpoint} timed out"
+            ) from e
         except websockets.exceptions.InvalidStatusCode as e:
             # Handle 403/1008 errors specifically
             if e.status_code == 403 or e.status_code == 1008:
                 logging_utility.error("Authentication failed: %s", str(e))
-                raise ExecutionSecurityViolation("Sandbox rejected authentication token")
+                raise ExecutionSecurityViolation(
+                    "Sandbox rejected authentication token"
+                )
             raise e
 
     async def close(self):
@@ -99,7 +102,9 @@ class CodeExecutionClient:
             raise CodeExecutionClientError("Not connected to execution endpoint")
         try:
             # We don't need to send user_id here anymore; the Token handled identity
-            await self._connection.send(json.dumps({"code": code, "metadata": metadata}))
+            await self._connection.send(
+                json.dumps({"code": code, "metadata": metadata})
+            )
 
             while True:
                 message = await self._connection.recv()
@@ -114,7 +119,9 @@ class CodeExecutionClient:
                             # If it's a security error from inside the logic
                             if "Security" in data["error"]:
                                 raise ExecutionSecurityViolation(data["error"])
-                            yield json.dumps({"type": "error", "content": data["error"]})
+                            yield json.dumps(
+                                {"type": "error", "content": data["error"]}
+                            )
                         elif "status" in data and "uploaded_files" in data:
                             yield json.dumps(
                                 {
@@ -126,13 +133,21 @@ class CodeExecutionClient:
                             )
                             break
                         elif "status" in data:
-                            yield json.dumps({"type": "status", "content": data["status"]})
+                            yield json.dumps(
+                                {"type": "status", "content": data["status"]}
+                            )
                         elif "output" in data:
-                            yield json.dumps({"type": "output", "content": data["output"]})
+                            yield json.dumps(
+                                {"type": "output", "content": data["output"]}
+                            )
                         else:
-                            yield json.dumps({"type": "hot_code_output", "content": str(data)})
+                            yield json.dumps(
+                                {"type": "hot_code_output", "content": str(data)}
+                            )
                     else:
-                        yield json.dumps({"type": "hot_code_output", "content": str(data)})
+                        yield json.dumps(
+                            {"type": "hot_code_output", "content": str(data)}
+                        )
                 except json.JSONDecodeError:
                     yield json.dumps({"type": "hot_code_output", "content": message})
 
@@ -177,7 +192,9 @@ class StreamOutput:
                 for task in pending:
                     task.cancel()
                 if pending:
-                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                    loop.run_until_complete(
+                        asyncio.gather(*pending, return_exceptions=True)
+                    )
                 loop.close()
             except Exception:
                 pass

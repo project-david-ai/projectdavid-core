@@ -31,7 +31,9 @@ OWNER_KEY = os.getenv("OWNER_API_KEY")
 INTRUDER_KEY = os.getenv("INTRUDER_API_KEY")
 
 if not OWNER_KEY or not INTRUDER_KEY:
-    raise RuntimeError("Set OWNER_API_KEY and INTRUDER_API_KEY in your environment or .env file.")
+    raise RuntimeError(
+        "Set OWNER_API_KEY and INTRUDER_API_KEY in your environment or .env file."
+    )
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -148,10 +150,14 @@ def run_sweep() -> dict:
         )
 
     # ── Test 6: Intruder creates run against owner's assistant ────────────────
-    print("\n--- Test 6: Intruder creates run against owner's assistant (expecting 403) ---")
+    print(
+        "\n--- Test 6: Intruder creates run against owner's assistant (expecting 403) ---"
+    )
     if owner_assistant_id:
         try:
-            intruder_thread = owner_client.threads.create_thread()  # intruder uses own thread
+            intruder_thread = (
+                owner_client.threads.create_thread()
+            )  # intruder uses own thread
             # Re-create using intruder client to properly test the run isolation
             intruder_thread2 = intruder_client.threads.create_thread()
             expect_error(
@@ -171,14 +177,23 @@ def run_sweep() -> dict:
             except Exception:
                 pass
         except Exception as exc:
-            record("Test 6: Intruder creates run against owner's assistant", False, str(exc))
+            record(
+                "Test 6: Intruder creates run against owner's assistant",
+                False,
+                str(exc),
+            )
 
     # ── Test 7: Owner lists assistants — no cross-user leakage ───────────────
     print("\n--- Test 7: Owner lists assistants (expecting only own) ---")
     if owner_assistant_id:
         try:
             owner_list = owner_client.assistants.list_assistants()
-            ids = [a.id for a in (owner_list.data if hasattr(owner_list, "data") else owner_list)]
+            ids = [
+                a.id
+                for a in (
+                    owner_list.data if hasattr(owner_list, "data") else owner_list
+                )
+            ]
             own_present = owner_assistant_id in ids
             record("Test 7: Owner's assistant appears in own list", own_present)
         except Exception as exc:
@@ -191,7 +206,11 @@ def run_sweep() -> dict:
             intruder_list = intruder_client.assistants.list_assistants()
             ids = [
                 a.id
-                for a in (intruder_list.data if hasattr(intruder_list, "data") else intruder_list)
+                for a in (
+                    intruder_list.data
+                    if hasattr(intruder_list, "data")
+                    else intruder_list
+                )
             ]
             leaked = owner_assistant_id in ids
             record("Test 8: Owner's assistant not visible to intruder", not leaked)

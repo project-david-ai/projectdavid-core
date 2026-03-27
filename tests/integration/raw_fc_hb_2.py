@@ -201,7 +201,9 @@ def run_turn(messages):
                         if fn.get("name"):
                             tool_calls_buffer[idx]["function"]["name"] += fn["name"]
                         if fn.get("arguments"):
-                            tool_calls_buffer[idx]["function"]["arguments"] += fn["arguments"]
+                            tool_calls_buffer[idx]["function"]["arguments"] += fn[
+                                "arguments"
+                            ]
 
             except json.JSONDecodeError:
                 print(f"[DEBUG STREAM] JSON Error on line: {data_str}")
@@ -238,7 +240,9 @@ def run_turn(messages):
                 pass
 
             # FIX: Ensure we have an ID.
-            t_id = tool_data["id"] if tool_data["id"] else f"call_{idx}_{hash(raw_args)}"
+            t_id = (
+                tool_data["id"] if tool_data["id"] else f"call_{idx}_{hash(raw_args)}"
+            )
 
             formatted_tools.append(
                 {

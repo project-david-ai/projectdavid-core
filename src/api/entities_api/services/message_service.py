@@ -46,7 +46,9 @@ class MessageService:
             )
         return db_thread
 
-    def _assert_message_owner(self, db: Any, message_id: str, user_id: str) -> "Message":
+    def _assert_message_owner(
+        self, db: Any, message_id: str, user_id: str
+    ) -> "Message":
         db_message = db.query(Message).filter(Message.id == message_id).first()
         if not db_message:
             raise HTTPException(status_code=404, detail="Message not found")
@@ -103,7 +105,9 @@ class MessageService:
                 continue
 
             mime = _detect_mime_from_b64(b64)
-            content_blocks.append({"type": "image", "image": f"data:{mime};base64,{b64}"})
+            content_blocks.append(
+                {"type": "image", "image": f"data:{mime};base64,{b64}"}
+            )
             resolved += 1
 
         if resolved == 0:
@@ -173,7 +177,9 @@ class MessageService:
                             {"role": "assistant", "content": db_message.content}
                         )
                 except (json.JSONDecodeError, TypeError):
-                    formatted_messages.append({"role": "assistant", "content": db_message.content})
+                    formatted_messages.append(
+                        {"role": "assistant", "content": db_message.content}
+                    )
                 continue
 
             # ── User / system / platform messages ─────────────────────────
@@ -246,7 +252,9 @@ class MessageService:
                 logging_utility.error(f"[INTERNAL] Error saving message: {e}")
                 raise HTTPException(status_code=500, detail="Failed to create message")
 
-            return validator.MessageRead.model_validate(self._prepare_for_read(db_message))
+            return validator.MessageRead.model_validate(
+                self._prepare_for_read(db_message)
+            )
 
     def get_raw_messages_internal(
         self,
@@ -344,7 +352,9 @@ class MessageService:
                 db.rollback()
                 raise HTTPException(status_code=500, detail="Failed to create message")
 
-            return validator.MessageRead.model_validate(self._prepare_for_read(db_message))
+            return validator.MessageRead.model_validate(
+                self._prepare_for_read(db_message)
+            )
 
     # ──────────────────────────────────────────────────────────────────────────
     #  Public API  (ownership enforced)
@@ -389,12 +399,16 @@ class MessageService:
                 logging_utility.error(f"Error saving message: {e}")
                 raise HTTPException(status_code=500, detail="Failed to create message")
 
-            return validator.MessageRead.model_validate(self._prepare_for_read(db_message))
+            return validator.MessageRead.model_validate(
+                self._prepare_for_read(db_message)
+            )
 
     def retrieve_message(self, message_id: str, user_id: str) -> validator.MessageRead:
         with SessionLocal() as db:
             db_message = self._assert_message_owner(db, message_id, user_id)
-            return validator.MessageRead.model_validate(self._prepare_for_read(db_message))
+            return validator.MessageRead.model_validate(
+                self._prepare_for_read(db_message)
+            )
 
     def list_messages(
         self,
@@ -413,7 +427,8 @@ class MessageService:
             )
             db_messages = query.limit(limit).all()
             messages = [
-                validator.MessageRead.model_validate(self._prepare_for_read(m)) for m in db_messages
+                validator.MessageRead.model_validate(self._prepare_for_read(m))
+                for m in db_messages
             ]
             return validator.MessagesList(
                 data=messages,
@@ -462,7 +477,9 @@ class MessageService:
                 db.rollback()
                 raise HTTPException(status_code=500, detail="Failed to save message")
 
-            return validator.MessageRead.model_validate(self._prepare_for_read(db_message))
+            return validator.MessageRead.model_validate(
+                self._prepare_for_read(db_message)
+            )
 
     def get_formatted_messages(
         self,
@@ -512,7 +529,9 @@ class MessageService:
                 db.rollback()
                 raise HTTPException(status_code=500, detail="Failed to create message")
 
-            return validator.MessageRead.model_validate(self._prepare_for_read(db_message))
+            return validator.MessageRead.model_validate(
+                self._prepare_for_read(db_message)
+            )
 
     def delete_message(self, message_id: str, user_id: str) -> validator.MessageDeleted:
         with SessionLocal() as db:

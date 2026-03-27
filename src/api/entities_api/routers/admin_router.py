@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from projectdavid_common.schemas.api_key_schemas import (ApiKeyCreateRequest,
-                                                         ApiKeyCreateResponse,
-                                                         ApiKeyDetails)
+from projectdavid_common.schemas.api_key_schemas import (
+    ApiKeyCreateRequest,
+    ApiKeyCreateResponse,
+    ApiKeyDetails,
+)
 from projectdavid_common.utilities.logging_service import LoggingUtility
 from sqlalchemy.orm import Session
 
@@ -45,7 +47,9 @@ def admin_create_api_key_for_user(
     logging_utility.info(
         f"Admin request received from user {auth_key.user_id} (Key Prefix: {auth_key.prefix}) to create key for user {target_user_id}."
     )
-    requesting_user = db.query(UserModel).filter(UserModel.id == auth_key.user_id).first()
+    requesting_user = (
+        db.query(UserModel).filter(UserModel.id == auth_key.user_id).first()
+    )
     if not requesting_user or not requesting_user.is_admin:
         logging_utility.warning(
             f"Authorization Failed: User {auth_key.user_id} attempted admin operation without admin rights."

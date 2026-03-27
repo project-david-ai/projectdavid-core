@@ -20,7 +20,9 @@ class ApiKeyService:
     def __init__(self, db: Session):
         self.db = db
 
-    def _generate_unique_key_and_prefix(self, desired_prefix: str = "ea_") -> Tuple[str, str]:
+    def _generate_unique_key_and_prefix(
+        self, desired_prefix: str = "ea_"
+    ) -> Tuple[str, str]:
         """
         Generates a unique API key string and its corresponding prefix.
         Ensures the prefix doesn't already exist in the database.
@@ -33,12 +35,18 @@ class ApiKeyService:
         while attempts < max_attempts:
             plain_key = ApiKey.generate_key(prefix=desired_prefix)
             prefix = plain_key[:8]
-            existing_prefix = self.db.query(ApiKey).filter(ApiKey.prefix == prefix).first()
+            existing_prefix = (
+                self.db.query(ApiKey).filter(ApiKey.prefix == prefix).first()
+            )
             if not existing_prefix:
                 return (plain_key, prefix)
             attempts += 1
-            logging_utility.warning(f"API key prefix collision detected for {prefix}. Retrying...")
-        raise RuntimeError("Failed to generate a unique API key prefix after multiple attempts.")
+            logging_utility.warning(
+                f"API key prefix collision detected for {prefix}. Retrying..."
+            )
+        raise RuntimeError(
+            "Failed to generate a unique API key prefix after multiple attempts."
+        )
 
     def create_key(
         self,
@@ -68,7 +76,9 @@ class ApiKeyService:
         """
         user = self.db.query(User).filter(User.id == user_id).first()
         if not user:
-            logging_utility.error(f"Attempted to create API key for non-existent user: {user_id}")
+            logging_utility.error(
+                f"Attempted to create API key for non-existent user: {user_id}"
+            )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"User with ID '{user_id}' not found.",
@@ -98,13 +108,17 @@ class ApiKeyService:
             return (plain_key_str, db_api_key)
         except Exception as e:
             self.db.rollback()
-            logging_utility.error(f"Error creating API key for user {user_id}: {e}", exc_info=True)
+            logging_utility.error(
+                f"Error creating API key for user {user_id}: {e}", exc_info=True
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="An error occurred while creating the API key.",
             ) from e
 
-    def list_keys_for_user(self, user_id: str, include_inactive: bool = False) -> List[ApiKey]:
+    def list_keys_for_user(
+        self, user_id: str, include_inactive: bool = False
+    ) -> List[ApiKey]:
         """
         Lists API keys associated with a user.
 
@@ -184,7 +198,9 @@ class ApiKeyService:
                 detail="An error occurred while revoking the API key.",
             ) from e
 
-    def get_key_details_by_prefix(self, user_id: str, key_prefix: str) -> Optional[ApiKey]:
+    def get_key_details_by_prefix(
+        self, user_id: str, key_prefix: str
+    ) -> Optional[ApiKey]:
         """
         Retrieves details of a specific API key by its prefix for a given user.
         Does NOT return the hashed key itself, intended for display purposes.

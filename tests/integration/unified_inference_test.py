@@ -17,8 +17,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
-from entities_api.orchestration.instructions.assembler import \
-    assemble_instructions
+from entities_api.orchestration.instructions.assembler import assemble_instructions
+
 # Import definitions
 from models import TOGETHER_AI_MODELS
 from projectdavid import Entity
@@ -245,7 +245,9 @@ class ModelTester:
                 content="Calculate Fibonacci recursively. Explain why iterative is better.",
                 assistant_id=self.assistant_id,
             )
-            run = self.client.runs.create_run(assistant_id=self.assistant_id, thread_id=thread.id)
+            run = self.client.runs.create_run(
+                assistant_id=self.assistant_id, thread_id=thread.id
+            )
             flags = self._stream_and_analyze(thread.id, run.id, timeout=180.0)
 
             if flags["has_error"]:
@@ -261,7 +263,9 @@ class ModelTester:
         if result["inference_ok"]:
             print(f"\n{YELLOW}--- Stage 2: Tool Calls ({self.model_label}) ---{RESET}")
             try:
-                thread = self.client.threads.create_thread(participant_ids=[self.user_id])
+                thread = self.client.threads.create_thread(
+                    participant_ids=[self.user_id]
+                )
                 self.client.messages.create_message(
                     thread_id=thread.id,
                     role="user",
@@ -286,7 +290,9 @@ class ModelTester:
                     )
                     if handled:
                         print(f"{YELLOW}[*] Streaming Final Response...{RESET}")
-                        final_flags = self._stream_and_analyze(thread.id, run.id, timeout=30.0)
+                        final_flags = self._stream_and_analyze(
+                            thread.id, run.id, timeout=30.0
+                        )
                         if final_flags["has_content"]:
                             result["tool_call_ok"] = True
                 else:

@@ -103,7 +103,7 @@ def _fix_db_url_for_local_dev(url: str) -> str:
     This improves Developer Experience (DX) for users running CLI commands on the host.
     """
     # Detection: /.dockerenv exists in almost all Docker containers
-    is_docker = os.path.exists('/.dockerenv')
+    is_docker = os.path.exists("/.dockerenv")
 
     if not is_docker and url:
         # Check for the standard Docker-compose service name 'db'
@@ -173,7 +173,9 @@ def _ensure_api_key(db: Session, user: User, key_name: str) -> tuple[str | None,
     """
     existing = db.query(ApiKey).filter(ApiKey.user_id == user.id).first()
     if existing:
-        log.info(f"API key already exists for user {user.id} (prefix={existing.prefix})")
+        log.info(
+            f"API key already exists for user {user.id} (prefix={existing.prefix})"
+        )
         return None, existing.prefix
 
     plain_key = ApiKey.generate_key(prefix="ad_")
@@ -270,7 +272,9 @@ def bootstrap_admin(
             log.info("Bootstrap transaction committed successfully.")
         except Exception as exc:
             db.rollback()
-            log.error(f"Bootstrap failed, transaction rolled back: {exc}", exc_info=True)
+            log.error(
+                f"Bootstrap failed, transaction rolled back: {exc}", exc_info=True
+            )
             typer.echo(f"[error] Bootstrap failed: {exc}", err=True)
             raise SystemExit(1)
 

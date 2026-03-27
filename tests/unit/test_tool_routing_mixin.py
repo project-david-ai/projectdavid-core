@@ -15,10 +15,10 @@ import json
 
 import pytest
 
-from src.api.entities_api.orchestration.mixins.json_utils_mixin import \
-    JsonUtilsMixin
-from src.api.entities_api.orchestration.mixins.tool_routing_mixin import \
-    ToolRoutingMixin
+from src.api.entities_api.orchestration.mixins.json_utils_mixin import JsonUtilsMixin
+from src.api.entities_api.orchestration.mixins.tool_routing_mixin import (
+    ToolRoutingMixin,
+)
 
 # ---------------------------------------------------------------------------
 # Minimal concrete class — satisfies both mixin requirements
@@ -62,7 +62,9 @@ def test_batch_fc_tags_parsed(router):
 
 
 def test_fc_tag_case_insensitive(router):
-    payload = json.dumps({"name": "code_interpreter", "arguments": {"code": "print(1)"}})
+    payload = json.dumps(
+        {"name": "code_interpreter", "arguments": {"code": "print(1)"}}
+    )
     accumulated = f"<FC>{payload}</FC>"
     result = router.parse_and_set_function_calls(accumulated, "")
     assert len(result) == 1
@@ -75,7 +77,9 @@ def test_fc_tag_case_insensitive(router):
 
 
 def test_fc_inside_plan_tag_is_ignored(router):
-    real_payload = json.dumps({"name": "perform_web_search", "arguments": {"query": "real"}})
+    real_payload = json.dumps(
+        {"name": "perform_web_search", "arguments": {"query": "real"}}
+    )
     plan_payload = json.dumps({"name": "fake_tool", "arguments": {}})
     accumulated = f"<plan><fc>{plan_payload}</fc></plan><fc>{real_payload}</fc>"
     result = router.parse_and_set_function_calls(accumulated, "")
@@ -125,7 +129,7 @@ def test_string_arguments_normalised_to_dict(router):
 
 
 def test_markdown_fenced_arguments_normalised(router):
-    inner_args = "```json\n{\"query\": \"fenced\"}\n```"
+    inner_args = '```json\n{"query": "fenced"}\n```'
     payload = json.dumps({"name": "perform_web_search", "arguments": inner_args})
     accumulated = f"<fc>{payload}</fc>"
     result = router.parse_and_set_function_calls(accumulated, "")
@@ -182,7 +186,9 @@ def test_raises_type_error_without_json_utils_mixin():
         pass
 
     bare = BareRouter()
-    with pytest.raises(TypeError, match="ToolRoutingMixin must be mixed with JsonUtilsMixin"):
+    with pytest.raises(
+        TypeError, match="ToolRoutingMixin must be mixed with JsonUtilsMixin"
+    ):
         bare.parse_and_set_function_calls("<fc>{}</fc>", "")
 
 

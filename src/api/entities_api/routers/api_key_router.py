@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from projectdavid_common.schemas.api_key_schemas import (ApiKeyCreateRequest,
-                                                         ApiKeyCreateResponse,
-                                                         ApiKeyDetails,
-                                                         ApiKeyListResponse)
+from projectdavid_common.schemas.api_key_schemas import (
+    ApiKeyCreateRequest,
+    ApiKeyCreateResponse,
+    ApiKeyDetails,
+    ApiKeyListResponse,
+)
 from sqlalchemy.orm import Session
 
 from src.api.entities_api.dependencies import get_api_key, get_db
@@ -106,7 +108,9 @@ def list_api_keys(
     verify_user_access(requested_user_id=user_id, authenticated_key=auth_key, db=db)
     service = ApiKeyService(db=db)
     try:
-        keys_orm = service.list_keys_for_user(user_id=user_id, include_inactive=include_inactive)
+        keys_orm = service.list_keys_for_user(
+            user_id=user_id, include_inactive=include_inactive
+        )
         keys_details = [ApiKeyDetails.model_validate(key) for key in keys_orm]
         return ApiKeyListResponse(keys=keys_details)
     except HTTPException as e:
@@ -138,7 +142,9 @@ def get_api_key_details(
     verify_user_access(requested_user_id=user_id, authenticated_key=auth_key, db=db)
     service = ApiKeyService(db=db)
     try:
-        key_orm = service.get_key_details_by_prefix(user_id=user_id, key_prefix=key_prefix)
+        key_orm = service.get_key_details_by_prefix(
+            user_id=user_id, key_prefix=key_prefix
+        )
         if not key_orm:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

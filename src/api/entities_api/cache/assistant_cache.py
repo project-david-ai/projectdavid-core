@@ -37,8 +37,9 @@ class AssistantCache:
         # NativeExecutionService is only instantiated when actually needed,
         # and the deferred import keeps circular dependencies at bay.
         if self._native_exec_svc is None:
-            from src.api.entities_api.services.native_execution_service import \
-                NativeExecutionService
+            from src.api.entities_api.services.native_execution_service import (
+                NativeExecutionService,
+            )
 
             self._native_exec_svc = NativeExecutionService()
         return self._native_exec_svc
@@ -106,8 +107,12 @@ class AssistantCache:
         # 4. Metadata
         raw_meta = getattr(assistant, "meta_data", {}) or {}
 
-        is_research_worker = self._normalize_bool(raw_meta.get("research_worker_calling", False))
-        is_junior_engineer = self._normalize_bool(raw_meta.get("junior_engineer_calling", False))
+        is_research_worker = self._normalize_bool(
+            raw_meta.get("research_worker_calling", False)
+        )
+        is_junior_engineer = self._normalize_bool(
+            raw_meta.get("junior_engineer_calling", False)
+        )
 
         # 5. Tool resources
         raw_tool_resources = getattr(assistant, "tool_resources", {}) or {}
@@ -144,7 +149,9 @@ class AssistantCache:
 
     def invalidate_sync(self, assistant_id: str):
         key = self._cache_key(assistant_id)
-        if hasattr(self.redis, "delete") and not asyncio.iscoroutinefunction(self.redis.delete):
+        if hasattr(self.redis, "delete") and not asyncio.iscoroutinefunction(
+            self.redis.delete
+        ):
             self.redis.delete(key)
         else:
             try:

@@ -11,8 +11,9 @@ from projectdavid.events import ScratchpadEvent
 from projectdavid_common.utilities.logging_service import LoggingUtility
 from projectdavid_common.validation import StatusEnum
 
-from src.api.entities_api.services.native_execution_service import \
-    NativeExecutionService
+from src.api.entities_api.services.native_execution_service import (
+    NativeExecutionService,
+)
 from src.api.entities_api.utils.assistant_manager import AssistantManager
 
 LOG = LoggingUtility()
@@ -161,7 +162,11 @@ class DelegationMixin:
         while elapsed < timeout:
             try:
                 run = await self._native_exec.retrieve_run(run_id)
-                status_value = run.status.value if hasattr(run.status, "value") else str(run.status)
+                status_value = (
+                    run.status.value
+                    if hasattr(run.status, "value")
+                    else str(run.status)
+                )
                 LOG.critical(
                     "██████ [DELEGATE_POLL] run_id=%s status=%s elapsed=%.1fs ██████",
                     run_id,
@@ -180,7 +185,9 @@ class DelegationMixin:
             await asyncio.sleep(poll_interval)
             elapsed += poll_interval
         LOG.error("❌[DELEGATE_POLL] run_id=%s timed out after %ss.", run_id, timeout)
-        raise asyncio.TimeoutError(f"Worker run {run_id} did not complete within {timeout}s")
+        raise asyncio.TimeoutError(
+            f"Worker run {run_id} did not complete within {timeout}s"
+        )
 
     # ------------------------------------------------------------------
     # HELPER: Lifecycle cleanup
@@ -196,7 +203,8 @@ class DelegationMixin:
             try:
                 if not user_id:
                     LOG.warning(
-                        "⚠️ [CLEANUP] Cannot delete thread %s — user_id not resolved.", thread_id
+                        "⚠️ [CLEANUP] Cannot delete thread %s — user_id not resolved.",
+                        thread_id,
                     )
                 else:
                     await self._native_exec.delete_thread(thread_id, user_id=user_id)
@@ -251,7 +259,9 @@ class DelegationMixin:
                 "create_ephemeral_worker_assistant: _batfish_owner_user_id has not been "
                 "resolved yet — ensure it is set before calling this method."
             )
-        return await self._assistant_manager.create_ephemeral_worker_assistant(user_id=user_id)
+        return await self._assistant_manager.create_ephemeral_worker_assistant(
+            user_id=user_id
+        )
 
     async def create_ephemeral_junior_engineer(self):
         user_id = getattr(self, "_batfish_owner_user_id", None)
@@ -260,7 +270,9 @@ class DelegationMixin:
                 "create_ephemeral_junior_engineer: _batfish_owner_user_id has not been "
                 "resolved yet — ensure it is set before calling this method."
             )
-        return await self._assistant_manager.create_ephemeral_junior_engineer(user_id=user_id)
+        return await self._assistant_manager.create_ephemeral_junior_engineer(
+            user_id=user_id
+        )
 
     async def create_ephemeral_thread(self):
         user_id = getattr(self, "_batfish_owner_user_id", None)
@@ -278,7 +290,9 @@ class DelegationMixin:
             content=content,
         )
 
-    async def create_ephemeral_run(self, assistant_id, thread_id, meta_data: Dict | None = None):
+    async def create_ephemeral_run(
+        self, assistant_id, thread_id, meta_data: Dict | None = None
+    ):
         user_id = getattr(self, "_batfish_owner_user_id", None)
         if not user_id:
             raise RuntimeError(
@@ -348,7 +362,9 @@ class DelegationMixin:
         else:
             args = arguments_dict
 
-        yield self._research_status("Initializing delegation worker...", "in_progress", run_id)
+        yield self._research_status(
+            "Initializing delegation worker...", "in_progress", run_id
+        )
 
         action = None
         try:
@@ -425,13 +441,17 @@ class DelegationMixin:
                 },
             )
 
-            yield self._research_status("Worker active. Streaming...", "in_progress", run_id)
+            yield self._research_status(
+                "Worker active. Streaming...", "in_progress", run_id
+            )
 
             # ----------------------------------------
             # Retrieve the users inference api key
             # -----------------------------------------
             run_obj = await self._native_exec.retrieve_run(run_id)
-            inference_api_key = run_obj.meta_data.get("api_key") if run_obj.meta_data else None
+            inference_api_key = (
+                run_obj.meta_data.get("api_key") if run_obj.meta_data else None
+            )
             delegated_model = (
                 run_obj.meta_data.get("delegated_model") if run_obj.meta_data else None
             )
@@ -511,7 +531,9 @@ class DelegationMixin:
                     # ---> CATCH INSTANT FAILURE AND READ DB ERROR <---
                     if getattr(event, "status", None) == "failed":
                         try:
-                            failed_run_obj = await self._native_exec.retrieve_run(ephemeral_run.id)
+                            failed_run_obj = await self._native_exec.retrieve_run(
+                                ephemeral_run.id
+                            )
                             last_err = getattr(
                                 failed_run_obj, "last_error", "No error recorded in DB"
                             )
@@ -533,7 +555,9 @@ class DelegationMixin:
                 )
                 if guard2_triggered:
                     tool_calls = getattr(event, "tool_calls", [])
-                    tc_list = tool_calls if isinstance(tool_calls, list) else [tool_calls]
+                    tc_list = (
+                        tool_calls if isinstance(tool_calls, list) else [tool_calls]
+                    )
                     for tc in tc_list:
                         func = getattr(tc, "function", None)
                         if func:
@@ -545,7 +569,9 @@ class DelegationMixin:
                     continue
                 passed_guard2 += 1
 
-                chunk_content = getattr(event, "content", None) or getattr(event, "text", None)
+                chunk_content = getattr(event, "content", None) or getattr(
+                    event, "text", None
+                )
                 chunk_reasoning = getattr(event, "reasoning", None)
 
                 if chunk_reasoning:
@@ -592,7 +618,9 @@ class DelegationMixin:
                     ephemeral_run.id, StatusEnum.completed.value
                 )
             except Exception as e:
-                LOG.warning(f"⚠️ Could not manually close worker run {ephemeral_run.id}: {e}")
+                LOG.warning(
+                    f"⚠️ Could not manually close worker run {ephemeral_run.id}: {e}"
+                )
 
             final_content = captured_stream_content.strip()
 
@@ -656,7 +684,9 @@ class DelegationMixin:
                 # -------------------------------------------------
                 # Scrub the users inference api key from the db
                 # -------------------------------------------------
-                await self._native_exec.update_run_fields(run_id, meta_data={"api_key": "***"})
+                await self._native_exec.update_run_fields(
+                    run_id, meta_data={"api_key": "***"}
+                )
 
             yield self._research_status(
                 "Delegation complete.",

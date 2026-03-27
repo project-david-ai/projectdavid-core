@@ -2,13 +2,13 @@ name: Lint, Test, Build, and Publish Docker Images
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   pull_request:
-    branches: [main, master]
+    branches: [main]
 
 permissions:
-  contents: write          # semantic-release & auto-formatter commits
-  packages: write          # push to Docker Hub / GHCR
+  contents: write
+  packages: write
 
 jobs:
   # ──────────────────────────────────────────────────────────────────────────
@@ -20,7 +20,7 @@ jobs:
 
     steps:
       - name: "🕺 Checkout repository"
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -30,7 +30,7 @@ jobs:
           python-version: "3.11"
 
       - name: "📦 Cache pip dependencies"
-        uses: actions/cache@v5
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-lint-${{ hashFiles('**/*_reqs_*.txt', '**/pyproject.toml') }}
@@ -40,7 +40,7 @@ jobs:
       - name: "⚙️ Install Linting Tools"
         run: |
           python -m pip install --upgrade pip
-          pip install "ruff==0.4.0" black
+          pip install "ruff==0.4.0" "black==24.1.1" "isort==5.13.2" bandit
           sudo wget -qO /usr/local/bin/hadolint \
             https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64
           sudo chmod +x /usr/local/bin/hadolint
@@ -62,6 +62,12 @@ jobs:
             git diff --exit-code || true
           fi
 
+      - name: "🔀 isort (Import Sort Check)"
+        run: isort --check .
+
+      - name: "🛡️ Bandit (Security Analysis)"
+        run: bandit -r src/ -x tests/ -s B101
+
       - name: "🐳 Lint Dockerfiles"
         run: |
           hadolint docker/api/Dockerfile || true
@@ -81,18 +87,16 @@ jobs:
         python-version: ["3.11", "3.12"]
 
     steps:
-      - name: "🕺 Checkout repository"
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: "🐍 Set up Python ${{ matrix.python-version }}"
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: "📦 Cache pip dependencies"
-        uses: actions/cache@v5
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-test-${{ matrix.python-version }}-${{ hashFiles('**/*_reqs_*.txt', '**/pyproject.toml') }}
@@ -118,17 +122,14 @@ jobs:
     name: "🏗️ Verify Docker Builds (Dry Run)"
     runs-on: ubuntu-latest
     needs: test
-    # Run this ONLY on Pull Requests (Feature branches pointing to main)
     if: github.event_name == 'pull_request'
 
     steps:
-      - name: "🕺 Checkout repository"
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
       - name: "⚙️ Setup Docker Buildx"
         uses: docker/setup-buildx-action@v3
 
-      # Build but DO NOT push. This verifies the Dockerfile won't crash in production.
       - name: "🏗️ Build API Image (No Push)"
         uses: docker/build-push-action@v5
         with:
@@ -149,9 +150,7 @@ jobs:
           cache-from: type=gha,scope=sandbox
           cache-to: type=gha,mode=max,scope=sandbox
 
-      # training-api and training-worker share the same Dockerfile.
-      # A single dry-run build is sufficient to verify both.
-      - name: "🏗️ Build Training Image (No Push — covers training-api & training-worker)"
+      - name: "🏗️ Build Training Image (No Push)"
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -168,12 +167,11 @@ jobs:
     name: "🚀 Build, Tag, and Publish Images to Docker Hub"
     runs-on: ubuntu-latest
     needs: test
-    # Run this ONLY on direct pushes/merges to main or master
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
-      - name: "🕺 Checkout repository"
-        uses: actions/checkout@v5
+      - name: "🕺 Checkout"
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: true
@@ -191,7 +189,6 @@ jobs:
           username: thanosprime
           password: ${{ secrets.DOCKERHUB_THANOSPRIME }}
 
-      # ----- semantic-release -------------------------------------------------
       - name: "🚀 Setup Node.js"
         uses: actions/setup-node@v4
         with:
@@ -226,7 +223,6 @@ jobs:
           echo "Detected version: $VERSION"
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
 
-      # ---------------- API image metadata ----------------
       - name: "🔧 Define API Image Metadata"
         id: meta_api
         uses: docker/metadata-action@v5
@@ -237,7 +233,6 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
 
-      # ---------------- Sandbox image metadata ------------
       - name: "🔧 Define Sandbox Image Metadata"
         id: meta_sandbox
         uses: docker/metadata-action@v5
@@ -248,10 +243,6 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
 
-      # ---------------- Training image metadata -----------
-      # training-api and training-worker share one Dockerfile but are published
-      # as two separate Docker Hub repositories so each service can be pulled
-      # independently via its own image name in docker-compose.
       - name: "🔧 Define Training API Image Metadata"
         id: meta_training_api
         uses: docker/metadata-action@v5
@@ -272,7 +263,6 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
 
-      # ---------------- Build / Push API ------------------
       - name: "🏗️ Build & Push API Image"
         uses: docker/build-push-action@v5
         with:
@@ -285,7 +275,6 @@ jobs:
           cache-from: type=gha,scope=api
           cache-to: type=gha,mode=max,scope=api
 
-      # ---------------- Build / Push Sandbox --------------
       - name: "🏗️ Build & Push Sandbox Image"
         uses: docker/build-push-action@v5
         with:
@@ -298,11 +287,6 @@ jobs:
           cache-from: type=gha,scope=sandbox
           cache-to: type=gha,mode=max,scope=sandbox
 
-      # ---------------- Build / Push Training (single build, two repos) ----
-      # The training Dockerfile is built ONCE and pushed simultaneously to
-      # both thanosprime/projectdavid-core-training-api and
-      # thanosprime/projectdavid-core-training-worker by combining the tag
-      # lists from both metadata steps. This avoids a double compile.
       - name: "🏗️ Build & Push Training Images (training-api + training-worker)"
         uses: docker/build-push-action@v5
         with:

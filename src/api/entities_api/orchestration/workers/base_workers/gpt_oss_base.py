@@ -15,21 +15,23 @@ from typing import Any, AsyncGenerator, Dict, Generator, List, Optional, Union
 from dotenv import load_dotenv
 from entities_api.cache.assistant_cache import AssistantCache
 from entities_api.clients.delta_normalizer import DeltaNormalizer
-from entities_api.platform_tools.delegated_model_map.delegation_model_map import \
-    get_delegated_model
+from entities_api.platform_tools.delegated_model_map.delegation_model_map import (
+    get_delegated_model,
+)
 from projectdavid import StreamEvent
 from projectdavid_common.utilities.logging_service import LoggingUtility
 from projectdavid_common.validation import StatusEnum
 
 # --- DEPENDENCIES ---
-from src.api.entities_api.clients.multimodal_utils import (is_multimodal,
-                                                           normalise_for_chat)
+from src.api.entities_api.clients.multimodal_utils import (
+    is_multimodal,
+    normalise_for_chat,
+)
 from src.api.entities_api.dependencies import get_redis, get_redis_sync
-from src.api.entities_api.orchestration.engine.orchestrator_core import \
-    OrchestratorCore
+from src.api.entities_api.orchestration.engine.orchestrator_core import OrchestratorCore
+
 # --- MIXINS ---
-from src.api.entities_api.orchestration.mixins.provider_mixins import \
-    _ProviderMixins
+from src.api.entities_api.orchestration.mixins.provider_mixins import _ProviderMixins
 
 load_dotenv()
 LOG = LoggingUtility()
@@ -83,7 +85,9 @@ class GptOssBaseWorker(
 
         if assistant_cache_service:
             self._assistant_cache = assistant_cache_service
-        elif "assistant_cache" in extra and isinstance(extra["assistant_cache"], AssistantCache):
+        elif "assistant_cache" in extra and isinstance(
+            extra["assistant_cache"], AssistantCache
+        ):
             self._assistant_cache = extra["assistant_cache"]
 
         legacy_config = extra.get("assistant_config") or extra.get("assistant_cache")
@@ -154,7 +158,9 @@ class GptOssBaseWorker(
 
         pre_mapped_model = model
         try:
-            if hasattr(self, "_get_model_map") and (mapped := self._get_model_map(model)):
+            if hasattr(self, "_get_model_map") and (
+                mapped := self._get_model_map(model)
+            ):
                 model = mapped
 
             self.assistant_id = assistant_id
@@ -178,7 +184,9 @@ class GptOssBaseWorker(
             )
             research_worker_setting = str(
                 is_worker_val
-            ).lower() == "true" or self.assistant_config.get("is_research_worker", False)
+            ).lower() == "true" or self.assistant_config.get(
+                "is_research_worker", False
+            )
 
             is_junior_val = raw_meta.get(
                 "junior_engineer", raw_meta.get("junior_engineer_calling", False)
@@ -200,7 +208,8 @@ class GptOssBaseWorker(
                 junior_engineer_setting = False
                 delegation_model = get_delegated_model(requested_model=pre_mapped_model)
                 await self._native_exec.update_run_fields(
-                    run_id, meta_data={"api_key": api_key, "delegated_model": delegation_model}
+                    run_id,
+                    meta_data={"api_key": api_key, "delegated_model": delegation_model},
                 )
 
             elif research_worker_setting:
@@ -256,7 +265,9 @@ class GptOssBaseWorker(
             # ------------------------------------------------------------------
             # 5. IDENTITY SWAP & RELOAD
             # ------------------------------------------------------------------
-            await self._handle_role_based_identity_swap(requested_model=pre_mapped_model)
+            await self._handle_role_based_identity_swap(
+                requested_model=pre_mapped_model
+            )
 
             if self.assistant_id != _original_assistant_id:
                 LOG.info(
@@ -270,7 +281,9 @@ class GptOssBaseWorker(
             if not self._scratch_pad_thread:
                 self._scratch_pad_thread = thread_id
 
-            LOG.info("STREAM ▸ Scratchpad thread pinned to: %s", self._scratch_pad_thread)
+            LOG.info(
+                "STREAM ▸ Scratchpad thread pinned to: %s", self._scratch_pad_thread
+            )
 
             # ------------------------------------------------------------------
             # 6. CONTEXT WINDOW CONSTRUCTION
@@ -313,7 +326,9 @@ class GptOssBaseWorker(
 
             client = self._get_client_instance(api_key=api_key)
 
-            LOG.info(f"\nRAW_CTX_DUMP:\n{json.dumps(cleaned_ctx, indent=2, ensure_ascii=False)}")
+            LOG.info(
+                f"\nRAW_CTX_DUMP:\n{json.dumps(cleaned_ctx, indent=2, ensure_ascii=False)}"
+            )
 
             raw_stream = client.stream_chat_completion(
                 messages=cleaned_ctx,
@@ -361,7 +376,9 @@ class GptOssBaseWorker(
                 except Exception as e:
                     LOG.error(f"Failed to parse decision payload: {e}")
 
-            yield json.dumps({"type": "status", "status": "processing", "run_id": run_id})
+            yield json.dumps(
+                {"type": "status", "status": "processing", "run_id": run_id}
+            )
 
             # GPT-OSS specific: sanitize malformed <fc> tags
             if "<fc>" in accumulated:
@@ -379,9 +396,13 @@ class GptOssBaseWorker(
                             r"^\s*([a-zA-Z0-9_]+)\s*(\{.*)", original_content, re.DOTALL
                         )
                         if fix_match:
-                            func_name, func_args = fix_match.group(1), fix_match.group(2)
+                            func_name, func_args = fix_match.group(1), fix_match.group(
+                                2
+                            )
                             try:
-                                parsed_args, _ = json.JSONDecoder().raw_decode(func_args)
+                                parsed_args, _ = json.JSONDecoder().raw_decode(
+                                    func_args
+                                )
                                 valid_payload = json.dumps(
                                     {"name": func_name, "arguments": parsed_args}
                                 )
@@ -394,7 +415,9 @@ class GptOssBaseWorker(
                 except Exception as e:
                     LOG.error(f"Error during tool call sanitization: {e}")
 
-            tool_calls_batch = self.parse_and_set_function_calls(accumulated, assistant_reply)
+            tool_calls_batch = self.parse_and_set_function_calls(
+                accumulated, assistant_reply
+            )
             message_to_save = assistant_reply
             final_status = StatusEnum.completed.value
 
@@ -422,9 +445,13 @@ class GptOssBaseWorker(
 
                 message_to_save = json.dumps(tool_calls_structure)
 
-                LOG.info(f"\n🚀[L3 AGENT MANIFEST] Turn 1 Batch of {len(tool_calls_structure)}")
+                LOG.info(
+                    f"\n🚀[L3 AGENT MANIFEST] Turn 1 Batch of {len(tool_calls_structure)}"
+                )
                 for item in tool_calls_structure:
-                    LOG.info(f"   ▸ Tool: {item['function']['name']} | ID: {item['id']}")
+                    LOG.info(
+                        f"   ▸ Tool: {item['function']['name']} | ID: {item['id']}"
+                    )
 
             if message_to_save:
                 await self.finalize_conversation(
@@ -434,7 +461,9 @@ class GptOssBaseWorker(
             await self._native_exec.update_run_status(run_id, final_status)
 
             if not tool_calls_batch:
-                yield json.dumps({"type": "status", "status": "complete", "run_id": run_id})
+                yield json.dumps(
+                    {"type": "status", "status": "complete", "run_id": run_id}
+                )
 
         except Exception as exc:
             LOG.error(f"DEBUG: Stream Exception: {exc}")
@@ -493,7 +522,9 @@ class GptOssBaseWorker(
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                agen = self.stream(thread_id, message_id, run_id, assistant_id, model, **kwargs)
+                agen = self.stream(
+                    thread_id, message_id, run_id, assistant_id, model, **kwargs
+                )
                 while True:
                     try:
                         yield loop.run_until_complete(agen.__anext__())
@@ -522,7 +553,9 @@ class GptOssBaseWorker(
             queue_ref.append(q)
 
             async def _drain() -> None:
-                agen = self.stream(thread_id, message_id, run_id, assistant_id, model, **kwargs)
+                agen = self.stream(
+                    thread_id, message_id, run_id, assistant_id, model, **kwargs
+                )
                 try:
                     async for item in agen:
                         q.put(item)

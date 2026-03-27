@@ -59,7 +59,9 @@ def delete_model_endpoint(
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-@router.post("/{model_id}/activate", response_model=ValidationInterface.ActivateModelResponse)
+@router.post(
+    "/{model_id}/activate", response_model=ValidationInterface.ActivateModelResponse
+)
 def activate_model_endpoint(
     model_id: str,
     node_id: Optional[str] = None,
@@ -92,7 +94,9 @@ def activate_model_endpoint(
 
 @router.post("/{model_id}/deactivate")
 def deactivate_model_endpoint(
-    model_id: str, user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)
+    model_id: str,
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
 ):
     """
     Surgically shutdown a specific fine-tuned model deployment.

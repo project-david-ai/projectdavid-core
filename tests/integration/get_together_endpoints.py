@@ -344,7 +344,9 @@ def update_markdown(result: Dict):
             f.write(divider + "\n")
 
             # Sort by Provider, then Model Name
-            sorted_rows = sorted(existing_rows.values(), key=lambda x: x.split("|")[1].strip())
+            sorted_rows = sorted(
+                existing_rows.values(), key=lambda x: x.split("|")[1].strip()
+            )
 
             for row in sorted_rows:
                 f.write(row + "\n")

@@ -113,6 +113,8 @@ if __name__ == "__main__":
 
     else:
         print("Usage:")
-        print("  python script.py ingest                  # Upload inventory + run test searches")
+        print(
+            "  python script.py ingest                  # Upload inventory + run test searches"
+        )
         print("  python script.py device <hostname>       # Look up a specific device")
         print("  python script.py group  <group_name>     # Search by group")

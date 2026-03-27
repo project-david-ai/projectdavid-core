@@ -3,8 +3,7 @@
 import os
 
 from dotenv import load_dotenv
-from entities_api.orchestration.instructions.assembler import \
-    assemble_instructions
+from entities_api.orchestration.instructions.assembler import assemble_instructions
 from projectdavid import Entity
 
 # ------------------------------------------------------------------

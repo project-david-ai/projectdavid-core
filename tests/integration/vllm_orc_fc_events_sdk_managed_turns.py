@@ -13,8 +13,13 @@ import time
 
 from config_orc_fc import config
 from dotenv import load_dotenv
-from projectdavid import (ContentEvent, DecisionEvent, Entity, ReasoningEvent,
-                          ToolCallRequestEvent)
+from projectdavid import (
+    ContentEvent,
+    DecisionEvent,
+    Entity,
+    ReasoningEvent,
+    ToolCallRequestEvent,
+)
 
 load_dotenv()
 
@@ -44,9 +49,7 @@ MODEL_ID = "vllm/Qwen/Qwen2.5-3B-Instruct"
 # vLLM server URL — passed via meta_data so the worker knows where to connect
 VLLM_BASE_URL = os.getenv("VLLM_BASE_URL", "http://vllm_server:8000")
 
-TEST_PROMPT = (
-    "Please provide the flight times for a trip departing from Tokyo and arriving in Sydney?"
-)
+TEST_PROMPT = "Please provide the flight times for a trip departing from Tokyo and arriving in Sydney?"
 
 
 # ------------------------------------------------------------------
@@ -132,7 +135,9 @@ try:
                 event.execute(handler)
                 print(f"{GREEN}[✓] Result submitted — resuming stream...{RESET}\n")
             else:
-                print(f"{RED}[!] Unknown tool: '{event.tool_name}' — not in registry{RESET}")
+                print(
+                    f"{RED}[!] Unknown tool: '{event.tool_name}' — not in registry{RESET}"
+                )
 
 except Exception as e:
     print(f"{RED}[ERROR] {e}{RESET}")

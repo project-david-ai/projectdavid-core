@@ -33,7 +33,9 @@ class UniversalWebReader:
 
         # Config
         self.CHUNK_SIZE = 4000
-        self.browser_ws = os.getenv("BROWSER_WS_ENDPOINT", None)  # e.g. ws://browser:3000
+        self.browser_ws = os.getenv(
+            "BROWSER_WS_ENDPOINT", None
+        )  # e.g. ws://browser:3000
         self.has_curl = shutil.which("curl") is not None
 
         self.garbage_triggers = [
@@ -69,7 +71,9 @@ class UniversalWebReader:
 
         # 3. Validate & Failover to Browser
         if not self._is_valid_content(content):
-            logger.info("⚠️ Static fetch failed/garbage. Switching to Sidecar Browser...")
+            logger.info(
+                "⚠️ Static fetch failed/garbage. Switching to Sidecar Browser..."
+            )
             content = await self._fetch_dynamic(url)
             source = "Dynamic (Browser)"
 
@@ -81,7 +85,9 @@ class UniversalWebReader:
         chunks = self._chunk_text(clean_text)
 
         # 5. Save to your Redis Cache
-        await self.cache.save_session(url=url, full_text=clean_text, chunks=chunks, source=source)
+        await self.cache.save_session(
+            url=url, full_text=clean_text, chunks=chunks, source=source
+        )
 
         # 6. Return Page 0
         return await self.cache.get_page_view(url, 0)
@@ -97,7 +103,9 @@ class UniversalWebReader:
 
     def _chunk_text(self, text: str) -> List[str]:
         """Splits text into 4000-char pages."""
-        return [text[i : i + self.CHUNK_SIZE] for i in range(0, len(text), self.CHUNK_SIZE)]
+        return [
+            text[i : i + self.CHUNK_SIZE] for i in range(0, len(text), self.CHUNK_SIZE)
+        ]
 
     def _is_valid_content(self, text: str) -> bool:
         """Detects if we got a 'Please enable JS' stub."""

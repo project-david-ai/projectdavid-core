@@ -47,18 +47,24 @@ class MessageCache:
 
     @property
     def _message_svc(self):
-        if not hasattr(self, "_message_svc_instance") or self._message_svc_instance is None:
-            from src.api.entities_api.services.message_service import \
-                MessageService
+        if (
+            not hasattr(self, "_message_svc_instance")
+            or self._message_svc_instance is None
+        ):
+            from src.api.entities_api.services.message_service import MessageService
 
             self._message_svc_instance = MessageService()
         return self._message_svc_instance
 
     @property
     def _native_exec(self):
-        if not hasattr(self, "_native_exec_instance") or self._native_exec_instance is None:
-            from src.api.entities_api.services.native_execution_service import \
-                NativeExecutionService
+        if (
+            not hasattr(self, "_native_exec_instance")
+            or self._native_exec_instance is None
+        ):
+            from src.api.entities_api.services.native_execution_service import (
+                NativeExecutionService,
+            )
 
             self._native_exec_instance = NativeExecutionService()
         return self._native_exec_instance
@@ -168,7 +174,9 @@ class MessageCache:
         if raw_list:
             return [json.loads(m) for m in raw_list]
 
-        LOG.debug(f"[CACHE-SYNC] Miss for thread {thread_id}. Performing sync cold load.")
+        LOG.debug(
+            f"[CACHE-SYNC] Miss for thread {thread_id}. Performing sync cold load."
+        )
 
         try:
             full_hist = self._message_svc.get_raw_messages_internal(thread_id)

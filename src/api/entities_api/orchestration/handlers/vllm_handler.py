@@ -4,10 +4,10 @@ from typing import Any, AsyncGenerator, Optional, Type
 
 from projectdavid_common.utilities.logging_service import LoggingUtility
 
-from src.api.entities_api.orchestration.engine.inference_arbiter import \
-    InferenceArbiter
-from src.api.entities_api.orchestration.workers.vllm.vllm_default import \
-    VllmDefaultWorker
+from src.api.entities_api.orchestration.engine.inference_arbiter import InferenceArbiter
+from src.api.entities_api.orchestration.workers.vllm.vllm_default import (
+    VllmDefaultWorker,
+)
 
 LOG = LoggingUtility()
 
@@ -28,7 +28,9 @@ class VllmHandler:
         self.arbiter = arbiter
         # Sort keys by length descending. This ensures that if we ever add a specific
         # long-form override, it matches before the generic family prefix.
-        self._sorted_sub_routes = sorted(self.SUBMODEL_CLASS_MAP.keys(), key=len, reverse=True)
+        self._sorted_sub_routes = sorted(
+            self.SUBMODEL_CLASS_MAP.keys(), key=len, reverse=True
+        )
         LOG.info("OllamaHandler consolidated dispatcher initialized.")
 
     def _get_specific_handler_instance(self, unified_model_id: str) -> Any:
@@ -43,7 +45,9 @@ class VllmHandler:
             sub_model_id = lower_id[len(prefix) :]
         else:
             sub_model_id = lower_id
-            LOG.warning(f"Model ID '{unified_model_id}' missing expected prefix '{prefix}'.")
+            LOG.warning(
+                f"Model ID '{unified_model_id}' missing expected prefix '{prefix}'."
+            )
 
         specific_cls: Optional[Type[Any]] = None
 

@@ -76,7 +76,9 @@ class AssistantService:
         user_id: str,
     ) -> validator.AssistantRead:
         with SessionLocal() as db:
-            assistant_id = assistant.id or UtilsInterface.IdentifierService.generate_assistant_id()
+            assistant_id = (
+                assistant.id or UtilsInterface.IdentifierService.generate_assistant_id()
+            )
 
             existing = db.query(Assistant).filter(Assistant.id == assistant_id).first()
             if existing:
@@ -201,13 +203,17 @@ class AssistantService:
 
             if "users" in data:
                 db_asst.users = (
-                    db.query(User).filter(User.id.in_(self._extract_ids(data["users"]))).all()
+                    db.query(User)
+                    .filter(User.id.in_(self._extract_ids(data["users"])))
+                    .all()
                 )
 
             if "vector_stores" in data:
                 db_asst.vector_stores = (
                     db.query(VectorStore)
-                    .filter(VectorStore.id.in_(self._extract_ids(data["vector_stores"])))
+                    .filter(
+                        VectorStore.id.in_(self._extract_ids(data["vector_stores"]))
+                    )
                     .all()
                 )
 
@@ -243,7 +249,9 @@ class AssistantService:
             # Merge: owned_by_column takes precedence; add any legacy-only entries
             owned_ids = {a.id for a in owned_by_column}
             legacy_only = [
-                a for a in user.assistants if a.id not in owned_ids and a.deleted_at is None
+                a
+                for a in user.assistants
+                if a.id not in owned_ids and a.deleted_at is None
             ]
 
             all_assistants = owned_by_column + legacy_only
@@ -275,7 +283,9 @@ class AssistantService:
             self._assert_owner(db_asst, user_id)
 
             if permanent:
-                logging_utility.warning(f"PERMANENTLY deleting assistant {assistant_id}")
+                logging_utility.warning(
+                    f"PERMANENTLY deleting assistant {assistant_id}"
+                )
                 db_asst.users = []
                 db_asst.vector_stores = []
                 db.delete(db_asst)
@@ -309,7 +319,9 @@ class AssistantService:
             if db_asst not in user.assistants:
                 user.assistants.append(db_asst)
                 db.commit()
-                logging_utility.info(f"Associated assistant {assistant_id} with user {user_id}")
+                logging_utility.info(
+                    f"Associated assistant {assistant_id} with user {user_id}"
+                )
 
     def disassociate_assistant_from_user(self, user_id: str, assistant_id: str) -> None:
         with SessionLocal() as db:
@@ -328,7 +340,9 @@ class AssistantService:
             if db_asst in user.assistants:
                 user.assistants.remove(db_asst)
                 db.commit()
-                logging_utility.info(f"Disassociated assistant {assistant_id} from user {user_id}")
+                logging_utility.info(
+                    f"Disassociated assistant {assistant_id} from user {user_id}"
+                )
 
     # ────────────────────────────────────────────────
     # Mapper

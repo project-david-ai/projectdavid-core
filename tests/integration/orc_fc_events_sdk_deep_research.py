@@ -13,8 +13,14 @@ import time
 # Import the project classes
 from config_orc_fc_deep_research import config
 from dotenv import load_dotenv
-from projectdavid import (ContentEvent, DecisionEvent, Entity, ReasoningEvent,
-                          StatusEvent, ToolCallRequestEvent)
+from projectdavid import (
+    ContentEvent,
+    DecisionEvent,
+    Entity,
+    ReasoningEvent,
+    StatusEvent,
+    ToolCallRequestEvent,
+)
 
 # ------------------------------------------------------------------
 # 0. CONFIGURATION
@@ -109,7 +115,9 @@ last_tick = time.perf_counter()
 
 try:
     # Use your preferred provider/model kw args here if needed by the backend
-    for event in stream.stream_events(provider=config.get("provider"), model=config.get("model")):
+    for event in stream.stream_events(
+        provider=config.get("provider"), model=config.get("model")
+    ):
 
         # Timing
         current_tick = time.perf_counter()
@@ -127,7 +135,9 @@ try:
             # FIX: Access .status safely instead of .state
             content = event.message or getattr(event, "status", "processing")
 
-            print(f"{GREY}{time_str:<12}{RESET} | {BLUE}{'STATUS (Worker)':<25}{RESET} | {content}")
+            print(
+                f"{GREY}{time_str:<12}{RESET} | {BLUE}{'STATUS (Worker)':<25}{RESET} | {content}"
+            )
 
         # B. Content Event -> The tokens appearing on screen
         elif isinstance(event, ContentEvent):

@@ -162,7 +162,9 @@ def run_sweep() -> dict:
 
     # ── Guard rails ──────────────────────────────────────────────────────────
     if not all([ADMIN_API_KEY, SACRIFICIAL_API_KEY, SACRIFICIAL_USER_ID]):
-        print("  [SKIP] Missing ADMIN_API_KEY, SACRIFICIAL_API_KEY, or SACRIFICIAL_USER_ID")
+        print(
+            "  [SKIP] Missing ADMIN_API_KEY, SACRIFICIAL_API_KEY, or SACRIFICIAL_USER_ID"
+        )
         return {"passed": 0, "failed": 0, "skipped": 1}
 
     # ── SDK clients ──────────────────────────────────────────────────────────
@@ -353,7 +355,11 @@ def run_sweep() -> dict:
                     f"deleted_at={row['deleted_at']}",
                 )
             else:
-                _record("Test 8: Exclusively-owned assistant is soft-deleted", False, "row missing")
+                _record(
+                    "Test 8: Exclusively-owned assistant is soft-deleted",
+                    False,
+                    "row missing",
+                )
 
         # Audit log preserved with user_id = NULL
         row = _db_fetchone(

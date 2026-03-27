@@ -7,13 +7,15 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 # --- Core Dependencies ---
-from src.api.entities_api.dependencies import (get_api_key, get_db,
-                                               get_scratchpad_service,
-                                               get_web_reader)
+from src.api.entities_api.dependencies import (
+    get_api_key,
+    get_db,
+    get_scratchpad_service,
+    get_web_reader,
+)
 from src.api.entities_api.models.models import ApiKey as ApiKeyModel
 from src.api.entities_api.models.models import User as UserModel
-from src.api.entities_api.orchestration.mixins.web_search_mixin import \
-    SearxNGClient
+from src.api.entities_api.orchestration.mixins.web_search_mixin import SearxNGClient
 from src.api.entities_api.services.logging_service import LoggingUtility
 from src.api.entities_api.services.web_reader import UniversalWebReader
 from src.api.entities_api.utils.check_admin_status import _is_admin
@@ -70,7 +72,9 @@ def verify_admin_privileges(db: Session, auth_key: ApiKeyModel) -> UserModel:
     Returns the admin UserModel on success.
     """
     if not _is_admin(auth_key.user_id, db):
-        logging_utility.warning(f"Unauthorized web access attempt by user ID: {auth_key.user_id}")
+        logging_utility.warning(
+            f"Unauthorized web access attempt by user ID: {auth_key.user_id}"
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin privileges required to use Web Tools.",
@@ -96,7 +100,9 @@ async def read_url(
     **Security:** Admin Only.
     """
     admin_user = verify_admin_privileges(db, auth_key)
-    logging_utility.info(f"Admin '{admin_user.email}' requesting to read URL: {payload.url}")
+    logging_utility.info(
+        f"Admin '{admin_user.email}' requesting to read URL: {payload.url}"
+    )
     try:
         result = await reader.read(payload.url, force_refresh=payload.force_refresh)
         return {"content": result}

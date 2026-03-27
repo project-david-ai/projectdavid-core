@@ -215,7 +215,9 @@ def run_daemon() -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Soft-deleted file hard-purge utility")
     parser.add_argument("--once", action="store_true", help="Single pass then exit")
-    parser.add_argument("--skip-wait", action="store_true", help="Skip DB readiness check")
+    parser.add_argument(
+        "--skip-wait", action="store_true", help="Skip DB readiness check"
+    )
     args = parser.parse_args()
 
     if not args.skip_wait:

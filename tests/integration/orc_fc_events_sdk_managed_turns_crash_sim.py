@@ -12,9 +12,15 @@ import time
 
 from config_orc_fc import config
 from dotenv import load_dotenv
+
 # Import the project classes
-from projectdavid import (ContentEvent, DecisionEvent, Entity, ReasoningEvent,
-                          ToolCallRequestEvent)
+from projectdavid import (
+    ContentEvent,
+    DecisionEvent,
+    Entity,
+    ReasoningEvent,
+    ToolCallRequestEvent,
+)
 
 # ------------------------------------------------------------------
 # 0. CONFIGURATION & SDK INIT
@@ -37,7 +43,9 @@ HYPERBOLIC_API_KEY = os.getenv("HYPERBOLIC_API_KEY")
 MODEL_ID = config.get("model", "together-ai/mistralai/Ministral-3-14B-Instruct-2512")
 PROVIDER_KW = config.get("provider", "Hyperbolic")
 ASSISTANT_ID = config.get("assistant_id", "asst_13HyDgBnZxVwh5XexYu74F")
-TEST_PROMPT = config.get("test_prompt", "Please fetch me the flight times between LAX and JFK.")
+TEST_PROMPT = config.get(
+    "test_prompt", "Please fetch me the flight times between LAX and JFK."
+)
 
 print(f"{GREY}[CONFIG] Model: {MODEL_ID} | Provider: {PROVIDER_KW}{RESET}")
 
@@ -63,7 +71,9 @@ def get_flight_times(tool_name: str, arguments: dict) -> str:
 
     # SIMULATE A CRASH ON TURN 1
     if EXECUTION_ATTEMPTS == 1:
-        print(f"{RED}   -> [SIMULATED ERROR] Triggering fake Database Timeout...{RESET}")
+        print(
+            f"{RED}   -> [SIMULATED ERROR] Triggering fake Database Timeout...{RESET}"
+        )
         raise Exception(
             "Database Connection Timeout: The flight server is currently not responding."
         )
@@ -165,9 +175,13 @@ try:
             if handler:
                 success = event.execute(handler)
                 if success:
-                    print(f"{GREEN}[✓] Feedback/Result Submitted. Turn complete.{RESET}\n")
+                    print(
+                        f"{GREEN}[✓] Feedback/Result Submitted. Turn complete.{RESET}\n"
+                    )
             else:
-                print(f"{RED}[!] No local handler found for tool: {event.tool_name}{RESET}")
+                print(
+                    f"{RED}[!] No local handler found for tool: {event.tool_name}{RESET}"
+                )
 
 except Exception as e:
     print(f"{RED}[!] Error in loop: {e}{RESET}")

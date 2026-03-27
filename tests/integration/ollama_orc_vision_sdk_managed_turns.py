@@ -12,8 +12,13 @@ import os
 import time
 
 from dotenv import load_dotenv
-from projectdavid import (ContentEvent, DecisionEvent, Entity, ReasoningEvent,
-                          ToolCallRequestEvent)
+from projectdavid import (
+    ContentEvent,
+    DecisionEvent,
+    Entity,
+    ReasoningEvent,
+    ToolCallRequestEvent,
+)
 
 load_dotenv()
 
@@ -37,7 +42,9 @@ API_KEY = os.getenv("ENTITIES_API_KEY")
 MODEL_ID = "ollama/minicpm-v:8b"  # ← swap to your loaded vision model id
 
 
-VISION_PROMPT = "What are the differences between these two images? Please describe them in detail."
+VISION_PROMPT = (
+    "What are the differences between these two images? Please describe them in detail."
+)
 
 
 # ------------------------------------------------------------------
@@ -59,8 +66,14 @@ payload_content = [
         "type": "text",
         "text": VISION_PROMPT,
     },
-    {"type": "image_url", "image_url": {"url": "https://picsum.photos/id/1015/800/600"}},
-    {"type": "image_url", "image_url": {"url": "https://picsum.photos/id/1016/800/600"}},
+    {
+        "type": "image_url",
+        "image_url": {"url": "https://picsum.photos/id/1015/800/600"},
+    },
+    {
+        "type": "image_url",
+        "image_url": {"url": "https://picsum.photos/id/1016/800/600"},
+    },
     # Uncomment to also send a local base64 image:
     # {
     #     "type": "image_url",
@@ -106,9 +119,13 @@ last_user = user_msgs[-1] if user_msgs else {}
 content = last_user.get("content", "")
 if isinstance(content, list):
     image_blocks = [b for b in content if b.get("type") == "image"]
-    print(f"{GREEN}[✓] Hydrated image blocks in formatted payload: {len(image_blocks)}{RESET}\n")
+    print(
+        f"{GREEN}[✓] Hydrated image blocks in formatted payload: {len(image_blocks)}{RESET}\n"
+    )
 else:
-    print(f"{YELLOW}[!] No image blocks found in formatted payload — check hydration{RESET}\n")
+    print(
+        f"{YELLOW}[!] No image blocks found in formatted payload — check hydration{RESET}\n"
+    )
 
 # ------------------------------------------------------------------
 # Run + Stream Setup
