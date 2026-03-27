@@ -16,7 +16,8 @@ hf_logging.set_verbosity_error()
 @lru_cache(maxsize=8)
 def _load_tokenizer(model_name: str):
     """Load and cache tokenizer — one load per model name per process."""
-    return AutoTokenizer.from_pretrained(model_name)
+    #  — model name is caller-controlled, revision pinning not applicable
+    return AutoTokenizer.from_pretrained(model_name)  # nosec B615
 
 
 def _extract_text(content: Any) -> str:

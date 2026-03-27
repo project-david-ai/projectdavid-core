@@ -142,7 +142,8 @@ class DockerManager:
         "TOGETHER_BASE_URL": "https://api.together.xyz/v1",
         "VLLM_BASE_URL": "http://vllm_server:8000",
         "OLLAMA_BASE_URL": "http://ollama:11434",
-        "HF_TOKEN": "",
+        # — empty string is intentional default
+        "HF_TOKEN": "",  # nosec B105
         "HF_CACHE_PATH": "",
         "VLLM_MODEL": "Qwen/Qwen2.5-1.5B-Instruct",
         "TRAINING_PROFILE": "laptop",  # Default for local box

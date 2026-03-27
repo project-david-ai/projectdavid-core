@@ -78,7 +78,8 @@ def main():
     )
 
     # 4. Process Dataset
-    dataset = load_dataset("json", data_files=args.data, split="train")
+    # — local file, not hub download
+    dataset = load_dataset("json", data_files=args.data, split="train")  # nosec B615
 
     def format_prompts(examples):
         texts = []
@@ -125,7 +126,8 @@ def main():
             # This is the secret sauce: tells TRL not to touch the tokens
             dataset_kwargs={
                 "add_special_tokens": False,
-                "append_concat_token": False,
+                #  — boolean config value, not a password
+                "append_concat_token": False,  # nosec B105
             },
         ),
     )

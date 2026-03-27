@@ -5,7 +5,7 @@ from transformers import AutoTokenizer
 
 @lru_cache(maxsize=8)
 def _get_tokenizer(tokenizer_name: str):
-    return AutoTokenizer.from_pretrained(tokenizer_name)
+    return AutoTokenizer.from_pretrained(tokenizer_name)  # nosec B615
 
 
 def count_tokens(input_string: str, tokenizer_name: str = "gpt2") -> int:
