@@ -170,7 +170,8 @@ async def stream_ollama_raw(
     if tools:
         payload["tools"] = tools
 
-    async with httpx.AsyncClient(timeout=None) as client:
+    # — streaming requires no timeout
+    async with httpx.AsyncClient(timeout=None) as client:  # nosec B113
         async with client.stream("POST", url, json=payload) as response:
             if response.status_code != 200:
                 body = await response.aread()
