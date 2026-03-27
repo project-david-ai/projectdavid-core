@@ -13,6 +13,21 @@
 * implement smart database URL mapping for local development ([ebe3083](https://github.com/project-david-ai/projectdavid-core/commit/ebe3083894977c290006bf9e47d3018b47c6853b))
 * replace ensure_schema with Alembic for schema management ([eb415b1](https://github.com/project-david-ai/projectdavid-core/commit/eb415b11b344487485dd4eaa2885ac2cb7a71bda))
 
+# [1.28.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.27.1...v1.28.0) (2026-03-27)
+
+
+### Bug Fixes
+
+* add nosec markers for bandit 1.9.4 new checks and pin bandit version in CI ([0325a62](https://github.com/project-david-ai/projectdavid-core/commit/0325a62c63221758896abc7b326bdffb72febb59))
+* Resolve Ruff (F821): src/api/training/routers/__init__.py#L13 ([7ea997b](https://github.com/project-david-ai/projectdavid-core/commit/7ea997b3d6479228811c8bbbae8c18bba1e676e5)), closes [src/api/training/routers/__init__.py#L13](https://github.com/src/api/training/routers/__init__.py/issues/L13)
+
+
+### Features
+
+* add base model registry API (schemas, service, router) ([922d9f3](https://github.com/project-david-ai/projectdavid-core/commit/922d9f30cf64069b419188efbfd8e291cd539b42))
+* implement smart database URL mapping for local development ([ebe3083](https://github.com/project-david-ai/projectdavid-core/commit/ebe3083894977c290006bf9e47d3018b47c6853b))
+* replace ensure_schema with Alembic for schema management ([eb415b1](https://github.com/project-david-ai/projectdavid-core/commit/eb415b11b344487485dd4eaa2885ac2cb7a71bda))
+
 ## [1.27.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.27.0...v1.27.1) (2026-03-24)
 
 
