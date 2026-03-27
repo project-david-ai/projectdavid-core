@@ -40,7 +40,7 @@ jobs:
       - name: "⚙️ Install Linting Tools"
         run: |
           python -m pip install --upgrade pip
-          pip install "ruff==0.4.0" "black==24.1.1" "isort==5.13.2" bandit
+          pip install "ruff==0.4.0" "black==24.1.1" "isort==5.13.2" bandit mypy
           sudo wget -qO /usr/local/bin/hadolint \
             https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64
           sudo chmod +x /usr/local/bin/hadolint
@@ -66,7 +66,12 @@ jobs:
         run: isort --check .
 
       - name: "🛡️ Bandit (Security Analysis)"
-        run: bandit -r src/ -x tests/ -s B101
+        run: bandit -r src/ -x tests/ -s B101 -c .bandit.yml
+
+      - name: "🛡️ Mypy (Static Type Analysis)"
+        # Non-blocking — core uses src.api.* import style which causes
+        # dual-discovery with mypy. Tracked for future import normalisation.
+        run: mypy src --ignore-missing-imports || true
 
       - name: "🐳 Lint Dockerfiles"
         run: |
