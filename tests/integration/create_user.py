@@ -1,10 +1,11 @@
 import os
-
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 from projectdavid import Entity
 
-load_dotenv()
-client = Entity(api_key=os.getenv("ADMIN_API_KEY"))
+
+load_dotenv(".tests.env")
+
+client = Entity(api_key=os.getenv("DEV_PROJECT_DAVID_CORE_ADMIN_KEY"))
 
 
 sacrificial_user = client.users.create_user(
