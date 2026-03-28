@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="520" viewBox="0 0 900 520">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="#2E75B6" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="arrow-gray" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="#888780" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <style>
+      text { font-family: Arial, sans-serif; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="520" fill="#ffffff" rx="16"/>
+
+  <!-- Title -->
+  <text x="450" y="38" text-anchor="middle" font-size="18" font-weight="500" fill="#1E3A5F">Project David — Core to Platform Pipeline</text>
+  <text x="450" y="58" text-anchor="middle" font-size="12" fill="#555555">From research codebase to sovereign air-gapped AI deployment</text>
+
+  <!-- ── STAGE 1: projectdavid-core ── -->
+  <rect x="30" y="86" width="180" height="100" rx="10" fill="#F2F4F7" stroke="#5F5E5A" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <text x="120" y="110" text-anchor="middle" font-size="11" font-weight="500" fill="#1E3A5F">projectdavid-core</text>
+  <text x="120" y="128" text-anchor="middle" font-size="10" fill="#555555">Runtime API engine</text>
+  <text x="120" y="144" text-anchor="middle" font-size="10" fill="#555555">AI orchestration</text>
+  <text x="120" y="160" text-anchor="middle" font-size="10" fill="#555555">Training pipeline</text>
+  <text x="120" y="174" text-anchor="middle" font-size="10" fill="#888780">git clone only</text>
+
+  <!-- Arrow 1→2 -->
+  <line x1="210" y1="136" x2="248" y2="136" stroke="#2E75B6" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
+  <text x="229" y="126" text-anchor="middle" font-size="9" fill="#888780">builds</text>
+
+  <!-- ── STAGE 2: Docker Images ── -->
+  <rect x="250" y="86" width="160" height="100" rx="10" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.75"/>
+  <text x="330" y="110" text-anchor="middle" font-size="11" font-weight="500" fill="#1E3A5F">Docker Images</text>
+  <text x="330" y="128" text-anchor="middle" font-size="10" fill="#555555">core-api  :latest</text>
+  <text x="330" y="144" text-anchor="middle" font-size="10" fill="#555555">core-sandbox  :latest</text>
+  <text x="330" y="160" text-anchor="middle" font-size="10" fill="#555555">core-training-api</text>
+  <text x="330" y="174" text-anchor="middle" font-size="10" fill="#185FA5">Docker Hub — thanosprime</text>
+
+  <!-- Arrow 2→3 -->
+  <line x1="410" y1="136" x2="448" y2="136" stroke="#2E75B6" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
+  <text x="429" y="126" text-anchor="middle" font-size="9" fill="#888780">pulled by</text>
+
+  <!-- ── STAGE 3: projectdavid-platform ── -->
+  <rect x="450" y="86" width="180" height="100" rx="10" fill="#EDE0F5" stroke="#534AB7" stroke-width="1"/>
+  <text x="540" y="110" text-anchor="middle" font-size="11" font-weight="500" fill="#1E3A5F">projectdavid-platform</text>
+  <text x="540" y="128" text-anchor="middle" font-size="10" fill="#555555">pip install</text>
+  <text x="540" y="144" text-anchor="middle" font-size="10" fill="#555555">Docker Compose orchestration</text>
+  <text x="540" y="160" text-anchor="middle" font-size="10" fill="#555555">pdavid --mode up</text>
+  <text x="540" y="174" text-anchor="middle" font-size="10" fill="#534AB7">PyPI — 10K+ downloads</text>
+
+  <!-- Arrow 3→4 -->
+  <line x1="630" y1="136" x2="668" y2="136" stroke="#2E75B6" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
+  <text x="649" y="126" text-anchor="middle" font-size="9" fill="#888780">deploys</text>
+
+  <!-- ── STAGE 4: Live Stack ── -->
+  <rect x="670" y="86" width="200" height="100" rx="10" fill="#D6F0E0" stroke="#1A6B3C" stroke-width="1"/>
+  <text x="770" y="110" text-anchor="middle" font-size="11" font-weight="500" fill="#1E3A5F">Sovereign AI Stack</text>
+  <text x="770" y="128" text-anchor="middle" font-size="10" fill="#555555">API · DB · Sandbox · Search</text>
+  <text x="770" y="144" text-anchor="middle" font-size="10" fill="#555555">Ollama · vLLM · Ray cluster</text>
+  <text x="770" y="160" text-anchor="middle" font-size="10" fill="#1A6B3C">Fully air-gapped at runtime</text>
+  <text x="770" y="174" text-anchor="middle" font-size="10" fill="#1A6B3C">No external dependencies</text>
+
+  <!-- ── SHARED PACKAGES ROW (below) ── -->
+  <text x="450" y="222" text-anchor="middle" font-size="10" fill="#888780" letter-spacing="0.06em">SHARED ECOSYSTEM PACKAGES  —  consumed by core, platform and SDK</text>
+
+  <!-- common -->
+  <rect x="30" y="236" width="190" height="64" rx="8" fill="#D5E8F0" stroke="#185FA5" stroke-width="0.75"/>
+  <text x="125" y="256" text-anchor="middle" font-size="11" font-weight="500" fill="#1E3A5F">projectdavid-common</text>
+  <text x="125" y="272" text-anchor="middle" font-size="10" fill="#555555">Shared models · schemas · utils</text>
+  <text x="125" y="288" text-anchor="middle" font-size="10" fill="#185FA5">64,651 downloads · 105 countries</text>
+
+  <!-- orm -->
+  <rect x="240" y="236" width="190" height="64" rx="8" fill="#D5E8F0" stroke="#185FA5" stroke-width="0.75"/>
+  <text x="335" y="256" text-anchor="middle" font-size="11" font-weight="500" fill="#1E3A5F">projectdavid-orm</text>
+  <text x="335" y="272" text-anchor="middle" font-size="10" fill="#555555">Database ORM layer</text>
+  <text x="335" y="288" text-anchor="middle" font-size="10" fill="#185FA5">4,095 downloads — week 1</text>
+
+  <!-- services -->
+  <rect x="450" y="236" width="190" height="64" rx="8" fill="#D5E8F0" stroke="#185FA5" stroke-width="0.75"/>
+  <text x="545" y="256" text-anchor="middle" font-size="11" font-weight="500" fill="#1E3A5F">projectdavid-services</text>
+  <text x="545" y="272" text-anchor="middle" font-size="10" fill="#555555">Shared service layer</text>
+  <text x="545" y="288" text-anchor="middle" font-size="10" fill="#185FA5">3,968 downloads — week 1</text>
+
+  <!-- sdk -->
+  <rect x="660" y="236" width="210" height="64" rx="8" fill="#EDE0F5" stroke="#534AB7" stroke-width="0.75"/>
+  <text x="765" y="256" text-anchor="middle" font-size="11" font-weight="500" fill="#1E3A5F">projectdavid  (SDK)</text>
+  <text x="765" y="272" text-anchor="middle" font-size="10" fill="#555555">Python client · API interface</text>
+  <text x="765" y="288" text-anchor="middle" font-size="10" fill="#534AB7">190,777 downloads · 30+ countries</text>
+
+  <!-- Dotted upward connectors from shared packages to pipeline -->
+  <line x1="125" y1="236" x2="125" y2="186" stroke="#888780" stroke-width="0.75" stroke-dasharray="3 2" fill="none" marker-end="url(#arrow-gray)"/>
+  <line x1="335" y1="236" x2="335" y2="186" stroke="#888780" stroke-width="0.75" stroke-dasharray="3 2" fill="none" marker-end="url(#arrow-gray)"/>
+  <line x1="545" y1="236" x2="545" y2="186" stroke="#888780" stroke-width="0.75" stroke-dasharray="3 2" fill="none" marker-end="url(#arrow-gray)"/>
+  <line x1="765" y1="236" x2="765" y2="186" stroke="#888780" stroke-width="0.75" stroke-dasharray="3 2" fill="none" marker-end="url(#arrow-gray)"/>
+
+  <!-- ── STATS ROW ── -->
+  <line x1="30" y1="330" x2="870" y2="330" stroke="#E6F1FB" stroke-width="1"/>
+
+  <rect x="30" y="344" width="200" height="60" rx="8" fill="#FFF3CC" stroke="#7B5E00" stroke-width="0.75"/>
+  <text x="130" y="366" text-anchor="middle" font-size="14" font-weight="500" fill="#1E3A5F">273,753+</text>
+  <text x="130" y="384" text-anchor="middle" font-size="10" fill="#555555">total ecosystem downloads</text>
+  <text x="130" y="398" text-anchor="middle" font-size="10" fill="#7B5E00">all packages combined</text>
+
+  <rect x="250" y="344" width="200" height="60" rx="8" fill="#FFF3CC" stroke="#7B5E00" stroke-width="0.75"/>
+  <text x="350" y="366" text-anchor="middle" font-size="14" font-weight="500" fill="#1E3A5F">105 countries</text>
+  <text x="350" y="384" text-anchor="middle" font-size="10" fill="#555555">verified deployment footprint</text>
+  <text x="350" y="398" text-anchor="middle" font-size="10" fill="#7B5E00">via projectdavid-common proxy</text>
+
+  <rect x="470" y="344" width="200" height="60" rx="8" fill="#FFF3CC" stroke="#7B5E00" stroke-width="0.75"/>
+  <text x="570" y="366" text-anchor="middle" font-size="14" font-weight="500" fill="#1E3A5F">119,853</text>
+  <text x="570" y="384" text-anchor="middle" font-size="10" fill="#555555">enterprise mirror events</text>
+  <text x="570" y="398" text-anchor="middle" font-size="10" fill="#7B5E00">bandersnatch · Nexus · devpi</text>
+
+  <rect x="690" y="344" width="180" height="60" rx="8" fill="#FFF3CC" stroke="#7B5E00" stroke-width="0.75"/>
+  <text x="780" y="366" text-anchor="middle" font-size="14" font-weight="500" fill="#1E3A5F">47%</text>
+  <text x="780" y="384" text-anchor="middle" font-size="10" fill="#555555">SDK downloads via mirrors</text>
+  <text x="780" y="398" text-anchor="middle" font-size="10" fill="#7B5E00">air-gapped deployments</text>
+
+  <!-- ── SOVEREIGN FORGE ── -->
+  <rect x="30" y="428" width="840" height="60" rx="10" fill="#ffffff" stroke="#2E75B6" stroke-width="1" stroke-dasharray="6 3"/>
+  <text x="450" y="452" text-anchor="middle" font-size="12" font-weight="500" fill="#1E3A5F">Sovereign Forge  —  in development</text>
+  <text x="450" y="470" text-anchor="middle" font-size="10" fill="#555555">Distributed GPU supercluster · consumer hardware · sovereign AI training at scale · one env var to join</text>
+
+  <!-- Arrow from stack down to sovereign forge -->
+  <line x1="770" y1="186" x2="770" y2="344" stroke="#888780" stroke-width="0.5" stroke-dasharray="3 2" fill="none"/>
+  <line x1="450" y1="414" x2="450" y2="428" stroke="#2E75B6" stroke-width="1" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- Footer -->
+  <text x="450" y="510" text-anchor="middle" font-size="10" fill="#B4B2A9">© Francis Neequaye Armah — Project David — March 2026 — PolyForm Noncommercial License 1.0.0</text>
+</svg>
