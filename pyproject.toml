@@ -61,7 +61,7 @@ platform-api = "entities_api.__main__:root"
 
 [project.urls]
 Homepage = "https://github.com/project-david-ai/platform"
-Documentation = "https://github.com/project-david-ai/projectdavid_docs/tree/master/src/pages"
+Documentation = "https://docs.projectdavid.co.uk/docs"
 Changelog = "https://github.com/project-david-ai/platform/blob/master/CHANGELOG.md"
 
 [tool.setuptools]
