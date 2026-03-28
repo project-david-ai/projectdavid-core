@@ -195,7 +195,6 @@ client = Entity(api_key=os.getenv("USER_API_KEY"))
 
 ## Documentation
 
-
 | Topic | Link |
 |---|---|
 | Full Documentation | [docs.projectdavid.co.uk](https://docs.projectdavid.co.uk/docs) |
