@@ -195,15 +195,15 @@ client = Entity(api_key=os.getenv("USER_API_KEY"))
 
 ## Documentation
 
+
 | Topic | Link |
 |---|---|
-| SDK Quick Start | [sdk-quick-start.md](https://github.com/project-david-ai/projectdavid_docs/blob/master/src/pages/sdk/sdk-quick-start.md) |
-| Docker Commands | [docker_commands.md](https://github.com/project-david-ai/projectdavid_docs/blob/master/src/pages/api-infra/docker_commands.md) |
-| Providers | [providers.md](https://github.com/project-david-ai/projectdavid_docs/blob/master/src/pages/providers/providers.md) |
-| Full SDK Docs | [sdk/](https://github.com/project-david-ai/projectdavid_docs/tree/master/src/pages/sdk) |
+| Full Documentation | [docs.projectdavid.co.uk](https://docs.projectdavid.co.uk/docs) |
+| SDK Quick Start | [docs.projectdavid.co.uk/docs/sdk-quick-start](https://docs.projectdavid.co.uk/docs/sdk-quick-start) |
+| Docker Commands | [docs.projectdavid.co.uk/docs/docker_commands](https://docs.projectdavid.co.uk/docs/docker_commands) |
+| Providers | [docs.projectdavid.co.uk/docs/providers](https://docs.projectdavid.co.uk/docs/providers) |
 
-> Full hosted docs coming at `docs.projectdavid.co.uk`
-
+> Full hosted docs: [docs.projectdavid.co.uk](https://docs.projectdavid.co.uk/docs)
 ---
 
 ## Related Repositories
