@@ -51,14 +51,12 @@ class AssistantService:
         the fallback branch can be removed.
         """
         if db_asst.owner_id is not None:
-            # Fast path — direct ownership column is populated.
             if db_asst.owner_id != user_id:
                 raise HTTPException(
                     status_code=403,
                     detail="You do not have permission to modify this assistant.",
                 )
         else:
-            # Fallback during back-fill window — check association table.
             associated_ids = {u.id for u in db_asst.users}
             if user_id not in associated_ids:
                 raise HTTPException(
@@ -101,13 +99,14 @@ class AssistantService:
                 top_p=assistant.top_p,
                 temperature=assistant.temperature,
                 response_format=assistant.response_format,
+                max_tokens=assistant.max_tokens,  # ← FIXED: was missing, server_default was winning
                 max_turns=assistant.max_turns,
                 agent_mode=assistant.agent_mode,
                 web_access=assistant.web_access,
                 deep_research=assistant.deep_research,
                 engineer=assistant.engineer,
                 decision_telemetry=assistant.decision_telemetry,
-                owner_id=user_id,  # ← set canonical owner at creation time
+                owner_id=user_id,
                 deleted_at=None,
             )
 
@@ -137,7 +136,6 @@ class AssistantService:
             if not db_asst:
                 raise HTTPException(status_code=404, detail="Assistant not found")
 
-            # ── Ownership check ─────────────────────────────────────────────
             self._assert_owner(db_asst, user_id)
 
             return self.map_to_read_model(db_asst)
@@ -189,7 +187,6 @@ class AssistantService:
             if not db_asst:
                 raise HTTPException(404, "Assistant not found")
 
-            # ── Ownership check ──────────────────────────────────────────────
             self._assert_owner(db_asst, user_id)
 
             data = assistant_update.model_dump(exclude_unset=True)
@@ -231,7 +228,6 @@ class AssistantService:
         ``owner_id`` migration are still visible.
         """
         with SessionLocal() as db:
-            # ── Primary path: owner_id column (all new records) ──────────────
             owned_by_column = (
                 db.query(Assistant)
                 .filter(
@@ -241,12 +237,10 @@ class AssistantService:
                 .all()
             )
 
-            # ── Legacy path: many-to-many association table ──────────────────
             user = db.query(User).filter(User.id == user_id).first()
             if not user:
                 raise HTTPException(404, "User not found")
 
-            # Merge: owned_by_column takes precedence; add any legacy-only entries
             owned_ids = {a.id for a in owned_by_column}
             legacy_only = [
                 a
@@ -279,7 +273,6 @@ class AssistantService:
             if not db_asst:
                 raise HTTPException(404, "Assistant not found")
 
-            # ── Ownership check ──────────────────────────────────────────────
             self._assert_owner(db_asst, user_id)
 
             if permanent:
@@ -347,6 +340,7 @@ class AssistantService:
     # ────────────────────────────────────────────────
     # Mapper
     # ────────────────────────────────────────────────
+
     def map_to_read_model(self, db_asst: Assistant) -> validator.AssistantRead:
         data = db_asst.__dict__.copy()
         data.pop("_sa_instance_state", None)

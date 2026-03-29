@@ -436,6 +436,13 @@ class QwenBaseWorker(
             )
             _top_p = self.assistant_config.get("top_p", None)
 
+            LOG.info(
+                "INFERENCE PARAMS ▸ max_tokens=%s | temperature=%s | top_p=%s",
+                _max_tokens,
+                _temperature,
+                _top_p,
+            )
+
             raw_stream = client.stream_chat_completion(
                 messages=ctx,
                 model=model,
