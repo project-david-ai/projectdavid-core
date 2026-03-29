@@ -1,18 +1,20 @@
 """
-vLLM Raw Inference Function Calling Test
+ProjectDavid — Fine-Tuned Assistant Orchestration Test
 ---------------------------------------------------
-Tests streaming tool calls via vLLM raw (/v1/completions) using
-the unified SDK stream. Single loop handles all turns.
+Flow:
+  SDK → Thread/Message → Run(Assistant + Model Override) →
+  Redis → Orchestrator → vLLM (LoRA david-ft)
 
-Adapted from: test_ollama_fc.py
+This confirms that the Fine-Tuned weights are correctly integrated
+into the full Assistant logic.
 """
 
 import json
 import os
 import time
 
-from config_orc_fc import config
 from dotenv import load_dotenv
+from openai import api_key
 from projectdavid import (
     ContentEvent,
     DecisionEvent,
@@ -21,7 +23,7 @@ from projectdavid import (
     ToolCallRequestEvent,
 )
 
-load_dotenv()
+load_dotenv(".tests.env")
 
 # ------------------------------------------------------------------
 # ANSI Colors
@@ -31,119 +33,106 @@ GREEN = "\033[92m"
 YELLOW = "\033[93m"
 RED = "\033[91m"
 GREY = "\033[90m"
-MAGENTA = "\033[95m"
 RESET = "\033[0m"
 
 # ------------------------------------------------------------------
 # Config
 # ------------------------------------------------------------------
 BASE_URL = os.getenv("BASE_URL", "http://localhost:9000")
-API_KEY = os.getenv("ENTITIES_API_KEY")
-ASSISTANT_ID = config.get("assistant_id", "asst_YscCYmaK7xCVzGylYFe1pN")
+API_KEY = os.getenv("DEV_PROJECT_DAVID_CORE_TEST_USER_KEY")
 
-# ── vLLM specific ──────────────────────────────────────────────────
-# Format: "vllm/<model_id_as_loaded_in_vllm_server>"
-# Must match exactly what /v1/models returns
-MODEL_ID = "vllm/Qwen/Qwen2.5-3B-Instruct"
+# CRITICAL: The identity of the behavior container
+ASSISTANT_ID = os.getenv("DEV_PROJECT_DAVID_CORE_TEST_ASSISTANT_ID")
 
-# vLLM server URL — passed via meta_data so the worker knows where to connect
-VLLM_BASE_URL = os.getenv("VLLM_BASE_URL", "http://vllm_server:8000")
+# Target the LoRA adapter name defined in the orchestrator/vllm config
+# MODEL_ID = "vllm/david-ft"
 
-TEST_PROMPT = "Please provide the flight times for a trip departing from Tokyo and arriving in Sydney?"
+MODEL_ID = "hyperbolic/deepseek-ai/DeepSeek-V3-0324"
 
+TEST_PROMPT = "How are black holes formed?"
 
 # ------------------------------------------------------------------
-# Tool Definitions
+# Execution
 # ------------------------------------------------------------------
-def get_flight_times(tool_name: str, arguments: dict) -> str:
-    print(f"{YELLOW}   -> [TOOL] {tool_name}({arguments}){RESET}")
-    return json.dumps(
-        {
-            "status": "success",
-            "departure": arguments.get("departure", "UNK"),
-            "arrival": arguments.get("arrival", "UNK"),
-            "duration": "4h 30m",
-        }
+client = Entity(
+    base_url=BASE_URL, api_key=os.getenv("DEV_PROJECT_DAVID_CORE_TEST_USER_KEY")
+)
+
+
+def run_assistant_ft_test():
+    print(f"\n{CYAN}[▶] Initializing Fine-Tuned Assistant Test...{RESET}")
+    print(f"{CYAN}[▶] ASSISTANT_ID: {ASSISTANT_ID}{RESET}")
+
+    assistant = client.assistants.create_assistant(
+        name="Sovereign-Forge Test",
+        instructions="",
     )
 
+    # 1. Setup Thread
+    thread = client.threads.create_thread()
 
-TOOL_REGISTRY = {
-    "get_flight_times": get_flight_times,
-}
+    # 2. Add Message (linked to Assistant)
+    message = client.messages.create_message(
+        thread_id=thread.id,
+        role="user",
+        content=TEST_PROMPT,
+        assistant_id=assistant.id,  # Key mapping
+    )
+    print(f"{GREEN}[✓] Thread/Message Created: {thread.id}{RESET}")
 
-# ------------------------------------------------------------------
-# SDK Init & Run Setup
-# ------------------------------------------------------------------
-client = Entity(base_url=BASE_URL, api_key=API_KEY)
-thread = client.threads.create_thread()
-message = client.messages.create_message(
-    thread_id=thread.id,
-    role="user",
-    content=TEST_PROMPT,
-    assistant_id=ASSISTANT_ID,
-)
+    # 3. Create Run
+    # We pass the assistant_id to pull instructions,
+    # and override the model to use our specific LoRA adapters.
+    run = client.runs.create_run(
+        assistant_id=assistant.id, thread_id=thread.id, model=MODEL_ID
+    )
 
-run = client.runs.create_run(assistant_id=ASSISTANT_ID, thread_id=thread.id)
+    # 4. Setup the Stream
+    stream = client.synchronous_inference_stream
+    stream.setup(
+        thread_id=thread.id,
+        assistant_id=assistant.id,
+        message_id=message.id,
+        run_id=run.id,
+        api_key=os.getenv("HYPERBOLIC_API_KEY"),
+    )
 
-stream = client.synchronous_inference_stream
-stream.setup(
-    thread_id=thread.id,
-    assistant_id=ASSISTANT_ID,
-    message_id=message.id,
-    run_id=run.id,
-)
+    print(f"{CYAN}[▶] TARGET MODEL: {MODEL_ID}{RESET}")
+    print(f"{CYAN}[▶] PROMPT:       {TEST_PROMPT}{RESET}\n")
+    print(f"{'LATENCY':<12} | {'EVENT':<25} | PAYLOAD")
+    print("-" * 100)
 
-# ------------------------------------------------------------------
-# Unified Stream Loop
-# ------------------------------------------------------------------
-print(f"\n{CYAN}[▶] MODEL:    {MODEL_ID}{RESET}")
-print(f"{CYAN}[▶] VLLM URL: {VLLM_BASE_URL}{RESET}")
-print(f"{CYAN}[▶] PROMPT:   {TEST_PROMPT}{RESET}\n")
-print(f"{'LATENCY':<12} | {'EVENT':<25} | PAYLOAD")
-print("-" * 100)
+    last_tick = time.perf_counter()
+    global_start = last_tick
 
-last_tick = time.perf_counter()
-global_start = last_tick
+    try:
+        # 5. Execute unified stream
+        for event in stream.stream_events(model=MODEL_ID):
+            now = time.perf_counter()
+            delta = now - last_tick
+            last_tick = now
 
-try:
-    for event in stream.stream_events(
-        model=MODEL_ID,
-        # Pass vLLM URL dynamically — worker picks this up from meta_data
-        meta_data={"vllm_base_url": VLLM_BASE_URL},
-    ):
-        now = time.perf_counter()
-        delta = now - last_tick
-        last_tick = now
-
-        color = {
-            ContentEvent: GREEN,
-            ToolCallRequestEvent: YELLOW,
-            ReasoningEvent: CYAN,
-            DecisionEvent: MAGENTA,
-        }.get(type(event), RESET)
-
-        print(
-            f"{GREY}[{delta:+.4f}s]{RESET:<4} "
-            f"| {color}{event.__class__.__name__:<25}{RESET} "
-            f"| {json.dumps(event.to_dict())}"
-        )
-
-        if isinstance(event, ToolCallRequestEvent):
-            handler = TOOL_REGISTRY.get(event.tool_name)
-            if handler:
-                print(f"\n{YELLOW}[TOOL CALL] {event.tool_name} → executing...{RESET}")
-                event.execute(handler)
-                print(f"{GREEN}[✓] Result submitted — resuming stream...{RESET}\n")
+            if isinstance(event, ContentEvent):
+                # Print assistant text stream
+                print(f"{GREEN}{event.content}{RESET}", end="", flush=True)
             else:
+                # Print orchestration events
                 print(
-                    f"{RED}[!] Unknown tool: '{event.tool_name}' — not in registry{RESET}"
+                    f"\n{GREY}[{delta:+.4f}s]{RESET:<4} "
+                    f"| {CYAN}{event.__class__.__name__:<25}{RESET} "
+                    f"| {json.dumps(event.to_dict())}"
                 )
 
-except Exception as e:
-    print(f"{RED}[ERROR] {e}{RESET}")
+    except Exception as e:
+        print(f"\n{RED}[ERROR] {e}{RESET}")
 
-finally:
-    total = time.perf_counter() - global_start
-    print(f"\n{YELLOW}{'='*50}")
-    print(f"  TOTAL: {total:.4f}s")
-    print(f"{'='*50}{RESET}\n")
+    finally:
+        total = time.perf_counter() - global_start
+        print(f"\n\n{YELLOW}{'='*50}")
+        print(f"  ASSISTANT INFERENCE COMPLETE")
+        print(f"  TOTAL ROUND TRIP: {total:.4f}s")
+        print(f"{'='*50}{RESET}\n")
+
+
+if __name__ == "__main__":
+    run_assistant_ft_test()
