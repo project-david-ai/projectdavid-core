@@ -323,7 +323,6 @@ class VLLMDefaultBaseWorker(
     # ─────────────────────────────────────────────────────────────────────
     # Synchronous wrapper — identical to Ollama worker
     # ─────────────────────────────────────────────────────────────────────
-
     def stream_sync(
         self,
         thread_id: str,
