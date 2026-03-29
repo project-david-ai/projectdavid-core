@@ -20,7 +20,7 @@ transformers>=4.33.0,<5.0.0
 projectdavid[text-embeddings]==1.90.1
 projectdavid-orm==1.6.1
 # <--Depends on projectdavid-orm
-projectdavid-services==1.1.0
+projectdavid-services==1.2.0
 # web search tools
 html2text>=2024.2.26
 playwright>=1.41.0
