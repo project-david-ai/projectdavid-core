@@ -330,12 +330,19 @@ class GptOssBaseWorker(
                 f"\nRAW_CTX_DUMP:\n{json.dumps(cleaned_ctx, indent=2, ensure_ascii=False)}"
             )
 
+            _max_tokens = self.assistant_config.get("max_tokens", None)
+            _temperature = self.assistant_config.get(
+                "temperature", kwargs.get("temperature", 0.6)
+            )
+            _top_p = self.assistant_config.get("top_p", None)
+
             raw_stream = client.stream_chat_completion(
                 messages=cleaned_ctx,
                 model=model,
-                tools=None if stream_reasoning else extracted_tools,
-                temperature=kwargs.get("temperature", 0.4),
-                **kwargs,
+                **({"max_tokens": _max_tokens} if _max_tokens is not None else {}),
+                **({"top_p": _top_p} if _top_p is not None else {}),
+                temperature=_temperature,
+                stream=True,
             )
 
             yield json.dumps({"type": "status", "status": "started", "run_id": run_id})
