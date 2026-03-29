@@ -130,6 +130,11 @@ class AssistantCache:
             "meta_data": raw_meta,
             "is_research_worker": is_research_worker,
             "junior_engineer": is_junior_engineer,
+            "max_tokens": getattr(
+                assistant, "max_tokens", None
+            ),  # None = defer to model default
+            "top_p": getattr(assistant, "top_p", 1.0),
+            "temperature": getattr(assistant, "temperature", 1.0),
         }
 
         # 7. Populate cache
