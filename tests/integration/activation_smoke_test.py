@@ -64,9 +64,10 @@ def run_assistant_ft_test():
     print(f"{CYAN}[▶] ASSISTANT_ID: {ASSISTANT_ID}{RESET}")
 
     assistant = client.assistants.create_assistant(
-        name="Sovereign-Forge Test",
-        instructions="",
+        name="Sovereign-Forge Test", instructions="", max_tokens=30
     )
+
+    print(assistant.max_tokens)
 
     # 1. Setup Thread
     thread = client.threads.create_thread()

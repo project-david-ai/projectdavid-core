@@ -310,7 +310,6 @@ class DeepSeekBaseWorker(
             yield json.dumps({"type": "status", "status": "started", "run_id": run_id})
 
             client = self._get_client_instance(api_key=api_key)
-
             # ------------------------------------------------------------------
             # 7. MULTIMODAL NORMALISATION
             # Hydrated image blocks arrive as {"type": "image", "image": "data:..."}
@@ -340,6 +339,13 @@ class DeepSeekBaseWorker(
                 "temperature", kwargs.get("temperature", 0.6)
             )
             _top_p = self.assistant_config.get("top_p", None)
+
+            LOG.info(
+                "INFERENCE PARAMS ▸ max_tokens=%s | temperature=%s | top_p=%s",
+                _max_tokens,
+                _temperature,
+                _top_p,
+            )
 
             raw_stream = client.stream_chat_completion(
                 messages=ctx,
