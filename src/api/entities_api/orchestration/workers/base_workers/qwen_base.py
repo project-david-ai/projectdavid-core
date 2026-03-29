@@ -429,7 +429,6 @@ class QwenBaseWorker(
             # DeltaNormalizer handles Qwen/Kimi-specific tag parsing and yields
             # normalized chunks. Accumulation is handled by _handle_chunk_accumulation.
             # ------------------------------------------------------------------
-
             _max_tokens = self.assistant_config.get("max_tokens", None)
             _temperature = self.assistant_config.get(
                 "temperature", kwargs.get("temperature", 0.6)
