@@ -1,3 +1,22 @@
+# [1.29.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.28.0...v1.29.0) (2026-03-29)
+
+
+### Bug Fixes
+
+* pin typer==0.9.0 and click==8.1.7, fix create_user integration test ([8de94ff](https://github.com/project-david-ai/projectdavid-core/commit/8de94ff130bc76ee769df999300e186f6273fc87))
+* pin typer==0.9.0 and click==8.1.7, fix create_user integration test ([4ceb12f](https://github.com/project-david-ai/projectdavid-core/commit/4ceb12f5476a0525f96dc612dce3273e1c6f8f43))
+* pin typer==0.9.0 and click==8.1.7, fix create_user integration test ([77a0c18](https://github.com/project-david-ai/projectdavid-core/commit/77a0c186a0de79c08558ff68900b3220c24adfb1))
+
+
+### Features
+
+* add max_tokens, fix float columns, drop batfish_snapshots ([881d711](https://github.com/project-david-ai/projectdavid-core/commit/881d71108be1dbd660f6f5fe3a2e971008397c27))
+* add max_tokens, top_p, and temperature to assistant cache payload. Bump toprojectdavid[text-embeddings]==1.94.0 ([795106d](https://github.com/project-david-ai/projectdavid-core/commit/795106db4112d432823d81d75e94604d0ef5c7e8))
+* propagate max_tokens, top_p, and temperature from assistant cache to inference workers ([38606ef](https://github.com/project-david-ai/projectdavid-core/commit/38606ef9d1bd3d419183d6de775a263472af9419))
+* propagate max_tokens, top_p, and temperature from assistant cache to Ollama stream inference ([d984971](https://github.com/project-david-ai/projectdavid-core/commit/d98497104122950909c449cd771167c68de73b22))
+* propagate max_tokens, top_p, and temperature from assistant cache to vLLM stream inference ([47056d7](https://github.com/project-david-ai/projectdavid-core/commit/47056d77bb673bcddaaa5161d47e8fab82a22c2b))
+* propagate max_tokens, top_p, and temperature from assistant cache to vLLM stream inference ([b16b5d6](https://github.com/project-david-ai/projectdavid-core/commit/b16b5d66bd64724573ecfd087d470056dfec5aa6))
+
 ## [1.28.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.28.0...v1.28.1) (2026-03-28)
 
 
