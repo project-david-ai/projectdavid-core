@@ -334,11 +334,20 @@ class DefaultBaseWorker(
             # ------------------------------------------------------------------
             # 8. THE STREAM LOOP
             # ------------------------------------------------------------------
+            _max_tokens = self.assistant_config.get("max_tokens", None)
+
+            _temperature = self.assistant_config.get(
+                "temperature", kwargs.get("temperature", 0.6)
+            )
+
+            _top_p = self.assistant_config.get("top_p", None)
+
             raw_stream = client.stream_chat_completion(
                 messages=ctx,
                 model=model,
-                max_tokens=10000,
-                temperature=kwargs.get("temperature", 0.6),
+                **({"max_tokens": _max_tokens} if _max_tokens is not None else {}),
+                **({"top_p": _top_p} if _top_p is not None else {}),
+                temperature=_temperature,
                 stream=True,
             )
 

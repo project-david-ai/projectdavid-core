@@ -134,10 +134,10 @@ class OllamaDefaultBaseWorker(
         Agentic stream pipeline:
 
           Ollama /api/chat
-              ↓  _stream_ollama_raw()      — raw Ollama dict chunks (no pre-processing)
-              ↓  DeltaNormalizer           — typed, normalized chunk dicts
+              ↓  _stream_ollama_raw()            — raw Ollama dict chunks
+              ↓  DeltaNormalizer                 — typed, normalized chunk dicts
               ↓  _handle_chunk_accumulation()    — accumulates text, reasoning, tool calls
-              ↓  yield JSON strings        — to the SSE response
+              ↓  yield JSON strings              — to the SSE response
         """
 
         # ── Reset per-run mutable state ───────────────────────────────────
@@ -171,23 +171,16 @@ class OllamaDefaultBaseWorker(
             self.assistant_id = assistant_id
             await self._ensure_config_loaded()
 
-            # ------------------------------------------------------------------
-            # 3. ROLE FLAG EXTRACTION
-            # Read all role signals from the assistant's normalized config.
-            # ------------------------------------------------------------------
+            # ── Role flag extraction ──────────────────────────────────────
             self.is_deep_research = self.assistant_config.get("deep_research", False)
             self.is_engineer = self.assistant_config.get("is_engineer", False)
 
             agent_mode_setting = self.assistant_config.get("agent_mode", False)
             decision_telemetry = self.assistant_config.get("decision_telemetry", True)
-
-            # Default web_access from config
             web_access_setting = self.assistant_config.get("web_access", False)
 
-            # Extract from meta_data for dynamic ephemeral flags
             raw_meta = self.assistant_config.get("meta_data", {})
 
-            # Worker role flags
             is_worker_val = raw_meta.get(
                 "is_research_worker", raw_meta.get("research_worker_calling", False)
             )
@@ -197,15 +190,12 @@ class OllamaDefaultBaseWorker(
                 "is_research_worker", False
             )
 
-            # Check for "junior_engineer"
             is_junior_val = raw_meta.get(
                 "junior_engineer", raw_meta.get("junior_engineer_calling", False)
             )
             junior_engineer_setting = str(is_junior_val).lower() == "true"
 
-            # ------------------------------------------------------------------
-            # 4. ROLE CONFLICT RESOLUTION
-            # ------------------------------------------------------------------
+            # ── Role conflict resolution ──────────────────────────────────
             if self.is_engineer:
                 web_access_setting = False
                 research_worker_setting = False
@@ -218,17 +208,11 @@ class OllamaDefaultBaseWorker(
             elif research_worker_setting:
                 web_access_setting = True
                 junior_engineer_setting = False
-                # --------------------------------------------------------
-                # Pass the inference api key through the run
-                # Pass the delegated research model through the run
-                # object — trusted internally write, no ownership check.
-                # --------------------------------------------------------
                 delegation_model = get_delegated_model(requested_model=pre_mapped_model)
                 await self._native_exec.update_run_fields(
                     run_id,
                     meta_data={"api_key": api_key, "delegated_model": delegation_model},
                 )
-
             elif junior_engineer_setting:
                 web_access_setting = False
                 research_worker_setting = False
@@ -243,22 +227,16 @@ class OllamaDefaultBaseWorker(
                 web_access_setting,
             )
 
-            # ------------------------------------------------------------------
-            # CAPTURE REAL USER ID — before any identity swap mutates state.
-            # ------------------------------------------------------------------
-
-            # Extract dynamically injected metadata from the stream kwargs
+            # ── Capture run user ID and metadata ─────────────────────────
             request_meta = kwargs.get("meta_data", {})
             custom_ollama_url = request_meta.get("ollama_base_url")
 
             try:
-                # [FIXED SDK REMOVAL] Replaced HTTP SDK usage with native execution DB lookup
                 run = await self._native_exec.retrieve_run(run_id)
                 self._run_user_id = run.user_id
 
                 meta = run.meta_data or {}
 
-                # Fallback to run-level metadata if not passed directly in the stream
                 if not custom_ollama_url:
                     custom_ollama_url = meta.get("ollama_base_url")
 
@@ -280,21 +258,19 @@ class OllamaDefaultBaseWorker(
                 self._run_user_id = None
                 LOG.warning("STREAM ▸ Could not resolve run_user_id: %s", exc)
 
-            # ------------------------------------------------------------------
-            # 5. IDENTITY SWAP & RELOAD (Supervisor roles only)
-            # ------------------------------------------------------------------
+            # ── Identity swap & reload ────────────────────────────────────
             await self._handle_role_based_identity_swap(
                 requested_model=pre_mapped_model
             )
 
-            # --- CRITICAL FIX: Reload config if identity was swapped! ---
             if self.assistant_id != _original_assistant_id:
                 LOG.info(
-                    f"Identity swapped from {_original_assistant_id} to {self.assistant_id}. Reloading config."
+                    "Identity swapped from %s to %s. Reloading config.",
+                    _original_assistant_id,
+                    self.assistant_id,
                 )
                 await self._ensure_config_loaded()
 
-            # Scratchpad: prefer meta_data value; fall back to thread_id
             if not self._scratch_pad_thread:
                 self._scratch_pad_thread = thread_id
             LOG.info("STREAM ▸ Scratchpad pinned to: %s", self._scratch_pad_thread)
@@ -321,15 +297,30 @@ class OllamaDefaultBaseWorker(
 
             yield json.dumps({"type": "status", "status": "started", "run_id": run_id})
 
+            # ── Inference parameters from assistant cache ─────────────────
+            _max_tokens = self.assistant_config.get("max_tokens", None)
+            _temperature = self.assistant_config.get(
+                "temperature", kwargs.get("temperature", 0.6)
+            )
+            _top_p = self.assistant_config.get("top_p", None)
+
+            # Agentic mode gets a sensible output cap to prevent runaway loops
+            _ollama_default = 8192 if agent_mode_setting else None
+
             # ── Stream: Ollama → DeltaNormalizer → StreamState ────────────
             async for chunk in DeltaNormalizer.async_iter_deltas(
                 self._stream_ollama_raw(
                     messages=ctx,
                     model=model,
-                    temperature=kwargs.get("temperature", 0.6),
-                    max_tokens=kwargs.get("max_tokens", 10_000),
+                    temperature=_temperature,
+                    **(
+                        {"max_tokens": _max_tokens or _ollama_default}
+                        if (_max_tokens or _ollama_default) is not None
+                        else {}
+                    ),
+                    **({"top_p": _top_p} if _top_p is not None else {}),
                     think=kwargs.get("think", False),
-                    base_url=custom_ollama_url,  # <-- Pass dynamically extracted custom URL down
+                    base_url=custom_ollama_url,
                 ),
                 run_id,
             ):
@@ -359,16 +350,16 @@ class OllamaDefaultBaseWorker(
             if current_block:
                 accumulated += f"</{current_block}>"
 
-            # 8a. Extract Decision Payload from buffered XML block (if any)
+            # ── Extract decision payload ──────────────────────────────────
             if decision_buffer:
                 try:
                     self._decision_payload = json.loads(decision_buffer.strip())
                 except Exception:
                     LOG.warning(
-                        f"Failed to parse decision buffer: {decision_buffer[:50]}..."
+                        "Failed to parse decision buffer: %s...", decision_buffer[:50]
                     )
 
-            # 8b. Extract Tool Calls from accumulated stream output
+            # ── Extract tool calls ────────────────────────────────────────
             tool_calls_batch = self.parse_and_set_function_calls(
                 accumulated, assistant_reply
             )
@@ -376,11 +367,7 @@ class OllamaDefaultBaseWorker(
             message_to_save = assistant_reply
             final_status = StatusEnum.completed.value
 
-            # ------------------------------------------------------------------
-            # 9. TOOL CALL ENVELOPE CONSTRUCTION
-            # If the assistant emitted tool calls, build the standardised envelope
-            # and flag the run as pending_action so the orchestrator picks it up.
-            # ------------------------------------------------------------------
+            # ── Tool call envelope construction ───────────────────────────
             if tool_calls_batch:
                 self._tool_queue = tool_calls_batch
                 final_status = StatusEnum.pending_action.value
@@ -399,7 +386,6 @@ class OllamaDefaultBaseWorker(
                         }
                     )
 
-                # Persist the structural representation, not the raw text
                 message_to_save = json.dumps(tool_calls_structure)
 
             yield json.dumps(
@@ -407,7 +393,6 @@ class OllamaDefaultBaseWorker(
             )
 
             if message_to_save:
-                # [FIX]: Use self.assistant_id to save under the supervisor's ID (if applicable)
                 await self.finalize_conversation(
                     message_to_save, thread_id, self.assistant_id, run_id
                 )
