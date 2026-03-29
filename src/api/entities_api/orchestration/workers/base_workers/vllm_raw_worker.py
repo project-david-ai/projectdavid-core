@@ -33,13 +33,11 @@ from projectdavid_common.utilities.logging_service import LoggingUtility
 from projectdavid_common.validation import StatusEnum
 
 # Infrastructure Imports
-from src.api.entities_api.db.database import SessionLocal  # Main API DB
+from src.api.entities_api.db.database import SessionLocal
 from src.api.entities_api.dependencies import get_redis, get_redis_sync
 from src.api.entities_api.orchestration.engine.orchestrator_core import OrchestratorCore
 from src.api.entities_api.orchestration.mixins.provider_mixins import _ProviderMixins
-from src.api.entities_api.services.inference_resolver import (  # Mesh Resolver
-    InferenceResolver,
-)
+from src.api.entities_api.services.inference_resolver import InferenceResolver
 
 load_dotenv()
 LOG = LoggingUtility()
@@ -181,13 +179,11 @@ class VLLMDefaultBaseWorker(
                 self._run_user_id = None
                 LOG.warning("STREAM ▸ Could not resolve run_user_id: %s", exc)
 
-            # 🎯 STAGE 6: DYNAMIC MESH RESOLUTION
-            # If no hardcoded URL was provided in the request, query the Mesh Ledger
+            # ── Stage 6: Dynamic Mesh Resolution ─────────────────────────
             mesh_resolved_url = None
             if not custom_vllm_url:
                 db_session = SessionLocal()
                 try:
-                    # Model might be "vllm/david-ft" or just "ftm_..."
                     mesh_resolved_url = InferenceResolver.resolve_vllm_url(
                         db_session, model
                     )
@@ -213,27 +209,40 @@ class VLLMDefaultBaseWorker(
                 thread_id=thread_id,
                 trunk=True,
                 force_refresh=force_refresh,
-                # (Pass flags from assistant config...)
             )
 
             yield json.dumps({"type": "status", "status": "started", "run_id": run_id})
+
+            # ── Inference parameters from assistant cache ─────────────────
+            _max_tokens = self.assistant_config.get("max_tokens", None)
+            _temperature = self.assistant_config.get(
+                "temperature", kwargs.get("temperature", 0.6)
+            )
+            _top_p = self.assistant_config.get("top_p", None)
+
+            LOG.info(
+                "INFERENCE PARAMS ▸ max_tokens=%s | temperature=%s | top_p=%s",
+                _max_tokens,
+                _temperature,
+                _top_p,
+            )
 
             # ── The Stream Cycle ─────────────────────────────────────────
             async for chunk in DeltaNormalizer.async_iter_deltas(
                 self._stream_vllm_raw(
                     messages=ctx,
                     model=model,
-                    temperature=kwargs.get("temperature", 0.6),
-                    max_tokens=kwargs.get("max_tokens", 1024),
+                    temperature=_temperature,
+                    **({"max_tokens": _max_tokens} if _max_tokens is not None else {}),
+                    **({"top_p": _top_p} if _top_p is not None else {}),
                     think=kwargs.get("think", False),
-                    base_url=target_url,  # <--- DYNAMICALLY RESOLVED
+                    base_url=target_url,
                 ),
                 run_id,
             ):
                 if stop_event.is_set():
                     break
 
-                # (Standard chunk accumulation logic...)
                 (
                     current_block,
                     accumulated,
@@ -249,11 +258,61 @@ class VLLMDefaultBaseWorker(
 
                 yield json.dumps(chunk)
 
-            # ... (Finalize conversation and update run status logic) ...
-            yield json.dumps({"type": "status", "status": "complete", "run_id": run_id})
+            if current_block:
+                accumulated += f"</{current_block}>"
+
+            if decision_buffer:
+                try:
+                    self._decision_payload = json.loads(decision_buffer.strip())
+                except Exception:
+                    LOG.warning(
+                        "Failed to parse decision buffer: %s...", decision_buffer[:50]
+                    )
+
+            tool_calls_batch = self.parse_and_set_function_calls(
+                accumulated, assistant_reply
+            )
+
+            message_to_save = assistant_reply
+            final_status = StatusEnum.completed.value
+
+            if tool_calls_batch:
+                self._tool_queue = tool_calls_batch
+                final_status = StatusEnum.pending_action.value
+
+                tool_calls_structure = []
+                for tool in tool_calls_batch:
+                    t_id = tool.get("id") or f"call_{uuid.uuid4().hex[:8]}"
+                    tool_calls_structure.append(
+                        {
+                            "id": t_id,
+                            "type": "function",
+                            "function": {
+                                "name": tool.get("name"),
+                                "arguments": json.dumps(tool.get("arguments", {})),
+                            },
+                        }
+                    )
+
+                message_to_save = json.dumps(tool_calls_structure)
+
+            yield json.dumps(
+                {"type": "status", "status": "processing", "run_id": run_id}
+            )
+
+            if message_to_save:
+                await self.finalize_conversation(
+                    message_to_save, thread_id, self.assistant_id, run_id
+                )
+
+            await self._native_exec.update_run_status(run_id, final_status)
+
+            if not tool_calls_batch:
+                yield json.dumps(
+                    {"type": "status", "status": "complete", "run_id": run_id}
+                )
 
         except Exception as exc:
-            # (Standard error handling)
             LOG.error("Stream exception: %s", exc, exc_info=True)
             yield json.dumps({"type": "error", "content": str(exc), "run_id": run_id})
 
