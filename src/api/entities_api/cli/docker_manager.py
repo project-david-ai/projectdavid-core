@@ -312,7 +312,9 @@ class DockerManager:
         Maps CLI flags to Docker Compose profile activations.
         training → --profile training
         gpu/ollama/vllm → --profile ai
-        Flags are additive — any combination is valid.
+        Note: --training alone does NOT activate the ai profile —
+        vllm is added explicitly via _extra_services() to avoid
+        starting ollama unnecessarily.
         """
         flags = []
         if getattr(self.args, "training", False):
@@ -324,6 +326,22 @@ class DockerManager:
         ):
             flags += ["--profile", "ai"]
         return flags
+
+    def _extra_services(self) -> List[str]:
+        """
+        Services to start explicitly alongside profile-activated services.
+
+        --training alone     → adds vllm (without ollama)
+        --training --gpu     → gpu profile handles both, no extras needed
+        --training --vllm    → vllm already in profile, no extras needed
+        """
+        extras = []
+        training = getattr(self.args, "training", False)
+        gpu = getattr(self.args, "gpu", False)
+        vllm = getattr(self.args, "vllm", False)
+        if training and not gpu and not vllm:
+            extras.append("vllm")
+        return extras
 
     def _get_compose_flags(self) -> List[str]:
         """Backward-compat shim."""
@@ -880,6 +898,9 @@ class DockerManager:
         if final_services and not self._profile_flags():
             up_cmd.extend(sorted(final_services))
 
+        # Extra services activated by combination flags (e.g. vllm with training)
+        up_cmd.extend(self._extra_services())
+
         try:
             self._run_command(up_cmd, check=True)
             self.log.info("Stack started successfully.")
@@ -1109,7 +1130,7 @@ def docker_manager(
     training: bool = typer.Option(
         False,
         "--training",
-        help="Start Sovereign Forge training stack (training-api + worker + Ray). Requires NVIDIA GPU.",
+        help="Start Sovereign Forge training stack (training-api + worker + vllm). Requires NVIDIA GPU.",
     ),
     gpu: bool = typer.Option(
         False,
@@ -1167,9 +1188,8 @@ def docker_manager(
       platform-api docker-manager --mode up --vllm\n
       platform-api docker-manager --mode up --gpu\n
 
-    SOVEREIGN FORGE — training + inference mesh (opt-in):\n
+    SOVEREIGN FORGE — training + vllm (opt-in):\n
       platform-api docker-manager --mode up --training\n
-      platform-api docker-manager --mode up --training --vllm\n
       platform-api docker-manager --mode up --gpu --training\n
 
     CONFIGURATION:\n

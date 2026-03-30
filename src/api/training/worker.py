@@ -406,30 +406,63 @@ def process_job_remote(job_id: str, user_id: str):
 
 def process_job(job_id: str, user_id: str):
     """Core training job logic."""
-    db: Session = SessionLocal()
+    # All imports local to avoid Ray serialization failures —
+    # SQLAlchemy engine contains thread locks that cannot be pickled.
+    import os as _os
+    import subprocess as _subprocess  # nosec B404
+    import time as _time
+
+    from projectdavid_common.schemas.enums import StatusEnum as _StatusEnum
+    from projectdavid_common.utilities.identifier_service import (
+        IdentifierService as _IdentifierService,
+    )
+    from projectdavid_orm.projectdavid_orm.models import FileStorage as _FileStorage
+    from sqlalchemy.orm import Session
+
+    from src.api.training.db.database import SessionLocal as _SessionLocal
+    from src.api.training.models.models import Dataset as _Dataset
+    from src.api.training.models.models import FineTunedModel as _FineTunedModel
+    from src.api.training.models.models import TrainingJob as _TrainingJob
+    from src.api.training.services.file_service import SambaClient as _SambaClient
+
+    _NODE_ID = _os.getenv("NODE_ID", f"node_{__import__('socket').gethostname()}")
+    _LOCAL_SCRATCH = "/tmp/training"  # nosec B108
+    _SHARED_PATH = _os.getenv("SHARED_PATH", "/mnt/training_data")
+
+    def _get_samba_client():
+        return _SambaClient(
+            server=_os.getenv("SMBCLIENT_SERVER", "samba"),
+            share=_os.getenv("SMBCLIENT_SHARE", "cosmic_share"),
+            username=_os.getenv("SMBCLIENT_USERNAME", "samba_user"),
+            password=_os.getenv("SMBCLIENT_PASSWORD"),
+        )
+
+    db: Session = _SessionLocal()
     local_data_path = None
+    job = None
 
     try:
-        job = db.query(TrainingJob).filter(TrainingJob.id == job_id).first()
-        dataset = db.query(Dataset).filter(Dataset.id == job.dataset_id).first()
+        job = db.query(_TrainingJob).filter(_TrainingJob.id == job_id).first()
+        dataset = db.query(_Dataset).filter(_Dataset.id == job.dataset_id).first()
 
-        logging_utility.info(f"🚀 Node {NODE_ID} claiming Training Job: {job_id}")
-        job.status = StatusEnum.in_progress
-        job.node_id = NODE_ID
-        job.started_at = int(time.time())
+        print(f"🚀 Node {_NODE_ID} claiming Training Job: {job_id}", flush=True)
+        job.status = _StatusEnum.in_progress
+        job.started_at = int(_time.time())
         db.commit()
 
         storage = (
-            db.query(FileStorage).filter(FileStorage.file_id == dataset.file_id).first()
+            db.query(_FileStorage)
+            .filter(_FileStorage.file_id == dataset.file_id)
+            .first()
         )
-        local_data_path = os.path.join(LOCAL_SCRATCH, f"{job_id}.jsonl")
-        smb = get_samba_client()
+        local_data_path = _os.path.join(_LOCAL_SCRATCH, f"{job_id}.jsonl")
+        smb = _get_samba_client()
         smb.download_file(storage.storage_path, local_data_path)
 
-        model_uuid = IdentifierService.generate_prefixed_id("ftm")
+        model_uuid = _IdentifierService.generate_prefixed_id("ftm")
         model_rel_path = f"models/{model_uuid}"
-        full_output_path = os.path.join(SHARED_PATH, model_rel_path)
-        os.makedirs(full_output_path, exist_ok=True)
+        full_output_path = _os.path.join(_SHARED_PATH, model_rel_path)
+        _os.makedirs(full_output_path, exist_ok=True)
 
         cmd = [
             "python",
@@ -441,12 +474,11 @@ def process_job(job_id: str, user_id: str):
             "--out",
             full_output_path,
             "--profile",
-            os.getenv("TRAINING_PROFILE", "laptop"),
+            _os.getenv("TRAINING_PROFILE", "laptop"),
         ]
 
-        # — cmd is internally constructed from validated config
-        process = subprocess.Popen(  # nosec B603
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+        process = _subprocess.Popen(  # nosec B603
+            cmd, stdout=_subprocess.PIPE, stderr=_subprocess.STDOUT, text=True
         )
 
         for line in process.stdout:
@@ -454,36 +486,36 @@ def process_job(job_id: str, user_id: str):
         process.wait()
 
         if process.returncode == 0:
-            new_ftm = FineTunedModel(
+            new_ftm = _FineTunedModel(
                 id=model_uuid,
                 user_id=user_id,
                 training_job_id=job_id,
                 name=f"FT: {job.base_model}",
                 base_model=job.base_model,
                 storage_path=model_rel_path,
-                node_id=NODE_ID,
-                status=StatusEnum.active,
-                created_at=int(time.time()),
-                updated_at=int(time.time()),
+                node_id=_NODE_ID,
+                status=_StatusEnum.active,
+                created_at=int(_time.time()),
+                updated_at=int(_time.time()),
             )
             db.add(new_ftm)
-            job.status = StatusEnum.completed
-            job.completed_at = int(time.time())
+            job.status = _StatusEnum.completed
+            job.completed_at = int(_time.time())
             job.output_path = model_rel_path
             db.commit()
-            logging_utility.info(f"✨ Job {job_id} finalized successfully.")
+            print(f"✨ Job {job_id} finalized successfully.", flush=True)
         else:
-            raise subprocess.CalledProcessError(process.returncode, cmd)
+            raise _subprocess.CalledProcessError(process.returncode, cmd)
 
     except Exception as e:
-        logging_utility.error(f"❌ Training Failure ({job_id}): {e}")
+        print(f"❌ Training Failure ({job_id}): {e}", flush=True)
         if job:
-            job.status = StatusEnum.failed
+            job.status = _StatusEnum.failed
             job.last_error = str(e)
             db.commit()
     finally:
-        if local_data_path and os.path.exists(local_data_path):
-            os.remove(local_data_path)
+        if local_data_path and _os.path.exists(local_data_path):
+            _os.remove(local_data_path)
         db.close()
 
 
