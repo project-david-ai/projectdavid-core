@@ -1,9 +1,8 @@
 # 1. CRITICAL: Unsloth MUST be imported before everything else
 import argparse
-import json
 import os
 
-import torch
+import unsloth  # noqa: F401 — must precede trl/transformers/peft
 from datasets import load_dataset
 from trl import SFTConfig, SFTTrainer
 from unsloth import FastLanguageModel, is_bfloat16_supported
@@ -49,10 +48,18 @@ def main():
     )
 
     # ─── QWEN/TRL COMPATIBILITY FIX ──────────────────────────────────────────
-    if tokenizer.eos_token is None:
-        tokenizer.eos_token = "<|endoftext|>"  # nosec B105
+    # Do NOT override eos_token with a fallback string — fix_tokenizer may set
+    # <EOS_TOKEN> which is not in Qwen2's vocabulary and causes TRL to reject it.
+    # Use Qwen2's native vocab tokens directly:
+    #   <|im_end|>    — end of turn, used as eos
+    #   <|endoftext|> — safe pad token, always in vocab
+    # max_seq_length is set on the tokenizer — newer TRL versions no longer
+    # accept it as an argument to SFTConfig or SFTTrainer.
 
-    tokenizer.pad_token = tokenizer.eos_token
+    # Qwen2 native special tokens — not passwords, nosec B105 not recognised here
+    tokenizer.eos_token = "<|im_end|>"  # nosec B105
+    tokenizer.pad_token = "<|endoftext|>"  # nosec B105
+    tokenizer.model_max_length = p["max_seq_length"]
     # ──────────────────────────────────────────────────────────────────────────
 
     # 3. Add LoRA Adapters
@@ -109,13 +116,14 @@ def main():
     )
 
     # 5. Initialize Trainer
+    # max_seq_length is not accepted by SFTConfig or SFTTrainer in newer TRL
+    # versions — set via tokenizer.model_max_length above instead.
     trainer = SFTTrainer(
         model=model,
         train_dataset=dataset,
         processing_class=tokenizer,
         args=SFTConfig(
             dataset_text_field="text",
-            max_seq_length=p["max_seq_length"],
             per_device_train_batch_size=p["per_device_train_batch_size"],
             gradient_accumulation_steps=p["gradient_accumulation_steps"],
             warmup_steps=2,
@@ -140,7 +148,8 @@ def main():
 
     # 6. Execute Training
     print(
-        f"🔥 Starting GPU Training kernels (Laptop Mode: {p['max_seq_length']} ctx)..."
+        f"🔥 Starting GPU Training kernels (Profile: {args.profile.upper()}, "
+        f"ctx: {p['max_seq_length']})..."
     )
     trainer.train()
 
