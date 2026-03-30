@@ -84,7 +84,6 @@ app = typer.Typer(
         "  platform-api docker-manager --mode up --gpu\n\n"
         "SOVEREIGN FORGE — training + inference mesh (opt-in):\n"
         "  platform-api docker-manager --mode up --training\n"
-        "  platform-api docker-manager --mode up --training --vllm\n"
         "  platform-api docker-manager --mode up --gpu --training\n\n"
         "CONFIGURATION:\n"
         "  platform-api docker-manager configure --set HF_TOKEN=hf_abc123\n"
@@ -312,9 +311,11 @@ class DockerManager:
         Maps CLI flags to Docker Compose profile activations.
         training → --profile training
         gpu/ollama/vllm → --profile ai
-        Note: --training alone does NOT activate the ai profile —
-        vllm is added explicitly via _extra_services() to avoid
-        starting ollama unnecessarily.
+
+        --training alone does NOT activate the ai profile.
+        The DeploymentSupervisor inside the training worker manages
+        vLLM container lifecycle dynamically — no static vLLM container
+        is needed unless --gpu or --vllm is explicitly requested.
         """
         flags = []
         if getattr(self.args, "training", False):
@@ -326,22 +327,6 @@ class DockerManager:
         ):
             flags += ["--profile", "ai"]
         return flags
-
-    def _extra_services(self) -> List[str]:
-        """
-        Services to start explicitly alongside profile-activated services.
-
-        --training alone     → adds vllm (without ollama)
-        --training --gpu     → gpu profile handles both, no extras needed
-        --training --vllm    → vllm already in profile, no extras needed
-        """
-        extras = []
-        training = getattr(self.args, "training", False)
-        gpu = getattr(self.args, "gpu", False)
-        vllm = getattr(self.args, "vllm", False)
-        if training and not gpu and not vllm:
-            extras.append("vllm")
-        return extras
 
     def _get_compose_flags(self) -> List[str]:
         """Backward-compat shim."""
@@ -399,17 +384,24 @@ class DockerManager:
         return True
 
     # ------------------------------------------------------------------
-    # Training env injection
+    # Training env injection — with interactive cluster join walkthrough
     # ------------------------------------------------------------------
 
     def _merge_env_for_training(self) -> None:
         """
         Safely injects training-specific variables into an existing .env
         without touching any values already set.
+
+        If RAY_ADDRESS is not yet set and the terminal is interactive,
+        walks the operator through head vs worker node selection so that
+        worker nodes join the existing cluster instead of starting their own
+        Ray instance. This is the primary mechanism for multi-node scale-out.
+
+        Head node  → RAY_ADDRESS=""   → starts Ray cluster + dashboard
+        Worker node → RAY_ADDRESS set → joins cluster, no dashboard spawned
         """
         required = {
             "TRAINING_PROFILE": "laptop",
-            "RAY_ADDRESS": "",
             "RAY_DASHBOARD_PORT": "8265",
             "VLLM_EXTRA_FLAGS": "",
         }
@@ -421,6 +413,60 @@ class DockerManager:
         content = env_path.read_text(encoding="utf-8")
         injected: List[str] = []
 
+        # ── RAY_ADDRESS — interactive cluster join walkthrough ────────────
+        # Only prompt if RAY_ADDRESS is absent from both .env and environment.
+        if (
+            not re.search(r"^RAY_ADDRESS=", content, re.MULTILINE)
+            and not os.environ.get("RAY_ADDRESS", "").strip()
+        ):
+
+            ray_address = ""
+
+            if sys.stdin.isatty():
+                typer.echo("\n" + "=" * 60)
+                typer.echo("  Sovereign Forge — Node Configuration")
+                typer.echo("=" * 60)
+                typer.echo(
+                    "\n  Is this node joining an existing Ray cluster?\n"
+                    "  Answer 'yes' for worker nodes 2..N.\n"
+                    "  Answer 'no' if this is the head node (starts the cluster).\n"
+                )
+                joining = typer.confirm("  Join an existing cluster?", default=False)
+
+                if joining:
+                    ray_address = typer.prompt(
+                        "  Ray cluster address",
+                        default="ray://192.168.1.10:10001",
+                    )
+                    typer.echo(
+                        f"\n  ✓ Worker node configured.\n"
+                        f"  Will join cluster at: {ray_address}\n"
+                        "  This node will NOT start a Ray dashboard.\n"
+                        "  DeploymentSupervisor will reuse the head actor.\n"
+                    )
+                else:
+                    dashboard_port = os.environ.get("RAY_DASHBOARD_PORT", "8265")
+                    typer.echo(
+                        f"\n  ✓ Head node configured.\n"
+                        f"  This node will start the Ray cluster and expose\n"
+                        f"  the dashboard on port {dashboard_port}.\n"
+                        "  Worker nodes should set:\n"
+                        "    RAY_ADDRESS=ray://<this_host_ip>:10001\n"
+                    )
+            else:
+                self.log.info(
+                    "Non-interactive environment — RAY_ADDRESS defaulting to '' (head node)."
+                )
+
+            if not injected:
+                content += "\n# Added by docker-manager --training overlay\n"
+            content += f"RAY_ADDRESS={ray_address}\n"
+            os.environ["RAY_ADDRESS"] = ray_address
+            injected.append(
+                f"RAY_ADDRESS={'(head node — empty)' if not ray_address else ray_address}"
+            )
+
+        # ── Remaining required vars ───────────────────────────────────────
         for key, default in required.items():
             if re.search(rf"^{re.escape(key)}=", content, re.MULTILINE):
                 continue
@@ -430,7 +476,7 @@ class DockerManager:
                 content += "\n# Added by docker-manager --training overlay\n"
             content += f"{key}={default}\n"
             os.environ[key] = default
-            injected.append(key)
+            injected.append(f"{key}={default}")
             self.log.info("Injected '%s=%s' into .env", key, default)
 
         if injected:
@@ -438,8 +484,10 @@ class DockerManager:
             typer.echo(
                 f"\n  Added {len(injected)} variable(s) to .env for --training overlay:\n"
                 + "\n".join(f"    {k}" for k in injected)
-                + "\n  Edit them any time: platform-api docker-manager configure --set KEY=VALUE\n"
+                + "\n  Edit any time: platform-api docker-manager configure --set KEY=VALUE\n"
             )
+
+        typer.echo("=" * 60 + "\n")
 
     # ------------------------------------------------------------------
     # Mesh resolution
@@ -626,7 +674,6 @@ class DockerManager:
                 f"@{db_host}:{db_port}/{db_name}"
             )
             generation_log["DATABASE_URL"] = "Constructed from DB components"
-
             env_values["SPECIAL_DB_URL"] = (
                 f"mysql+pymysql://{db_user}:{quote_plus(str(db_pass))}"
                 f"@localhost:{DEFAULT_DB_HOST_PORT}/{db_name}"
@@ -769,7 +816,7 @@ class DockerManager:
         container_name = self._OLLAMA_CONTAINER
         if self._is_container_running(container_name):
             self.log.info(
-                "External Ollama container '%s' is already running.", container_name
+                "External Ollama container '%s' already running.", container_name
             )
             return True
         if not self._is_image_present(self._OLLAMA_IMAGE):
@@ -829,7 +876,9 @@ class DockerManager:
         vllm = getattr(self.args, "vllm", False)
         gpu = getattr(self.args, "gpu", False)
 
-        # Mesh enforcement for vLLM
+        # Mesh enforcement for static vLLM — only relevant when --gpu or --vllm
+        # is explicitly requested. Dynamic pd_vllm_* containers are managed by
+        # DeploymentSupervisor and do not go through this path.
         if vllm or gpu:
             deployments = self._get_all_active_deployments_for_node()
             if deployments:
@@ -838,7 +887,6 @@ class DockerManager:
                     "MESH RESOLVED: Node '%s' -> Backbone: %s", self.node_id, base_model
                 )
                 os.environ["VLLM_MODEL"] = base_model
-
                 lora_bundles = [
                     f"{d['ftm_id']}={d['adapter_path']}"
                     for d in deployments
@@ -866,7 +914,6 @@ class DockerManager:
         profile_services = {
             name for name, cfg in all_services.items() if cfg.get("profiles")
         }
-
         default_services = [
             name for name in all_services.keys() if name not in profile_services
         ]
@@ -1087,7 +1134,6 @@ class DockerManager:
         if not self._preflight():
             raise SystemExit(1)
 
-        # Legacy external Ollama path
         if getattr(self.args, "with_ollama", False):
             self._ensure_ollama(
                 opt_in=True, use_gpu=getattr(self.args, "ollama_gpu", False)
@@ -1123,16 +1169,19 @@ def docker_manager(
     mode: str = typer.Option(
         "up", "--mode", help="Stack action: up | build | both | down_only | logs"
     ),
-    # --- GPU / training overlays ---
     training: bool = typer.Option(
         False,
         "--training",
-        help="Start Sovereign Forge training stack (training-api + worker + vllm). Requires NVIDIA GPU.",
+        help=(
+            "Start Sovereign Forge training stack (training-api + worker). "
+            "On first run prompts for head vs worker node configuration. "
+            "Requires NVIDIA GPU."
+        ),
     ),
     gpu: bool = typer.Option(
         False,
         "--gpu",
-        help="Start both Ollama and vLLM (shorthand for --ollama --vllm). Requires NVIDIA GPU.",
+        help="Start both Ollama and static vLLM. Requires NVIDIA GPU.",
     ),
     ollama: bool = typer.Option(
         False,
@@ -1142,32 +1191,25 @@ def docker_manager(
     vllm: bool = typer.Option(
         False,
         "--vllm",
-        help="Start vLLM inference overlay. Requires NVIDIA GPU.",
+        help="Start static vLLM inference overlay. Requires NVIDIA GPU.",
     ),
-    # --- Targeting ---
     services: Optional[List[str]] = typer.Option(None, "--services"),
     exclude: Optional[List[str]] = typer.Option(None, "--exclude", "-x"),
-    # --- Up ---
     down: bool = typer.Option(False, "--down"),
     clear_volumes: bool = typer.Option(False, "--clear-volumes", "-v"),
     force_recreate: bool = typer.Option(False, "--force-recreate"),
     attached: bool = typer.Option(False, "--attached", "-a"),
     build_before_up: bool = typer.Option(False, "--build-before-up"),
-    # --- Build ---
     no_cache: bool = typer.Option(False, "--no-cache"),
     parallel: bool = typer.Option(False, "--parallel"),
     tag: Optional[str] = typer.Option(None, "--tag"),
-    # --- Nuke ---
     nuke: bool = typer.Option(False, "--nuke"),
-    # --- Logs ---
     follow: bool = typer.Option(False, "--follow", "-f"),
     tail: Optional[int] = typer.Option(None, "--tail"),
     timestamps: bool = typer.Option(False, "--timestamps", "-t"),
     no_log_prefix: bool = typer.Option(False, "--no-log-prefix"),
-    # --- Legacy external Ollama ---
     with_ollama: bool = typer.Option(False, "--with-ollama"),
     ollama_gpu: bool = typer.Option(False, "--ollama-gpu"),
-    # --- Debug ---
     verbose: bool = typer.Option(False, "--verbose", "--debug"),
     debug_cache: bool = typer.Option(False, "--debug-cache"),
 ) -> None:
@@ -1185,7 +1227,7 @@ def docker_manager(
       platform-api docker-manager --mode up --vllm\n
       platform-api docker-manager --mode up --gpu\n
 
-    SOVEREIGN FORGE — training + vllm (opt-in):\n
+    SOVEREIGN FORGE — training stack (opt-in):\n
       platform-api docker-manager --mode up --training\n
       platform-api docker-manager --mode up --gpu --training\n
 
