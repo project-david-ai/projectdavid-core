@@ -37,11 +37,10 @@ while True:
         raise Exception(f"Dataset preparation failed: {ds}")
     time.sleep(3)
 
+
 # -------------------------------------------------------
 # Dispatch the training job
 # ----------------------------------------------------
-
-
 # Submit the job to the Cluster Mesh
 job = client.training.create(
     dataset_id="ds_XZrxCs7Imo0v3VRBLCeNCA",

@@ -898,9 +898,6 @@ class DockerManager:
         if final_services and not self._profile_flags():
             up_cmd.extend(sorted(final_services))
 
-        # Extra services activated by combination flags (e.g. vllm with training)
-        up_cmd.extend(self._extra_services())
-
         try:
             self._run_command(up_cmd, check=True)
             self.log.info("Stack started successfully.")
