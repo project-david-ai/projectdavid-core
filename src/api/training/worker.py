@@ -496,6 +496,7 @@ def process_job(job_id: str, user_id: str):
         process.wait()
 
         if process.returncode == 0:
+
             new_ftm = _FineTunedModel(
                 id=model_uuid,
                 user_id=user_id,
@@ -503,11 +504,12 @@ def process_job(job_id: str, user_id: str):
                 name=f"FT: {job.base_model}",
                 base_model=job.base_model,
                 storage_path=model_rel_path,
-                node_id=_NODE_ID,
+                # node_id removed — FK references compute_nodes which is a legacy table
                 status=_StatusEnum.active,
                 created_at=int(_time.time()),
                 updated_at=int(_time.time()),
             )
+
             db.add(new_ftm)
             job.status = _StatusEnum.completed
             job.completed_at = int(_time.time())
