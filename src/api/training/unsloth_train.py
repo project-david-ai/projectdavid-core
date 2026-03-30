@@ -45,12 +45,10 @@ def main():
         max_seq_length=p["max_seq_length"],
         load_in_4bit=True,
         token=os.getenv("HF_TOKEN"),
-        fix_tokenizer=True,  # Tells Unsloth to repair common tokenizer bugs
+        fix_tokenizer=True,
     )
 
     # ─── QWEN/TRL COMPATIBILITY FIX ──────────────────────────────────────────
-    # TRL 0.24.0+ requires that the pad_token and eos_token exist in the vocab.
-    # We force the tokenizer to use its own native EOS for padding.
     if tokenizer.eos_token is None:
         tokenizer.eos_token = "<|endoftext|>"  # nosec B105
 
@@ -78,13 +76,26 @@ def main():
     )
 
     # 4. Process Dataset
-    # — local file, not hub download
     dataset = load_dataset("json", data_files=args.data, split="train")  # nosec B615
 
     def format_prompts(examples):
         texts = []
-        for messages in examples["messages"]:
-            # Standardizing to the 'text' field
+
+        # Support both ShareGPT (conversations) and ChatML (messages) formats.
+        # ShareGPT uses 'from'/'value' keys; ChatML uses 'role'/'content' keys.
+        # apply_chat_template requires role/content — normalise ShareGPT on the fly.
+        records = examples.get("conversations") or examples.get("messages") or []
+
+        for messages in records:
+            if messages and isinstance(messages[0], dict) and "from" in messages[0]:
+                # Normalise ShareGPT → ChatML
+                messages = [
+                    {
+                        "role": "user" if m["from"] == "human" else "assistant",
+                        "content": m["value"],
+                    }
+                    for m in messages
+                ]
             texts.append(
                 tokenizer.apply_chat_template(
                     messages, tokenize=False, add_generation_prompt=False
@@ -97,9 +108,7 @@ def main():
         format_prompts, batched=True, num_proc=2, remove_columns=dataset.column_names
     )
 
-    # 5. Initialize Trainer (THE STRICT SIGNATURE)
-    # Using SFTConfig with special dataset_kwargs to prevent TRL from
-    # trying to append tokens it doesn't recognize.
+    # 5. Initialize Trainer
     trainer = SFTTrainer(
         model=model,
         train_dataset=dataset,
@@ -119,14 +128,11 @@ def main():
             weight_decay=0.01,
             lr_scheduler_type="linear",
             seed=3407,
-            # — container-only training scratch space
             output_dir="/tmp/outputs",  # nosec B108
             report_to="none",
             packing=False,
-            # This is the secret sauce: tells TRL not to touch the tokens
             dataset_kwargs={
                 "add_special_tokens": False,
-                #  — boolean config value, not a password
                 "append_concat_token": False,  # nosec B105
             },
         ),
