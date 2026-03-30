@@ -128,6 +128,11 @@ def manage_vllm_container(
     on the same host using NCCL. Each GPU receives one shard of the
     model's layers (tensor parallelism).
 
+    RAY_ADDRESS is forwarded to the container so that on worker nodes,
+    vLLM joins the cluster Ray for cross-node tensor parallelism.
+    On the head node RAY_ADDRESS is empty — vLLM uses its own isolated
+    Ray instance (correct for single-node deployments).
+
     Returns:
         On 'start': the container's routable IP address.
         On 'stop':  the container name that was removed.
@@ -157,12 +162,13 @@ def manage_vllm_container(
         "NVIDIA_DISABLE_REQUIRE": "true",
         "PYTORCH_ALLOC_CONF": "expandable_segments:True",
         "NVIDIA_VISIBLE_DEVICES": "all",
+        # Forward RAY_ADDRESS so vLLM joins the cluster on worker nodes.
+        # Empty on head node — vLLM runs isolated Ray (single-node sharding only).
+        # Set on worker nodes — vLLM joins cluster Ray for cross-node sharding.
+        "RAY_ADDRESS": os.getenv("RAY_ADDRESS", ""),
     }
 
     # ── Build vLLM command ────────────────────────────────────────────────
-    # --tensor-parallel-size controls how many GPUs vLLM shards across.
-    # tp=1 is a no-op (single GPU, default behaviour).
-    # tp=N splits attention heads and MLP weights across N GPUs via NCCL.
     cmd = (
         f"--model {deployment.base_model_id} "
         f"--dtype float16 "
@@ -192,10 +198,6 @@ def manage_vllm_container(
                     )
                     c.remove(force=True)
 
-        # ── GPU request — count matches tensor_parallel_size ──────────────
-        # For tp=1: count=-1 (all GPUs visible, vLLM picks one).
-        # For tp=N: count=-1 still — NVIDIA_VISIBLE_DEVICES=all exposes all
-        # GPUs and vLLM's NCCL backend handles the assignment.
         gpu_config = docker.types.DeviceRequest(
             count=-1, capabilities=[["gpu", "compute", "utility"]]
         )
@@ -240,6 +242,10 @@ class DeploymentSupervisor:
 
     Sharding: reads tensor_parallel_size from each deployment record and
     passes it through to _spawn(), which builds the correct vLLM command.
+
+    RAY_ADDRESS is forwarded into each spawned vLLM container:
+      - Head node  (RAY_ADDRESS=""):  vLLM starts isolated Ray — single-node only.
+      - Worker node (RAY_ADDRESS set): vLLM joins cluster Ray — cross-node sharding.
 
     SERIALIZATION: all dependencies imported locally inside run() to avoid
     pickling module-level objects with thread locks or weakrefs.
@@ -292,7 +298,6 @@ class DeploymentSupervisor:
                 return None
             container_name = f"pd_vllm_{dep.id}"
 
-            # ── Read tensor parallel size from deployment record ───────────
             tp_size = getattr(dep, "tensor_parallel_size", 1) or 1
 
             env = {
@@ -300,7 +305,12 @@ class DeploymentSupervisor:
                 "NVIDIA_DISABLE_REQUIRE": "true",
                 "PYTORCH_ALLOC_CONF": "expandable_segments:True",
                 "NVIDIA_VISIBLE_DEVICES": "all",
+                # Forward RAY_ADDRESS so vLLM joins the cluster on worker nodes.
+                # Empty on head node — vLLM runs isolated Ray (single-node sharding only).
+                # Set on worker nodes — vLLM joins cluster Ray for cross-node sharding.
+                "RAY_ADDRESS": _os.getenv("RAY_ADDRESS", ""),
             }
+
             cmd = (
                 f"--model {dep.base_model_id} "
                 f"--dtype float16 "
@@ -524,20 +534,35 @@ def process_job(job_id: str, user_id: str):
 
 def main():
     # ── Phase 1: Ray cluster init ────────────────────────────────────────────
+    # RAY_ADDRESS blank = this node is the head. It starts the cluster and
+    # exposes the dashboard. Worker nodes set RAY_ADDRESS=ray://<head>:10001
+    # and join the existing cluster without starting their own Ray instance.
     ray_address = os.getenv("RAY_ADDRESS") or None
-    ray.init(
-        address=ray_address,
-        ignore_reinit_error=True,
-        include_dashboard=True,
-        # — Ray dashboard intentionally binds all interfaces inside container
-        dashboard_host="0.0.0.0",  # nosec B104
-        dashboard_port=int(os.getenv("RAY_DASHBOARD_PORT", "8265")),
-        logging_level="WARNING",
-    )
-    logging_utility.info(
-        f"🌐 Ray cluster online — "
-        f"dashboard: http://localhost:{os.getenv('RAY_DASHBOARD_PORT', '8265')}"
-    )
+    is_head = ray_address is None
+
+    if is_head:
+        ray.init(
+            address=None,
+            ignore_reinit_error=True,
+            include_dashboard=True,
+            # — Ray dashboard intentionally binds all interfaces inside container
+            dashboard_host="0.0.0.0",  # nosec B104
+            dashboard_port=int(os.getenv("RAY_DASHBOARD_PORT", "8265")),
+            logging_level="WARNING",
+        )
+        logging_utility.info(
+            f"🌐 Ray HEAD started — "
+            f"dashboard: http://localhost:{os.getenv('RAY_DASHBOARD_PORT', '8265')}"
+        )
+    else:
+        # Worker node — join existing cluster. No dashboard, no port conflicts.
+        ray.init(
+            address=ray_address,
+            ignore_reinit_error=True,
+            logging_level="WARNING",
+        )
+        logging_utility.info(f"🔗 Ray WORKER joined cluster at: {ray_address}")
+
     logging_utility.info(f"🔵 Ray resources: {ray.cluster_resources()}")
 
     # ── Phase 4: Resolve node identity from Ray ───────────────────────────────
@@ -545,6 +570,9 @@ def main():
     logging_utility.info(f"✅ Node identity resolved from Ray cluster: {ray_node_id}")
 
     # ── Phase 3B: DeploymentSupervisor Ray actor ──────────────────────────────
+    # On the head node this actor is created fresh.
+    # On worker nodes get_if_exists=True returns the already-running head actor
+    # rather than spawning a duplicate — only one supervisor runs per cluster.
     supervisor = DeploymentSupervisor.options(
         name="DeploymentSupervisor",
         get_if_exists=True,
