@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Dict, List, Optional, Set
-from urllib.parse import quote_plus, urlparse
+from urllib.parse import quote_plus
 
 import typer
 
@@ -56,8 +56,16 @@ except ImportError:
 # Constants
 # ---------------------------------------------------------------------------
 DEFAULT_DB_CONTAINER_PORT = "3306"
-DEFAULT_DB_HOST_PORT = "3307"  # Port mapped to Windows host
+DEFAULT_DB_HOST_PORT = "3307"
 DEFAULT_DB_SERVICE_NAME = "db"
+
+BASE_COMPOSE_FILE = "docker-compose.yml"
+GPU_COMPOSE_FILE = "docker-compose.gpu.yml"
+OLLAMA_COMPOSE_FILE = "docker-compose.ollama.yml"
+VLLM_COMPOSE_FILE = "docker-compose.vllm.yml"
+TRAINING_COMPOSE_FILE = "docker-compose.training.yml"
+
+_NVIDIA_TOOLKIT_INSTALL_URL = "https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html"
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -66,7 +74,22 @@ log = logging.getLogger(__name__)
 
 app = typer.Typer(
     name="docker-manager",
-    help="Manage Docker Compose stack: build, run, set up .env, and manage services.",
+    help=(
+        "Manage Docker Compose stack for Project David Core.\n\n"
+        "BASE STACK:\n"
+        "  platform-api docker-manager --mode up\n\n"
+        "GPU INFERENCE (opt-in, requires NVIDIA GPU):\n"
+        "  platform-api docker-manager --mode up --ollama\n"
+        "  platform-api docker-manager --mode up --vllm\n"
+        "  platform-api docker-manager --mode up --gpu\n\n"
+        "SOVEREIGN FORGE — training + inference mesh (opt-in):\n"
+        "  platform-api docker-manager --mode up --training\n"
+        "  platform-api docker-manager --mode up --training --vllm\n"
+        "  platform-api docker-manager --mode up --gpu --training\n\n"
+        "CONFIGURATION:\n"
+        "  platform-api docker-manager configure --set HF_TOKEN=hf_abc123\n"
+        "  platform-api docker-manager bootstrap-admin\n"
+    ),
     add_completion=False,
 )
 
@@ -75,7 +98,7 @@ class DockerManager:
     """Manages Docker Compose stack operations and env setup."""
 
     _ENV_FILE = ".env"
-    _DOCKER_COMPOSE_FILE = "docker-compose.yml"
+    _DOCKER_COMPOSE_FILE = BASE_COMPOSE_FILE
 
     _OLLAMA_IMAGE = "ollama/ollama"
     _OLLAMA_CONTAINER = "ollama"
@@ -142,12 +165,14 @@ class DockerManager:
         "TOGETHER_BASE_URL": "https://api.together.xyz/v1",
         "VLLM_BASE_URL": "http://vllm_server:8000",
         "OLLAMA_BASE_URL": "http://ollama:11434",
-        # — empty string is intentional default
         "HF_TOKEN": "",  # nosec B105
         "HF_CACHE_PATH": "",
         "VLLM_MODEL": "Qwen/Qwen2.5-1.5B-Instruct",
-        "TRAINING_PROFILE": "laptop",  # Default for local box
-        "NODE_ID": f"node_{socket.gethostname()}",  # Default node name
+        "VLLM_EXTRA_FLAGS": "",
+        "TRAINING_PROFILE": "laptop",
+        "RAY_ADDRESS": "",
+        "RAY_DASHBOARD_PORT": "8265",
+        "NODE_ID": f"node_{socket.gethostname()}",
         "TOGETHER_API_KEY": "",
         "HYPERBOLIC_API_KEY": "",
         "ADMIN_API_KEY": "",
@@ -192,7 +217,12 @@ class DockerManager:
             "HF_TOKEN",
             "HF_CACHE_PATH",
             "VLLM_MODEL",
+            "VLLM_EXTRA_FLAGS",
             "TRAINING_PROFILE",
+        ],
+        "Training Stack": [
+            "RAY_ADDRESS",
+            "RAY_DASHBOARD_PORT",
         ],
         "Database Configuration": [
             "DATABASE_URL",
@@ -258,34 +288,183 @@ class DockerManager:
             self.log.setLevel(logging.DEBUG)
         self.log.debug("DockerManager initialised with args: %s", vars(args))
 
-        self.compose_files = [self._DOCKER_COMPOSE_FILE]
-
         self.compose_config = self._load_compose_config()
         self._check_for_required_env_file()
         self._configure_shared_path()
         self._configure_hf_cache_path()
-        self._ensure_dockerignore()
 
-        # Ensure Mesh Identity is loaded
+        if getattr(self.args, "training", False):
+            self._merge_env_for_training()
+
+        self._ensure_dockerignore()
         self.node_id = os.getenv("NODE_ID", f"node_{socket.gethostname()}")
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # MESH RESOLUTION LOGIC (v2.0 Cluster Implementation)
-    # ──────────────────────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
+    # Compose file stacking — mirrors platform behaviour exactly
+    # ------------------------------------------------------------------
+
+    def _compose_files(self) -> List[str]:
+        """
+        Builds the -f flag list for docker compose commands.
+
+        --gpu      → base + gpu overlay (ollama + vllm)
+        --ollama   → base + ollama overlay only
+        --vllm     → base + vllm overlay only
+        --training → base + training overlay (training-api + worker + Ray)
+        Flags are additive — any combination is valid.
+        """
+        files = ["-f", BASE_COMPOSE_FILE]
+
+        gpu = getattr(self.args, "gpu", False)
+        ollama = getattr(self.args, "ollama", False)
+        vllm = getattr(self.args, "vllm", False)
+        training = getattr(self.args, "training", False)
+
+        if gpu:
+            if Path(GPU_COMPOSE_FILE).exists():
+                files += ["-f", GPU_COMPOSE_FILE]
+            else:
+                self.log.warning(
+                    "%s not found — GPU overlay skipped. "
+                    "Ensure it exists in your project root.",
+                    GPU_COMPOSE_FILE,
+                )
+        else:
+            if ollama and Path(OLLAMA_COMPOSE_FILE).exists():
+                files += ["-f", OLLAMA_COMPOSE_FILE]
+            elif ollama:
+                self.log.warning(
+                    "%s not found — Ollama overlay skipped.", OLLAMA_COMPOSE_FILE
+                )
+
+            if vllm and Path(VLLM_COMPOSE_FILE).exists():
+                files += ["-f", VLLM_COMPOSE_FILE]
+            elif vllm:
+                self.log.warning(
+                    "%s not found — vLLM overlay skipped.", VLLM_COMPOSE_FILE
+                )
+
+        if training:
+            if Path(TRAINING_COMPOSE_FILE).exists():
+                files += ["-f", TRAINING_COMPOSE_FILE]
+            else:
+                self.log.warning(
+                    "%s not found — training overlay skipped. "
+                    "Ensure it exists in your project root.",
+                    TRAINING_COMPOSE_FILE,
+                )
+
+        return files
+
+    # Backward-compat shim — existing code calls _get_compose_flags()
+    def _get_compose_flags(self) -> List[str]:
+        return self._compose_files()
+
+    # ------------------------------------------------------------------
+    # GPU preflight
+    # ------------------------------------------------------------------
+
+    def _has_nvidia_support(self) -> bool:
+        cmd = shutil.which("nvidia-smi")
+        if cmd:
+            try:
+                self._run_command(
+                    [cmd], check=True, capture_output=True, suppress_logs=True
+                )
+                return True
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                pass
+        return False
+
+    def _validate_gpu_prereqs(self, flag: str) -> bool:
+        if self._has_nvidia_support():
+            self.log.info("NVIDIA GPU support confirmed.")
+            return True
+        typer.echo(
+            f"\nGPU service requested ({flag}) but NVIDIA drivers / nvidia-smi not found.\n"
+            "Requirements:\n"
+            "  1. NVIDIA GPU with drivers installed\n"
+            f"  2. NVIDIA Container Toolkit: {_NVIDIA_TOOLKIT_INSTALL_URL}\n"
+            "\nTo start without GPU services, omit the GPU flags:\n"
+            "  platform-api docker-manager --mode up\n",
+            err=True,
+        )
+        return False
+
+    def _preflight(self) -> bool:
+        if not self._has_docker():
+            return False
+
+        gpu = getattr(self.args, "gpu", False)
+        ollama = getattr(self.args, "ollama", False)
+        vllm = getattr(self.args, "vllm", False)
+        training = getattr(self.args, "training", False)
+
+        if gpu and not self._validate_gpu_prereqs("--gpu"):
+            return False
+        if ollama and not gpu and not self._validate_gpu_prereqs("--ollama"):
+            return False
+        if vllm and not gpu and not self._validate_gpu_prereqs("--vllm"):
+            return False
+        if training and not self._validate_gpu_prereqs("--training"):
+            return False
+
+        return True
+
+    # ------------------------------------------------------------------
+    # Training env injection — mirrors platform _merge_env_for_overlay
+    # ------------------------------------------------------------------
+
+    def _merge_env_for_training(self) -> None:
+        """
+        Safely injects training-specific variables into an existing .env
+        without touching any values already set.
+        """
+        required = {
+            "TRAINING_PROFILE": "laptop",
+            "RAY_ADDRESS": "",
+            "RAY_DASHBOARD_PORT": "8265",
+            "VLLM_EXTRA_FLAGS": "",
+        }
+
+        env_path = Path(self._ENV_FILE)
+        if not env_path.exists():
+            return
+
+        content = env_path.read_text(encoding="utf-8")
+        injected: List[str] = []
+
+        for key, default in required.items():
+            if re.search(rf"^{re.escape(key)}=", content, re.MULTILINE):
+                continue
+            if os.environ.get(key, "").strip():
+                continue
+            if not injected:
+                content += "\n# Added by docker-manager --training overlay\n"
+            content += f"{key}={default}\n"
+            os.environ[key] = default
+            injected.append(key)
+            self.log.info("Injected '%s=%s' into .env", key, default)
+
+        if injected:
+            env_path.write_text(content, encoding="utf-8")
+            typer.echo(
+                f"\n  Added {len(injected)} variable(s) to .env for --training overlay:\n"
+                + "\n".join(f"    {k}" for k in injected)
+                + "\n  Edit them any time: platform-api docker-manager configure --set KEY=VALUE\n"
+            )
+
+    # ------------------------------------------------------------------
+    # Mesh resolution
+    # ------------------------------------------------------------------
 
     def _get_all_active_deployments_for_node(self) -> List[Dict[str, str]]:
-        """
-        Interrogates the Mesh Ledger (MySQL) to find ALL models this physical node
-        is assigned to run. Supports concurrent loading of multiple LoRA adapters.
-        """
         raw_db_url = os.getenv("DATABASE_URL")
         if not raw_db_url:
             return []
-
         try:
             import pymysql
 
-            # Match: mysql+pymysql://user:pass@host:port/db
             pattern = re.compile(
                 r"mysql\+pymysql://(?P<user>[^:]+):(?P<password>[^@]+)@(?P<host>[^:/]+)(?::(?P<port>\d+))?/(?P<db>.*)"
             )
@@ -295,100 +474,40 @@ class DockerManager:
 
             connection = pymysql.connect(
                 host="localhost",
-                port=int(DEFAULT_DB_HOST_PORT),  # 3307
+                port=int(DEFAULT_DB_HOST_PORT),
                 user=match.group("user"),
                 password=match.group("password"),
                 database=match.group("db"),
                 connect_timeout=5,
             )
-
             deployments = []
             with connection.cursor() as cursor:
-                # 🎯 THE MULTI-LORA MESH QUERY:
-                # Fetches every model assigned to THIS node ID.
-                # ftm_id is required so vLLM can name the LoRA module correctly.
                 sql = """
                       SELECT d.base_model_id, f.storage_path, d.fine_tuned_model_id
                       FROM inference_deployments d
                                LEFT JOIN fine_tuned_models f ON d.fine_tuned_model_id = f.id
-                      WHERE d.node_id = %s AND d.status = 'active' \
+                      WHERE d.node_id = %s AND d.status = 'active'
                       """
                 cursor.execute(sql, (self.node_id,))
-                rows = cursor.fetchall()
-
-                for row in rows:
+                for row in cursor.fetchall():
                     deployments.append(
                         {
                             "base_model": row[0],
-                            # Map relative DB path to internal vLLM mount path
                             "adapter_path": (
                                 f"/mnt/training_data/{row[1]}" if row[1] else None
                             ),
-                            "ftm_id": row[
-                                2
-                            ],  # Used as the name in --lora-modules name=path
+                            "ftm_id": row[2],
                         }
                     )
-
             connection.close()
             return deployments
         except Exception as e:
             self.log.debug("Mesh Ledger lookup failed or skipped: %s", e)
         return []
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # Hot-Fire Dynamic Activation Logic
-    # ──────────────────────────────────────────────────────────────────────────
-
-    def _get_active_model_override(self) -> Optional[Dict[str, str]]:
-        """
-        Connects to DB and returns metadata for the active fine-tuned model.
-        """
-        raw_db_url = os.getenv("DATABASE_URL")
-        if not raw_db_url:
-            return None
-
-        try:
-            import pymysql
-
-            pattern = re.compile(
-                r"mysql\+pymysql://(?P<user>[^:]+):(?P<password>[^@]+)@(?P<host>[^:/]+)(?::(?P<port>\d+))?/(?P<db>.*)"
-            )
-            match = pattern.match(raw_db_url)
-            if not match:
-                return None
-
-            connection = pymysql.connect(
-                host="localhost",
-                port=3307,
-                user=match.group("user"),
-                password=match.group("password"),
-                database=match.group("db"),
-                connect_timeout=5,
-            )
-
-            model_data = None
-            with connection.cursor() as cursor:
-                # FETCH BOTH base_model AND storage_path
-                sql = "SELECT base_model, storage_path FROM fine_tuned_models WHERE is_active = 1 LIMIT 1"
-                cursor.execute(sql)
-                result = cursor.fetchone()
-                if result:
-                    model_data = {
-                        "base_model": result[0],
-                        "adapter_path": f"/mnt/training_data/{result[1]}",
-                    }
-            connection.close()
-            return model_data
-        except Exception as e:
-            self.log.debug("Active model DB lookup skipped: %s", e)
-        return None
-
-    def _get_compose_flags(self) -> List[str]:
-        flags = []
-        for file in self.compose_files:
-            flags.extend(["-f", file])
-        return flags
+    # ------------------------------------------------------------------
+    # Core utilities
+    # ------------------------------------------------------------------
 
     def _run_command(
         self,
@@ -419,6 +538,9 @@ class DockerManager:
                 raise
             return e
 
+    def _has_docker(self) -> bool:
+        return shutil.which("docker") is not None
+
     def _ensure_dockerignore(self):
         dockerignore = Path(".dockerignore")
         if not dockerignore.exists():
@@ -429,7 +551,7 @@ class DockerManager:
 
     def _load_compose_config(self):
         merged_config = {"services": {}}
-        for cf in self.compose_files:
+        for cf in [BASE_COMPOSE_FILE]:
             path = Path(cf)
             if not path.is_file():
                 self.log.warning("Compose file '%s' not found.", cf)
@@ -495,9 +617,7 @@ class DockerManager:
             value = self._get_env_from_compose_service(service_name, compose_key)
             if value is not None and not str(value).startswith("${"):
                 env_values[env_key] = str(value)
-                generation_log[env_key] = (
-                    f"From {self._DOCKER_COMPOSE_FILE} ({service_name}/{compose_key})"
-                )
+                generation_log[env_key] = f"From {self._DOCKER_COMPOSE_FILE}"
 
         for key in self._GENERATED_SECRETS:
             env_values[key] = secrets.token_hex(16 if key == "API_KEY" else 32)
@@ -519,6 +639,12 @@ class DockerManager:
                 f"@{db_host}:{db_port}/{db_name}"
             )
             generation_log["DATABASE_URL"] = "Constructed from DB components"
+
+            env_values["SPECIAL_DB_URL"] = (
+                f"mysql+pymysql://{db_user}:{quote_plus(str(db_pass))}"
+                f"@localhost:{DEFAULT_DB_HOST_PORT}/{db_name}"
+            )
+            generation_log["SPECIAL_DB_URL"] = "Constructed using host port (3307)"
 
         if not env_values.get("HF_CACHE_PATH"):
             env_values["HF_CACHE_PATH"] = os.path.join(
@@ -567,7 +693,7 @@ class DockerManager:
             load_dotenv(dotenv_path=self._ENV_FILE, override=True)
 
     def _configure_shared_path(self):
-        shared_path = os.environ.get("SHARED_PATH", os.path.abspath("./entities_share"))
+        shared_path = os.environ.get("SHARED_PATH", os.path.abspath("./shared_data"))
         os.environ["SHARED_PATH"] = shared_path
         Path(shared_path).mkdir(parents=True, exist_ok=True)
 
@@ -590,10 +716,7 @@ class DockerManager:
         if failed:
             raise SystemExit(1)
 
-    def _has_docker(self):
-        return shutil.which("docker") is not None
-
-    def _is_container_running(self, container_name):
+    def _is_container_running(self, container_name: str) -> bool:
         if not self._has_docker():
             return False
         try:
@@ -614,21 +737,43 @@ class DockerManager:
         except Exception:
             return False
 
-    def _has_nvidia_support(self):
-        cmd = shutil.which("nvidia-smi.exe" if self.is_windows else "nvidia-smi") or (
-            shutil.which("nvidia-smi") if self.is_windows else None
-        )
-        if not cmd:
-            cmd = shutil.which("nvidia-smi")
-        if cmd:
-            try:
-                self._run_command(
-                    [cmd], check=True, capture_output=True, suppress_logs=True
-                )
-                return True
-            except (subprocess.CalledProcessError, FileNotFoundError):
-                pass
-        return False
+    def _is_image_present(self, image_name: str) -> bool:
+        try:
+            result = self._run_command(
+                ["docker", "images", "-q", image_name],
+                capture_output=True,
+                check=True,
+                suppress_logs=True,
+            )
+            return bool(result.stdout.strip())
+        except Exception:
+            return False
+
+    def _is_service_running(self, service_name: str) -> bool:
+        if not self._has_docker():
+            return False
+        try:
+            res = self._run_command(
+                [
+                    "docker",
+                    "compose",
+                    *self._get_compose_flags(),
+                    "ps",
+                    "--services",
+                    "--filter",
+                    "status=running",
+                ],
+                capture_output=True,
+                check=True,
+                suppress_logs=True,
+            )
+            return service_name in res.stdout.split()
+        except Exception:
+            return False
+
+    # ------------------------------------------------------------------
+    # External Ollama (legacy --with-ollama path, kept for compat)
+    # ------------------------------------------------------------------
 
     def _start_ollama(self, cpu_only=True):
         if not self._has_docker():
@@ -680,20 +825,189 @@ class DockerManager:
         if not opt_in:
             return True
         self.log.info("--- External Ollama Setup ---")
-        if os.path.exists("/.dockerenv") or "DOCKER_HOST" in os.environ:
-            self.log.warning(
-                "Running inside Docker; skipping external Ollama management."
-            )
-            return True
-        if platform.system() == "Darwin" and use_gpu:
-            self.log.warning(
-                "macOS detected; GPU passthrough has limitations. CPU mode recommended."
-            )
         success = self._start_ollama(cpu_only=not use_gpu)
         if not success:
             self.log.error("Failed to start the external Ollama container.")
         self.log.info("--- End External Ollama Setup ---")
         return success
+
+    # ------------------------------------------------------------------
+    # Action handlers
+    # ------------------------------------------------------------------
+
+    def _handle_up(self):
+        self._validate_secrets()
+
+        vllm = getattr(self.args, "vllm", False)
+        gpu = getattr(self.args, "gpu", False)
+
+        # Mesh enforcement for vLLM
+        if vllm or gpu:
+            deployments = self._get_all_active_deployments_for_node()
+            if deployments:
+                base_model = deployments[0]["base_model"]
+                self.log.info(
+                    "MESH RESOLVED: Node '%s' -> Backbone: %s", self.node_id, base_model
+                )
+                os.environ["VLLM_MODEL"] = base_model
+
+                lora_bundles = [
+                    f"{d['ftm_id']}={d['adapter_path']}"
+                    for d in deployments
+                    if d.get("ftm_id") and d.get("adapter_path")
+                ]
+                if lora_bundles:
+                    self.log.info("MESH: Mounting %d LoRA adapters.", len(lora_bundles))
+                    os.environ["VLLM_EXTRA_FLAGS"] = (
+                        f"--enable-lora --lora-modules {' '.join(lora_bundles)}"
+                    )
+                else:
+                    self.log.info("MESH: Running standard backbone (no adapters).")
+                    os.environ["VLLM_EXTRA_FLAGS"] = ""
+            else:
+                self.log.warning(
+                    "No active deployment found for node '%s'. "
+                    "vLLM will start with default VLLM_MODEL from .env.",
+                    self.node_id,
+                )
+
+        all_services = self.compose_config.get("services", {})
+        requested = set(self.args.services or [])
+        excluded = set(getattr(self.args, "exclude", None) or [])
+
+        profile_services = {
+            name for name, cfg in all_services.items() if cfg.get("profiles")
+        }
+
+        default_services = [
+            name for name in all_services.keys() if name not in profile_services
+        ]
+
+        if requested:
+            final_services = list(requested - excluded)
+        else:
+            final_services = [s for s in default_services if s not in excluded]
+
+        if not final_services and not requested:
+            final_services = default_services
+
+        up_cmd = ["docker", "compose"] + self._compose_files() + ["up"]
+
+        if not getattr(self.args, "attached", False):
+            up_cmd.append("-d")
+        if getattr(self.args, "force_recreate", False):
+            up_cmd.append("--force-recreate")
+        if getattr(self.args, "build_before_up", False):
+            up_cmd.append("--build")
+
+        if final_services:
+            up_cmd.extend(sorted(final_services))
+
+        try:
+            self._run_command(up_cmd, check=True)
+            self.log.info("Stack started successfully.")
+        except subprocess.CalledProcessError:
+            raise SystemExit(1)
+
+    def _handle_down(self):
+        down_cmd = [
+            "docker",
+            "compose",
+            *self._compose_files(),
+            "down",
+            "--remove-orphans",
+        ]
+        if getattr(self.args, "clear_volumes", False):
+            try:
+                if input("Remove volumes? (yes/no): ").lower().strip() == "yes":
+                    down_cmd.append("--volumes")
+            except EOFError:
+                self.log.error("Volume deletion requires interactive input. Aborting.")
+                raise SystemExit(1)
+        if self.args.services:
+            down_cmd.extend(self.args.services)
+        self._run_command(down_cmd, check=False)
+
+    def _handle_build(self):
+        build_cmd = ["docker", "compose"] + self._compose_files() + ["build"]
+        if getattr(self.args, "no_cache", False):
+            build_cmd.append("--no-cache")
+        if getattr(self.args, "parallel", False):
+            build_cmd.append("--parallel")
+        if self.args.services:
+            build_cmd.extend(self.args.services)
+        try:
+            self._run_command(build_cmd, check=True)
+            if getattr(self.args, "tag", None):
+                self._tag_images(
+                    self.args.tag, targeted_services=self.args.services or None
+                )
+        except subprocess.CalledProcessError as e:
+            self.log.critical("Docker build failed (code %s).", e.returncode)
+            raise SystemExit(1)
+
+    def _handle_logs(self):
+        logs_cmd = ["docker", "compose"] + self._compose_files() + ["logs"]
+        if getattr(self.args, "follow", False):
+            logs_cmd.append("-f")
+        if getattr(self.args, "tail", None):
+            logs_cmd.extend(["--tail", str(self.args.tail)])
+        if getattr(self.args, "timestamps", False):
+            logs_cmd.append("-t")
+        if getattr(self.args, "no_log_prefix", False):
+            logs_cmd.append("--no-log-prefix")
+        if self.args.services:
+            logs_cmd.extend(self.args.services)
+        self._run_command(logs_cmd, check=False)
+
+    def _handle_nuke(self):
+        self.log.warning("NUKE MODE — this will destroy all stack data system-wide.")
+        try:
+            confirm = input("Type 'confirm nuke' to proceed: ")
+        except EOFError:
+            raise SystemExit(1)
+        if confirm.strip() != "confirm nuke":
+            raise SystemExit(0)
+        self._run_command(
+            ["docker", "compose"]
+            + self._compose_files()
+            + ["down", "--volumes", "--remove-orphans"],
+            check=False,
+        )
+        self._run_command(
+            ["docker", "system", "prune", "-a", "--volumes", "--force"], check=True
+        )
+        self.log.info("Nuke complete.")
+
+    def _tag_images(self, tag, targeted_services=None):
+        if not (tag and self._has_docker()):
+            return
+        try:
+            config_res = self._run_command(
+                ["docker", "compose"]
+                + self._compose_files()
+                + ["config", "--format", "json"],
+                capture_output=True,
+                check=True,
+                suppress_logs=True,
+            )
+            services_data = json.loads(config_res.stdout).get("services", {})
+            for svc_name, svc_config in services_data.items():
+                if targeted_services and svc_name not in targeted_services:
+                    continue
+                image_name = svc_config.get("image")
+                if not image_name:
+                    continue
+                base_image = image_name.split(":")[0]
+                new_tag = f"{base_image}:{tag}"
+                self.log.info("Tagging: %s -> %s", image_name, new_tag)
+                self._run_command(
+                    ["docker", "tag", image_name, new_tag],
+                    check=True,
+                    suppress_logs=True,
+                )
+        except Exception as e:
+            self.log.error("Error during image tagging: %s", e)
 
     def _run_docker_cache_diagnostics(self):
         self.log.info("--- Docker Cache Diagnostics ---")
@@ -708,320 +1022,15 @@ class DockerManager:
             size_mb = total_size / (1024 * 1024)
             self.log.info("Approximate build context size: %.2f MB", size_mb)
             if size_mb > 500:
-                self.log.warning(
-                    "Build context > 500 MB. Review .dockerignore to exclude large files."
-                )
-
-            config_res = self._run_command(
-                [
-                    "docker",
-                    "compose",
-                    *self._get_compose_flags(),
-                    "config",
-                    "--format",
-                    "json",
-                ],
-                capture_output=True,
-                check=True,
-                suppress_logs=True,
-            )
-            service_configs = json.loads(config_res.stdout).get("services", {})
-            for svc, cfg in service_configs.items():
-                image_name = cfg.get("image")
-                if not image_name:
-                    continue
-                self.log.info(
-                    "--- History for image '%s' (service: %s) ---", image_name, svc
-                )
-                history_res = self._run_command(
-                    [
-                        "docker",
-                        "history",
-                        image_name,
-                        "--no-trunc=false",
-                        "--format",
-                        '{{printf "%.12s" .ID}} | {{.Size | printf "%-12s"}} | {{.CreatedBy}}',
-                    ],
-                    check=False,
-                    capture_output=True,
-                    suppress_logs=True,
-                )
-                if history_res.returncode == 0 and history_res.stdout.strip():
-                    for line in history_res.stdout.strip().splitlines():
-                        self.log.info(line)
+                self.log.warning("Build context > 500 MB. Review .dockerignore.")
         except Exception as e:
             self.log.error("Diagnostics error: %s", e)
         finally:
             self.log.info("--- End Docker Cache Diagnostics ---")
 
-    def _handle_nuke(self):
-        self.log.warning("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-        self.log.warning("!!!    NUKE MODE ACTIVATED   !!!")
-        self.log.warning("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-        self.log.warning(
-            "This will stop all compose services, remove their volumes, AND prune ALL unused Docker data system-wide."
-        )
-        try:
-            confirm = input(">>> Type 'confirm nuke' exactly to proceed: ")
-        except EOFError:
-            self.log.error("Nuke requires interactive confirmation. Aborting.")
-            raise SystemExit(1)
-        if confirm.strip() != "confirm nuke":
-            self.log.info("Nuke operation cancelled.")
-            raise SystemExit(0)
-        self.log.info("Proceeding with Docker nuke...")
-        self._run_command(
-            [
-                "docker",
-                "compose",
-                *self._get_compose_flags(),
-                "down",
-                "--volumes",
-                "--remove-orphans",
-            ],
-            check=False,
-        )
-        try:
-            self._run_command(
-                ["docker", "system", "prune", "-a", "--volumes", "--force"], check=True
-            )
-        except subprocess.CalledProcessError as e:
-            self.log.critical("docker system prune failed (code %s).", e.returncode)
-            raise SystemExit(1)
-        self.log.info("*** Docker Nuke Complete ***")
-
-    def _handle_down(self):
-        down_cmd = [
-            "docker",
-            "compose",
-            *self._get_compose_flags(),
-            "down",
-            "--remove-orphans",
-        ]
-        if self.args.clear_volumes:
-            try:
-                if input("Remove volumes? (yes/no): ").lower().strip() == "yes":
-                    down_cmd.append("--volumes")
-            except EOFError:
-                self.log.error(
-                    "Volume deletion confirmation requires interactive input. Aborting."
-                )
-                raise SystemExit(1)
-
-        if self.args.services:
-            down_cmd.extend(self.args.services)
-        self._run_command(down_cmd, check=False)
-
-    def _tag_images(self, tag, targeted_services=None):
-        if not (tag and self._has_docker()):
-            return
-        try:
-            config_res = self._run_command(
-                [
-                    "docker",
-                    "compose",
-                    *self._get_compose_flags(),
-                    "config",
-                    "--format",
-                    "json",
-                ],
-                capture_output=True,
-                check=True,
-                suppress_logs=True,
-            )
-            services_data = json.loads(config_res.stdout).get("services", {})
-            for svc_name, svc_config in services_data.items():
-                if targeted_services and svc_name not in targeted_services:
-                    continue
-                image_name = svc_config.get("image")
-                if not image_name:
-                    continue
-                base_image = image_name.split(":")[0]
-                new_tag = f"{base_image}:{tag}"
-                self.log.info("Tagging: %s  ->  %s", image_name, new_tag)
-                self._run_command(
-                    ["docker", "tag", image_name, new_tag],
-                    check=True,
-                    suppress_logs=True,
-                )
-        except Exception as e:
-            self.log.error("Error during image tagging: %s", e)
-
-    def _handle_build(self):
-        build_cmd = ["docker", "compose", *self._get_compose_flags(), "build"]
-        if self.args.no_cache:
-            build_cmd.append("--no-cache")
-        if self.args.parallel:
-            build_cmd.append("--parallel")
-        if self.args.services:
-            build_cmd.extend(self.args.services)
-        try:
-            self._run_command(build_cmd, check=True)
-            if self.args.tag:
-                self._tag_images(
-                    self.args.tag, targeted_services=self.args.services or None
-                )
-        except subprocess.CalledProcessError as e:
-            self.log.critical(
-                "Docker build failed (code %s). Check logs above.", e.returncode
-            )
-            raise SystemExit(1)
-
-    def _handle_logs(self):
-        logs_cmd = ["docker", "compose", *self._get_compose_flags(), "logs"]
-        if self.args.follow:
-            logs_cmd.append("-f")
-        if self.args.tail:
-            logs_cmd.extend(["--tail", str(self.args.tail)])
-        if self.args.timestamps:
-            logs_cmd.append("-t")
-        if self.args.no_log_prefix:
-            logs_cmd.append("--no-log-prefix")
-
-        if self.args.services:
-            logs_cmd.extend(self.args.services)
-        self._run_command(logs_cmd, check=False)
-
-    def _handle_up(self):
-        """
-        Orchestrates service startup with strict Mesh Ledger enforcement.
-        REQUIREMENT: No fallbacks. DB state is the only valid configuration source.
-        """
-        self._validate_secrets()
-
-        all_services = self.compose_config.get("services", {})
-        requested = set(self.args.services or [])
-        excluded = set(self.args.exclude or [])
-
-        # 1. Resolve targeted services
-        profile_services = {
-            name for name, cfg in all_services.items() if cfg.get("profiles")
-        }
-        if "nginx" in profile_services:
-            profile_services.remove("nginx")
-
-        default_services = [
-            name for name in all_services.keys() if name not in profile_services
-        ]
-
-        if requested:
-            final_services = requested - excluded
-        else:
-            final_services = set(default_services) - excluded
-
-        final_services_list = sorted(list(final_services))
-
-        if not final_services_list:
-            self.log.error("No services resolved to start.")
-            raise SystemExit(1)
-
-        # ──────────────────────────────────────────────────────────────────────
-        # 🎯 STAGE 6: STRICT MESH ENFORCEMENT (NO FALLBACKS)
-        # ──────────────────────────────────────────────────────────────────────
-        if "vllm" in final_services_list:
-            # We use the multi-LoRA helper to get the full node assignment
-            deployments = self._get_all_active_deployments_for_node()
-
-            if deployments:
-                # Use the backbone assigned in the ledger
-                base_model = deployments[0]["base_model"]
-                self.log.info(
-                    "🌐 MESH RESOLVED: Node '%s' -> Backbone: %s",
-                    self.node_id,
-                    base_model,
-                )
-                os.environ["VLLM_MODEL"] = base_model
-
-                lora_bundles = []
-                for dep in deployments:
-                    if dep.get("ftm_id") and dep.get("adapter_path"):
-                        lora_bundles.append(f"{dep['ftm_id']}={dep['adapter_path']}")
-
-                if lora_bundles:
-                    self.log.info(
-                        "🧠 MESH: Mounting %d LoRA adapters.", len(lora_bundles)
-                    )
-                    modules_string = " ".join(lora_bundles)
-                    os.environ["VLLM_EXTRA_FLAGS"] = (
-                        f"--enable-lora --lora-modules {modules_string}"
-                    )
-                else:
-                    self.log.info("✨ MESH: Running Standard backbone (No adapters).")
-                    os.environ["VLLM_EXTRA_FLAGS"] = ""
-            else:
-                # ⛔ THE "STRICT" GATE: No record found for this physical ID.
-                self.log.critical(
-                    "❌ MESH ACCESS DENIED: Node '%s' is not authorized for inference.",
-                    self.node_id,
-                )
-                self.log.error(
-                    "No active deployment found in MySQL 'inference_deployments' for this node."
-                )
-                self.log.info(
-                    "Physical hardware will remain IDLE. Use the SDK to activate a model first."
-                )
-
-                # Surgically remove vllm from the startup queue
-                final_services_list.remove("vllm")
-
-                # If vllm was the only goal, exit now
-                if not final_services_list:
-                    self.log.warning("Exiting: No authorized services to start.")
-                    raise SystemExit(1)
-
-        # 2. Determine Profiles to Activate
-        active_profiles: Set[str] = set()
-        service_to_profiles: Dict[str, List[str]] = {
-            name: cfg.get("profiles")
-            for name, cfg in all_services.items()
-            if cfg.get("profiles")
-        }
-        for svc in final_services_list:
-            if svc in service_to_profiles:
-                active_profiles.update(service_to_profiles[svc])
-
-        profile_flags: List[str] = []
-        for profile in sorted(list(active_profiles)):
-            profile_flags.extend(["--profile", profile])
-
-        # 3. Final Command Assembly
-        base_compose_cmd = [
-            "docker",
-            "compose",
-            *self._get_compose_flags(),
-            *profile_flags,
-            "up",
-        ]
-        if not self.args.attached:
-            base_compose_cmd.append("-d")
-        if self.args.force_recreate:
-            base_compose_cmd.append("--force-recreate")
-
-        if final_services_list:
-            base_compose_cmd.extend(final_services_list)
-            self._run_command(base_compose_cmd)
-
-    def _is_service_running(self, service_name: str) -> bool:
-        if not self._has_docker():
-            return False
-        try:
-            res = self._run_command(
-                [
-                    "docker",
-                    "compose",
-                    *self._get_compose_flags(),
-                    "ps",
-                    "--services",
-                    "--filter",
-                    "status=running",
-                ],
-                capture_output=True,
-                check=True,
-                suppress_logs=True,
-            )
-            return service_name in res.stdout.split()
-        except Exception:
-            return False
+    # ------------------------------------------------------------------
+    # Bootstrap admin
+    # ------------------------------------------------------------------
 
     def _ensure_api_running(self, action: str):
         if not self._is_service_running("api"):
@@ -1033,17 +1042,11 @@ class DockerManager:
 
     def exec_bootstrap_admin(self, db_url: Optional[str] = None):
         self._ensure_api_running("bootstrap-admin")
-
-        # Ensure environment variables are loaded
         load_dotenv(dotenv_path=self._ENV_FILE, override=True)
         resolved_db_url = db_url or os.environ.get("DATABASE_URL")
-
         if not resolved_db_url:
-            self.log.error(
-                "No DATABASE_URL found. Ensure it is set in .env or pass --db-url explicitly."
-            )
+            self.log.error("No DATABASE_URL found.")
             raise SystemExit(1)
-
         cmd = [
             "docker",
             "compose",
@@ -1055,92 +1058,160 @@ class DockerManager:
             "--db-url",
             resolved_db_url,
         ]
-
         try:
             self._run_command(cmd, check=True, suppress_logs=True)
-            self.log.info(
-                "bootstrap-admin finished. "
-                "Copy any printed ADMIN_API_KEY — it is required for API-level user provisioning."
-            )
         except subprocess.CalledProcessError:
             raise SystemExit(1)
 
+    # ------------------------------------------------------------------
+    # Main dispatch
+    # ------------------------------------------------------------------
+
     def run(self):
-        if self.args.debug_cache:
+        if getattr(self.args, "debug_cache", False):
             self._run_docker_cache_diagnostics()
             raise SystemExit(0)
 
-        if self.args.nuke:
+        if getattr(self.args, "nuke", False):
             self._handle_nuke()
             raise SystemExit(0)
 
         if not self._has_docker():
             raise SystemExit(1)
 
-        if self.args.with_ollama:
-            self._ensure_ollama(opt_in=True, use_gpu=self.args.ollama_gpu)
+        if not self._preflight():
+            raise SystemExit(1)
 
-        if self.args.mode == "down_only":
-            self.args.down = True
+        # Legacy external Ollama path
+        if getattr(self.args, "with_ollama", False):
+            self._ensure_ollama(
+                opt_in=True, use_gpu=getattr(self.args, "ollama_gpu", False)
+            )
 
-        if self.args.down or self.args.clear_volumes:
+        mode = getattr(self.args, "mode", "up")
+
+        if mode == "down_only" or getattr(self.args, "down", False):
             self._handle_down()
-            if self.args.mode == "down_only":
+            if mode == "down_only":
                 raise SystemExit(0)
 
-        if self.args.mode in ("build", "both"):
+        if mode in ("build", "both"):
             self._handle_build()
-            if self.args.mode == "build":
+            if mode == "build":
                 raise SystemExit(0)
 
-        if self.args.mode in ("up", "both"):
+        if mode in ("up", "both"):
             self._handle_up()
 
-        if self.args.mode == "logs":
+        if mode == "logs":
             self._handle_logs()
+
+
+# ---------------------------------------------------------------------------
+# CLI entry-points
+# ---------------------------------------------------------------------------
 
 
 @app.callback(invoke_without_command=True)
 def docker_manager(
     ctx: typer.Context,
-    mode: str = typer.Option("up", "--mode"),
+    mode: str = typer.Option(
+        "up", "--mode", help="Stack action: up | build | both | down_only | logs"
+    ),
+    # --- GPU / training overlays ---
+    training: bool = typer.Option(
+        False,
+        "--training",
+        help="Start Sovereign Forge training stack (training-api + worker + Ray). Requires NVIDIA GPU.",
+    ),
+    gpu: bool = typer.Option(
+        False,
+        "--gpu",
+        help="Start both Ollama and vLLM (shorthand for --ollama --vllm). Requires NVIDIA GPU.",
+    ),
+    ollama: bool = typer.Option(
+        False,
+        "--ollama",
+        help="Start Ollama inference overlay. Requires NVIDIA GPU.",
+    ),
+    vllm: bool = typer.Option(
+        False,
+        "--vllm",
+        help="Start vLLM inference overlay. Requires NVIDIA GPU.",
+    ),
+    # --- Targeting ---
     services: Optional[List[str]] = typer.Option(None, "--services"),
     exclude: Optional[List[str]] = typer.Option(None, "--exclude", "-x"),
+    # --- Up ---
+    down: bool = typer.Option(False, "--down"),
+    clear_volumes: bool = typer.Option(False, "--clear-volumes", "-v"),
+    force_recreate: bool = typer.Option(False, "--force-recreate"),
+    attached: bool = typer.Option(False, "--attached", "-a"),
+    build_before_up: bool = typer.Option(False, "--build-before-up"),
+    # --- Build ---
     no_cache: bool = typer.Option(False, "--no-cache"),
     parallel: bool = typer.Option(False, "--parallel"),
     tag: Optional[str] = typer.Option(None, "--tag"),
-    attached: bool = typer.Option(False, "--attached", "-a"),
-    build_before_up: bool = typer.Option(False, "--build-before-up"),
-    force_recreate: bool = typer.Option(False, "--force-recreate"),
-    down: bool = typer.Option(False, "--down"),
-    clear_volumes: bool = typer.Option(False, "--clear-volumes", "-v"),
+    # --- Nuke ---
     nuke: bool = typer.Option(False, "--nuke"),
+    # --- Logs ---
     follow: bool = typer.Option(False, "--follow", "-f"),
     tail: Optional[int] = typer.Option(None, "--tail"),
     timestamps: bool = typer.Option(False, "--timestamps", "-t"),
     no_log_prefix: bool = typer.Option(False, "--no-log-prefix"),
+    # --- Legacy external Ollama ---
     with_ollama: bool = typer.Option(False, "--with-ollama"),
     ollama_gpu: bool = typer.Option(False, "--ollama-gpu"),
+    # --- Debug ---
     verbose: bool = typer.Option(False, "--verbose", "--debug"),
     debug_cache: bool = typer.Option(False, "--debug-cache"),
 ) -> None:
+    """
+    Manage the Project David Core Docker Compose stack.
+
+    BASE STACK:\n
+      platform-api docker-manager --mode up\n
+      platform-api docker-manager --mode up --exclude samba\n
+      platform-api docker-manager --mode logs --follow\n
+      platform-api docker-manager --mode down_only\n
+
+    GPU INFERENCE (opt-in, requires NVIDIA GPU + nvidia-container-toolkit):\n
+      platform-api docker-manager --mode up --ollama\n
+      platform-api docker-manager --mode up --vllm\n
+      platform-api docker-manager --mode up --gpu\n
+
+    SOVEREIGN FORGE — training + inference mesh (opt-in):\n
+      platform-api docker-manager --mode up --training\n
+      platform-api docker-manager --mode up --training --vllm\n
+      platform-api docker-manager --mode up --gpu --training\n
+
+    CONFIGURATION:\n
+      platform-api docker-manager configure --set HF_TOKEN=hf_abc123\n
+      platform-api docker-manager configure --set TRAINING_PROFILE=standard\n
+      platform-api docker-manager bootstrap-admin\n
+    """
     if ctx.invoked_subcommand is not None:
         return
+
     if clear_volumes:
         down = True
 
     args = SimpleNamespace(
         mode=mode,
+        training=training,
+        gpu=gpu,
+        ollama=ollama,
+        vllm=vllm,
         services=services or [],
         exclude=exclude or [],
+        down=down,
+        clear_volumes=clear_volumes,
+        force_recreate=force_recreate,
+        attached=attached,
+        build_before_up=build_before_up,
         no_cache=no_cache,
         parallel=parallel,
         tag=tag,
-        attached=attached,
-        build_before_up=build_before_up,
-        force_recreate=force_recreate,
-        down=down,
-        clear_volumes=clear_volumes,
         nuke=nuke,
         follow=follow,
         tail=tail,
@@ -1161,8 +1232,17 @@ def docker_manager(
         typer.echo(f"[error] Failed to generate docker-compose files: {exc}", err=True)
         raise SystemExit(1)
 
-    manager = DockerManager(args)
-    manager.run()
+    try:
+        manager = DockerManager(args)
+        manager.run()
+    except KeyboardInterrupt:
+        typer.echo("\nCancelled.")
+        raise SystemExit(130)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        typer.echo(f"[error] {exc}", err=True)
+        raise SystemExit(1)
 
 
 @app.command()
@@ -1170,12 +1250,12 @@ def configure(
     set_var: Optional[List[str]] = typer.Option(None, "--set", "-s"),
     interactive: bool = typer.Option(False, "--interactive", "-i"),
 ) -> None:
-    """Update specific variables in an existing .env without regenerating secrets."""
+    """Update variables in an existing .env without regenerating secrets."""
     env_path = Path(DockerManager._ENV_FILE)
     if not env_path.exists():
         typer.echo(
             f"[error] '{DockerManager._ENV_FILE}' not found. "
-            "Run 'docker-manager --mode up' first to generate it.",
+            "Run 'docker-manager --mode up' first.",
             err=True,
         )
         raise SystemExit(1)
@@ -1200,10 +1280,7 @@ def configure(
             status = "(currently set)" if current else "(currently blank)"
             typer.echo(f"  {help_text}\n")
             value = typer.prompt(
-                f"  {label} {status}",
-                default="",
-                show_default=False,
-                hide_input=hide,
+                f"  {label} {status}", default="", show_default=False, hide_input=hide
             )
             if value.strip():
                 updates[key] = value.strip()
@@ -1221,7 +1298,6 @@ def configure(
             new_line = f'{key}="{escaped}"'
         else:
             new_line = f"{key}={value}"
-
         pattern = re.compile(rf"^{re.escape(key)}=.*$", re.MULTILINE)
         if pattern.search(content):
             content = pattern.sub(new_line, content)
@@ -1238,23 +1314,20 @@ def configure(
 
 @app.command(name="bootstrap-admin")
 def bootstrap_admin(
-    db_url: Optional[str] = typer.Option(
-        None,
-        "--db-url",
-        help="Override DATABASE_URL for the bootstrap script. Defaults to DATABASE_URL from .env.",
-    ),
-    verbose: bool = typer.Option(False, "--verbose", help="Enable debug logging."),
+    db_url: Optional[str] = typer.Option(None, "--db-url"),
+    verbose: bool = typer.Option(False, "--verbose"),
 ) -> None:
     """
     Provision the default admin user inside the running api container.
 
-    The stack must be running before calling this command.
-    Copy any printed ADMIN_API_KEY — it is required for API-level user provisioning.
-
-    Safe to re-run: existing users and keys are detected and left untouched.
+    Safe to re-run — existing users and keys are detected and left untouched.
     """
     args = SimpleNamespace(
         mode="up",
+        training=False,
+        gpu=False,
+        ollama=False,
+        vllm=False,
         services=[],
         exclude=[],
         no_cache=False,
@@ -1275,7 +1348,6 @@ def bootstrap_admin(
         verbose=verbose,
         debug_cache=False,
     )
-
     manager = DockerManager(args)
     manager.exec_bootstrap_admin(db_url=db_url)
 

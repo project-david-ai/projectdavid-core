@@ -114,7 +114,6 @@ t_setup.stop()
 # ------------------------------------------------------------------
 stream = client.synchronous_inference_stream
 stream.setup(
-    user_id=USER_ID,
     thread_id=thread.id,
     assistant_id=ASSISTANT_ID,
     message_id=message.id,
@@ -130,7 +129,7 @@ first_token_received = False
 
 # We use the iterator manually to verify precise timings
 iterator = stream.stream_chunks(
-    provider=PROVIDER_KW, model=MODEL_ID, suppress_fc=False, timeout_per_chunk=10.0
+    model=MODEL_ID, suppress_fc=False, timeout_per_chunk=10.0
 )
 
 for chunk in iterator:
@@ -171,7 +170,6 @@ if handled:
     print(f"\n{CYAN}[▶] STREAM 2: Final Response{RESET}")
 
     stream.setup(
-        user_id=USER_ID,
         thread_id=thread.id,
         assistant_id=ASSISTANT_ID,
         message_id=message.id,
@@ -179,9 +177,7 @@ if handled:
         api_key=HYPERBOLIC_API_KEY,
     )
 
-    for chunk in stream.stream_chunks(
-        provider=PROVIDER_KW, model=MODEL_ID, timeout_per_chunk=180.0
-    ):
+    for chunk in stream.stream_chunks(model=MODEL_ID, timeout_per_chunk=180.0):
         pass  # Consume stream
 
     t_stream2.stop()

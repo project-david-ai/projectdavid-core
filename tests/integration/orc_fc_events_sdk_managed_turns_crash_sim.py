@@ -116,7 +116,6 @@ run = client.runs.create_run(assistant_id=ASSISTANT_ID, thread_id=thread.id)
 # ------------------------------------------------------------------
 stream = client.synchronous_inference_stream
 stream.setup(
-    user_id=ENTITIES_USER_ID,
     thread_id=thread.id,
     assistant_id=ASSISTANT_ID,
     message_id=message.id,
@@ -135,7 +134,7 @@ try:
     # Turn 1: AI calls tool -> Handler crashes -> SDK submits Error.
     # Turn 2: AI sees error -> Retries tool call -> Handler succeeds.
     # Turn 3: AI sees success -> Generates final answer.
-    for event in stream.stream_events(provider=PROVIDER_KW, model=MODEL_ID):
+    for event in stream.stream_events(model=MODEL_ID):
 
         # Timing logic
         current_tick = time.perf_counter()
