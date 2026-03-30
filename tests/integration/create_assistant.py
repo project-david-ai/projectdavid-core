@@ -17,15 +17,6 @@ client = Entity(
 )
 
 
-tool_instructions = assemble_instructions(
-    include_keys=[
-        "TOOL_USAGE_PROTOCOL",
-        "FUNCTION_CALL_FORMATTING",
-        "FUNCTION_CALL_WRAPPING",
-    ]
-)
-
-
 # -------------------------------------------
 # create_assistant
 # --------------------------------------------

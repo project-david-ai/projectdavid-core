@@ -117,7 +117,6 @@ stream.setup(
     assistant_id=ASSISTANT_ID,
     message_id=message.id,
     run_id=run.id,
-    api_key=API_KEY,
 )
 
 print(f"\n{CYAN}[▶] UNIFIED STREAM: SDK-Managed Turns{RESET}")
