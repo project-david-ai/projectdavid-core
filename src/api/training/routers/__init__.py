@@ -8,9 +8,7 @@ from src.api.training.routers.registry_router import router as registry_router
 from src.api.training.routers.training_jobs_router import router as training_jobs_router
 
 training_router = APIRouter()
-
-
-training_router.registry_router(registry_router, tags=["registry"])
+training_router.include_router(registry_router, tags=["registry"])
 training_router.include_router(datasets_router, prefix="/datasets", tags=["Datasets"])
 training_router.include_router(
     training_jobs_router, prefix="/training-jobs", tags=["Training Jobs"]

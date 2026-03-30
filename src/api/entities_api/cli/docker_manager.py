@@ -300,64 +300,33 @@ class DockerManager:
         self.node_id = os.getenv("NODE_ID", f"node_{socket.gethostname()}")
 
     # ------------------------------------------------------------------
-    # Compose file stacking — mirrors platform behaviour exactly
+    # Compose file and profile flag resolution
     # ------------------------------------------------------------------
 
     def _compose_files(self) -> List[str]:
-        """
-        Builds the -f flag list for docker compose commands.
+        """Core always uses the single mono docker-compose.yml."""
+        return ["-f", BASE_COMPOSE_FILE]
 
-        --gpu      → base + gpu overlay (ollama + vllm)
-        --ollama   → base + ollama overlay only
-        --vllm     → base + vllm overlay only
-        --training → base + training overlay (training-api + worker + Ray)
+    def _profile_flags(self) -> List[str]:
+        """
+        Maps CLI flags to Docker Compose profile activations.
+        training → --profile training
+        gpu/ollama/vllm → --profile ai
         Flags are additive — any combination is valid.
         """
-        files = ["-f", BASE_COMPOSE_FILE]
+        flags = []
+        if getattr(self.args, "training", False):
+            flags += ["--profile", "training"]
+        if (
+            getattr(self.args, "gpu", False)
+            or getattr(self.args, "ollama", False)
+            or getattr(self.args, "vllm", False)
+        ):
+            flags += ["--profile", "ai"]
+        return flags
 
-        gpu = getattr(self.args, "gpu", False)
-        ollama = getattr(self.args, "ollama", False)
-        vllm = getattr(self.args, "vllm", False)
-        training = getattr(self.args, "training", False)
-
-        if gpu:
-            if Path(GPU_COMPOSE_FILE).exists():
-                files += ["-f", GPU_COMPOSE_FILE]
-            else:
-                self.log.warning(
-                    "%s not found — GPU overlay skipped. "
-                    "Ensure it exists in your project root.",
-                    GPU_COMPOSE_FILE,
-                )
-        else:
-            if ollama and Path(OLLAMA_COMPOSE_FILE).exists():
-                files += ["-f", OLLAMA_COMPOSE_FILE]
-            elif ollama:
-                self.log.warning(
-                    "%s not found — Ollama overlay skipped.", OLLAMA_COMPOSE_FILE
-                )
-
-            if vllm and Path(VLLM_COMPOSE_FILE).exists():
-                files += ["-f", VLLM_COMPOSE_FILE]
-            elif vllm:
-                self.log.warning(
-                    "%s not found — vLLM overlay skipped.", VLLM_COMPOSE_FILE
-                )
-
-        if training:
-            if Path(TRAINING_COMPOSE_FILE).exists():
-                files += ["-f", TRAINING_COMPOSE_FILE]
-            else:
-                self.log.warning(
-                    "%s not found — training overlay skipped. "
-                    "Ensure it exists in your project root.",
-                    TRAINING_COMPOSE_FILE,
-                )
-
-        return files
-
-    # Backward-compat shim — existing code calls _get_compose_flags()
     def _get_compose_flags(self) -> List[str]:
+        """Backward-compat shim."""
         return self._compose_files()
 
     # ------------------------------------------------------------------
@@ -412,7 +381,7 @@ class DockerManager:
         return True
 
     # ------------------------------------------------------------------
-    # Training env injection — mirrors platform _merge_env_for_overlay
+    # Training env injection
     # ------------------------------------------------------------------
 
     def _merge_env_for_training(self) -> None:
@@ -757,7 +726,8 @@ class DockerManager:
                 [
                     "docker",
                     "compose",
-                    *self._get_compose_flags(),
+                    *self._compose_files(),
+                    *self._profile_flags(),
                     "ps",
                     "--services",
                     "--filter",
@@ -891,7 +861,12 @@ class DockerManager:
         if not final_services and not requested:
             final_services = default_services
 
-        up_cmd = ["docker", "compose"] + self._compose_files() + ["up"]
+        up_cmd = (
+            ["docker", "compose"]
+            + self._compose_files()
+            + self._profile_flags()
+            + ["up"]
+        )
 
         if not getattr(self.args, "attached", False):
             up_cmd.append("-d")
@@ -900,7 +875,9 @@ class DockerManager:
         if getattr(self.args, "build_before_up", False):
             up_cmd.append("--build")
 
-        if final_services:
+        # Only pass explicit service names when NO profile flags are active.
+        # With profiles, Docker Compose resolves the service set automatically.
+        if final_services and not self._profile_flags():
             up_cmd.extend(sorted(final_services))
 
         try:
@@ -910,13 +887,12 @@ class DockerManager:
             raise SystemExit(1)
 
     def _handle_down(self):
-        down_cmd = [
-            "docker",
-            "compose",
-            *self._compose_files(),
-            "down",
-            "--remove-orphans",
-        ]
+        down_cmd = (
+            ["docker", "compose"]
+            + self._compose_files()
+            + self._profile_flags()
+            + ["down", "--remove-orphans"]
+        )
         if getattr(self.args, "clear_volumes", False):
             try:
                 if input("Remove volumes? (yes/no): ").lower().strip() == "yes":
@@ -929,7 +905,12 @@ class DockerManager:
         self._run_command(down_cmd, check=False)
 
     def _handle_build(self):
-        build_cmd = ["docker", "compose"] + self._compose_files() + ["build"]
+        build_cmd = (
+            ["docker", "compose"]
+            + self._compose_files()
+            + self._profile_flags()
+            + ["build"]
+        )
         if getattr(self.args, "no_cache", False):
             build_cmd.append("--no-cache")
         if getattr(self.args, "parallel", False):
@@ -947,7 +928,12 @@ class DockerManager:
             raise SystemExit(1)
 
     def _handle_logs(self):
-        logs_cmd = ["docker", "compose"] + self._compose_files() + ["logs"]
+        logs_cmd = (
+            ["docker", "compose"]
+            + self._compose_files()
+            + self._profile_flags()
+            + ["logs"]
+        )
         if getattr(self.args, "follow", False):
             logs_cmd.append("-f")
         if getattr(self.args, "tail", None):
@@ -986,6 +972,7 @@ class DockerManager:
             config_res = self._run_command(
                 ["docker", "compose"]
                 + self._compose_files()
+                + self._profile_flags()
                 + ["config", "--format", "json"],
                 capture_output=True,
                 check=True,
@@ -1050,7 +1037,7 @@ class DockerManager:
         cmd = [
             "docker",
             "compose",
-            *self._get_compose_flags(),
+            *self._compose_files(),
             "exec",
             "api",
             "python",

@@ -17,7 +17,7 @@ websockets==15.0.1
 transformers>=4.33.0,<5.0.0
 # ------------------------------------------------------------------ #
 # Internal packages
-projectdavid[text-embeddings]==1.94.0
+projectdavid[text-embeddings]==1.95.0
 projectdavid-orm==1.6.1
 # <--Depends on projectdavid-orm
 projectdavid-services==1.2.0
