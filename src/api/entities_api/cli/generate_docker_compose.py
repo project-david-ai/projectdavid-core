@@ -155,10 +155,9 @@ services:
 
   # ---------------------------------------------------------------------------
   # training-api — Fine-tuning REST API (no GPU required)
-  # Opt-in: docker compose --profile training up training-api
+  # Opt-in: platform-api docker-manager --mode up --training
   # ---------------------------------------------------------------------------
   training-api:
-    image: thanosprime/projectdavid-core-training-api:latest
     build:
       context: .
       dockerfile: docker/training/Dockerfile
@@ -177,8 +176,6 @@ services:
       - SANDBOX_AUTH_SECRET=${SANDBOX_AUTH_SECRET}
       - SHARED_PATH=/mnt/training_data
       - PYTHONUNBUFFERED=1
-      # training-api connects to Ray cluster via dashboard HTTP API only —
-      # no direct GCS connection required. RAY_ADDRESS not needed here.
     ports:
       - "9001:9001"
     volumes:
@@ -192,10 +189,9 @@ services:
 
   # ---------------------------------------------------------------------------
   # training-worker — GPU training runner (requires nvidia-container-toolkit)
-  # Opt-in: docker compose --profile training up training-worker
+  # Opt-in: platform-api docker-manager --mode up --training
   # ---------------------------------------------------------------------------
   training-worker:
-    image: thanosprime/projectdavid-core-training-worker:latest
     build:
       context: .
       dockerfile: docker/training/Dockerfile
@@ -219,12 +215,11 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - PYTHONUNBUFFERED=1
-      # Ray: unset = start as head node. Set to ray://<host>:10001 to join a cluster.
       - RAY_ADDRESS=${RAY_ADDRESS:-}
       - RAY_DASHBOARD_PORT=${RAY_DASHBOARD_PORT:-8265}
     ports:
-      - "8265:8265"    # Ray dashboard — http://localhost:8265
-      - "10001:10001"  # Ray client protocol (external connections)
+      - "8265:8265"
+      - "10001:10001"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${SHARED_PATH:-./shared_data}:/mnt/training_data
