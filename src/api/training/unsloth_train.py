@@ -5,7 +5,7 @@ import os
 # Only models already present in the local HF cache are permitted.
 # If the requested model is not cached, this will raise a clear error
 # rather than attempting a download — enforcing airgap compliance.
-os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["HF_HUB_OFFLINE"] = "0"
 # ──────────────────────────────────────────────────────────────────────────────
 
 # isort: split

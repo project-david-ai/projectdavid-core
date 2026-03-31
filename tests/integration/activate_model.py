@@ -1,4 +1,3 @@
-import json
 import os
 import time
 
@@ -6,22 +5,38 @@ from dotenv import load_dotenv
 from projectdavid import Entity
 
 # Load environment variables
-load_dotenv()
+load_dotenv(".tests.env")
 
-# Initialize the ProjectDavid SDK
+
+# -------------------------------------------
+# This is provided by the user after
+# a successful fine tuning run
+# ---------------------------------------------
+FINE_TUNED_MODEL_ID = "ftm_G05BERHAEvSRr2KTyUqWIJ"
+
+
+# ----------------------------------------
+# Fine tuned models are user scoped
+# ------------------------------------------
+
 client = Entity(
-    base_url=os.getenv("PROJECT_DAVID_PLATFORM_BASE_URL"),
+    api_key=os.getenv("DEV_PROJECT_DAVID_CORE_TEST_USER_KEY"),
+)
+
+model = client.models.retrieve(FINE_TUNED_MODEL_ID)
+print(model)
+
+# ----------------------------------------
+# Model activations are admin scoped
+# ------------------------------------------
+client = Entity(
     api_key=os.getenv("DEV_PROJECT_DAVID_CORE_TEST_USER_KEY"),
 )
 
 
-# VALID_MODEL_ID = "ftm_mK9ZN21nxLH3jJNGcAMQjc"
-VALID_MODEL_ID = "ftm_7i8THeyHtMvMk6Ns5TGxZ9"
-
-
 def run_activation():
-    print(f"🎯 Activating model: {VALID_MODEL_ID}")
-    result = client.models.activate(VALID_MODEL_ID)
+    print(f"🎯 Activating model: {FINE_TUNED_MODEL_ID}")
+    result = client.models.activate(FINE_TUNED_MODEL_ID)
     print(f"✅ Success: {result.activated}")
 
 

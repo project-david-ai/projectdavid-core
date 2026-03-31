@@ -1,27 +1,15 @@
 import json
 import os
 import socket
-import subprocess  # nosec B404
-import threading
 import time
-from typing import List, Optional
+from typing import Optional
 
 import ray
 import redis
 from projectdavid_common import UtilsInterface
-from projectdavid_common.schemas.enums import StatusEnum
-from projectdavid_common.utilities.identifier_service import IdentifierService
-from projectdavid_orm.projectdavid_orm.models import FileStorage
-from sqlalchemy.orm import Session
 
 import docker
-from src.api.training.db.database import SessionLocal
-from src.api.training.models.models import (
-    Dataset,
-    FineTunedModel,
-    InferenceDeployment,
-    TrainingJob,
-)
+from src.api.training.models.models import InferenceDeployment
 from src.api.training.services.file_service import SambaClient
 
 logging_utility = UtilsInterface.LoggingUtility()
