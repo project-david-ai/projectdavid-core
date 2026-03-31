@@ -210,16 +210,18 @@ services:
       - ASSISTANTS_BASE_URL=http://api:9000
       - WORKER_API_KEY=${ADMIN_API_KEY}
       - SHARED_PATH=/mnt/training_data
+      - SHARED_PATH_HOST=${SHARED_PATH:-./shared_data}
       - HF_TOKEN=${HF_TOKEN:-}
       - HF_HOME=/root/.cache/huggingface
+      - HF_CACHE_PATH_HOST=${HF_CACHE_PATH}
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - PYTHONUNBUFFERED=1
       - RAY_ADDRESS=${RAY_ADDRESS:-}
       - RAY_DASHBOARD_PORT=${RAY_DASHBOARD_PORT:-8265}
     ports:
-      - "8265:8265"
-      - "10001:10001"
+      - "8265:8265"    # Ray dashboard
+      - "10001:10001"  # Ray client (external)
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${SHARED_PATH:-./shared_data}:/mnt/training_data
@@ -318,14 +320,14 @@ services:
     container_name: samba_server
     restart: unless-stopped
     environment:
-      USERID: ${SAMBA_USERID:-1000}
-      GROUPID: ${SAMBA_GROUPID:-1000}
-      TZ: UTC
-      USER: "samba_user;${SMBCLIENT_PASSWORD}"
-      SHARE: "cosmic_share;/samba/share;yes;no;no;samba_user"
-      GLOBAL: "server min protocol = NT1\\nserver max protocol = SMB3"
+      - USERID=1000
+      - GROUPID=1000
+      - TZ=UTC
+      - USER=samba_user;${SMBCLIENT_PASSWORD}
+      - SHARE=cosmic_share;/samba/share;yes;no;no;samba_user
+      - "GLOBAL=server min protocol = NT1"
     ports:
-      - "139:139"
+      - "1139:139"
       - "1445:445"
     volumes:
       - ${SHARED_PATH}:/samba/share
