@@ -92,6 +92,7 @@ line-length = 88
 "src/api/entities_api/daemons/*.py" = ["E402"]
 "src/api/entities_api/cli/*.py"     = ["E402"]
 "migrations/env.py"                 = ["E402"]
+"src/api/training/unsloth_train.py" = ["E402"]
 
 [tool.pytest.ini_options]
 addopts = "--ignore=tests/integration"
