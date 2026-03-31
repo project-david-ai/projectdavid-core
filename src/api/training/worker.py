@@ -2,6 +2,9 @@ import json
 import os
 import socket
 import subprocess  # nosec B404
+import threading
+import time
+from typing import List, Optional
 
 import ray
 import redis
@@ -11,7 +14,7 @@ from projectdavid_common.utilities.identifier_service import IdentifierService
 from projectdavid_orm.projectdavid_orm.models import FileStorage
 from sqlalchemy.orm import Session
 
-import docker  # Required: pip install docker
+import docker
 from src.api.training.db.database import SessionLocal
 from src.api.training.models.models import (
     Dataset,
