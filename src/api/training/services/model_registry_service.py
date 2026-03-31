@@ -12,6 +12,7 @@ from src.api.training.models.models import (
     FineTunedModel,
     InferenceDeployment,
 )
+from src.api.training.services.registry_service import RegistryService
 
 # ---------------------------------------------------------------------------
 # Ray Dashboard HTTP API
@@ -60,16 +61,23 @@ def list_fine_tuned_models(
     )
 
 
-def get_fine_tuned_model(db: Session, model_id: str, user_id: str) -> FineTunedModel:
-    model = (
-        db.query(FineTunedModel)
-        .filter(
-            FineTunedModel.id == model_id,
-            FineTunedModel.user_id == user_id,
-            FineTunedModel.deleted_at.is_(None),
-        )
-        .first()
+def get_fine_tuned_model(
+    db: Session, model_id: str, user_id: Optional[str] = None
+) -> FineTunedModel:
+    """
+    Fetch a fine-tuned model by ID.
+
+    user_id is optional — when omitted (admin context) the user scope
+    filter is bypassed, allowing admins to activate any user's model.
+    When provided (user context) only models owned by that user are returned.
+    """
+    query = db.query(FineTunedModel).filter(
+        FineTunedModel.id == model_id,
+        FineTunedModel.deleted_at.is_(None),
     )
+    if user_id:
+        query = query.filter(FineTunedModel.user_id == user_id)
+    model = query.first()
     if not model:
         raise HTTPException(status_code=404, detail="Model not found.")
     return model
@@ -168,12 +176,21 @@ def activate_model(
     """
     DEPLOYS A FINE-TUNED MODEL (Base + LoRA).
 
+    Admins can activate any user's model — get_fine_tuned_model is called
+    without user_id scope so the admin key bypasses the ownership filter.
+
+    The fine-tuned model's base_model field stores the raw HuggingFace path.
+    RegistryService.resolve() translates this to a registered bm_... ID
+    before creating the InferenceDeployment, satisfying the FK constraint
+    on inference_deployments.base_model_id → base_models.id.
+
     tensor_parallel_size: number of GPUs to shard the model across.
     Default 1 = single GPU, backward compatible.
     """
-    model = get_fine_tuned_model(db, model_id, user_id)
+    # Admin bypass — no user_id filter so admins can activate any model
+    model = get_fine_tuned_model(db, model_id)
 
-    deactivate_all_models(db, user_id)
+    deactivate_all_models(db, model.user_id)
 
     node_id = target_node_id or find_available_node(
         db,
@@ -181,11 +198,16 @@ def activate_model(
         tensor_parallel_size=tensor_parallel_size,
     )
 
+    # Resolve HF path → bm_... ID via registry.
+    # Raises 404 if the base model has not been registered by an admin.
+    registry = RegistryService(db)
+    base = registry.resolve(model.base_model)
+
     deployment_id = IdentifierService.generate_prefixed_id("dep")
     deployment = InferenceDeployment(
         id=deployment_id,
         node_id=node_id,
-        base_model_id=model.base_model,
+        base_model_id=base.id,
         fine_tuned_model_id=model.id,
         port=8001,
         status=StatusEnum.pending,
