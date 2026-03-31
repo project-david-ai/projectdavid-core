@@ -8,24 +8,29 @@ from projectdavid import Entity
 # 0.  SDK init + env
 # ------------------------------------------------------------------
 load_dotenv(".tests.env")
+
 client = Entity(api_key=os.getenv("DEV_PROJECT_DAVID_CORE_TEST_USER_KEY"))
 print(client)
 
+# -------------------------------------
+# Create fine tuning dataset
+# - stages training data
 # --------------------------------------
-# Dataset ID: ds_XZrxCs7Imo0v3VRBLCeNCA
-# --------------------------------------
+dataset = client.datasets.create(
+    file_path="projectdavid_sdk_finetune.jsonl",
+    name="Specialized Knowledge Base",
+    fmt="jsonl",
+)
+print(f"📦 Dataset ID: {dataset.id}")
 
-
-retrieve_data_set = client.datasets.retrieve(dataset_id="ds_XZrxCs7Imo0v3VRBLCeNCA")
-print(retrieve_data_set)
 # -----------------------------------------
 # Validation time
 # ------------------------------------------
-client.datasets.prepare("ds_XZrxCs7Imo0v3VRBLCeNCA")
+client.datasets.prepare(dataset.id)
 
 # Poll until active
 while True:
-    ds = client.datasets.retrieve(dataset_id="ds_XZrxCs7Imo0v3VRBLCeNCA")
+    ds = client.datasets.retrieve(dataset_id=dataset.id)
     print(f"Status: {ds.status}")
     if ds.status == "active":
         print(
@@ -35,7 +40,6 @@ while True:
     if ds.status == "failed":
         raise Exception(f"Dataset preparation failed: {ds}")
     time.sleep(3)
-
 
 # -------------------------------------------------------
 # Dispatch the training job
@@ -49,7 +53,7 @@ while True:
 # - USERS SHOULD NOT BE ABLE TO TRIGGER HG DOWNLOADS OF MODELS NOT IN HG CACHE
 # -------------------------------------------
 job = client.training.create(
-    dataset_id="ds_XZrxCs7Imo0v3VRBLCeNCA",
+    dataset_id=dataset.id,
     base_model="unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit",
     framework="unsloth",
     config={"learning_rate": 2e-4, "num_train_epochs": 1, "lora_r": 16},
