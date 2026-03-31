@@ -1,6 +1,17 @@
+import os
+
+# ─── SOVEREIGNTY GUARD ────────────────────────────────────────────────────────
+# Prevent any HuggingFace hub download attempts at runtime.
+# Only models already present in the local HF cache are permitted.
+# If the requested model is not cached, this will raise a clear error
+# rather than attempting a download — enforcing airgap compliance.
+os.environ["HF_HUB_OFFLINE"] = "1"
+# ──────────────────────────────────────────────────────────────────────────────
+
+# isort: split
+
 # 1. CRITICAL: Unsloth MUST be imported before everything else
 import argparse
-import os
 
 import unsloth  # noqa: F401 — must precede trl/transformers/peft
 from datasets import load_dataset
