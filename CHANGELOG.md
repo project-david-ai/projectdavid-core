@@ -1,3 +1,42 @@
+# [1.29.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.28.0...v1.29.0) (2026-03-31)
+
+
+### Bug Fixes
+
+* add /v1/registry/ location block to nginx config for training API routing ([6f0325e](https://github.com/project-david-ai/projectdavid-core/commit/6f0325e06d50e53c7a0905172008129b5ecedd23))
+* add isort profile and known_third_party to resolve CI import ordering ([5b69e69](https://github.com/project-david-ai/projectdavid-core/commit/5b69e69587eaa6dfe15b081bda7b45fb7d02646a))
+* add worker.py to isort skip list in CI workflow ([54b534c](https://github.com/project-david-ai/projectdavid-core/commit/54b534c6db17397b57332689696255a1419884f3))
+* correct docker import position and remove inline comment for isort compliance ([8b5f459](https://github.com/project-david-ai/projectdavid-core/commit/8b5f4595569e1ff88d6f4e6a70f92a9cbce2c4b6))
+* move docker import to correct isort group in worker.py ([3184de2](https://github.com/project-david-ai/projectdavid-core/commit/3184de29c07226a54c6d1663f05109c966b61290))
+* move docker import to correct isort group in worker.py ([4319ff2](https://github.com/project-david-ai/projectdavid-core/commit/4319ff235e4f53f03e85dad011398859260a0e5b))
+* pin typer==0.9.0 and click==8.1.7, fix create_user integration test ([8de94ff](https://github.com/project-david-ai/projectdavid-core/commit/8de94ff130bc76ee769df999300e186f6273fc87))
+* pin typer==0.9.0 and click==8.1.7, fix create_user integration test ([4ceb12f](https://github.com/project-david-ai/projectdavid-core/commit/4ceb12f5476a0525f96dc612dce3273e1c6f8f43))
+* pin typer==0.9.0 and click==8.1.7, fix create_user integration test ([77a0c18](https://github.com/project-david-ai/projectdavid-core/commit/77a0c186a0de79c08558ff68900b3220c24adfb1))
+* remove inline comment from docker import to resolve isort ordering ([1df0aff](https://github.com/project-david-ai/projectdavid-core/commit/1df0affff4d759e6b45fb0f969a4966bea014b0f))
+* remove node_id from FineTunedModel insert to avoid compute_nodes FK constraint ([42fc80f](https://github.com/project-david-ai/projectdavid-core/commit/42fc80f43bf44665dd574bf09e9efe82daf35c5b))
+* remove remote image refs from training services in compose generator ([7468c6e](https://github.com/project-david-ai/projectdavid-core/commit/7468c6e620108054e791faaa6ac3008cbe2074e1))
+* skip worker.py in isort — Ray serialization requires non-standard import ordering [issue: fix-worker-isort] ([b6054e3](https://github.com/project-david-ai/projectdavid-core/commit/b6054e388e4d592390313cea1c6902201d77270b))
+* use docker compose profiles for training/gpu service activation in docker_manager ([c2b2c1c](https://github.com/project-david-ai/projectdavid-core/commit/c2b2c1c8cff63f30cdf2464d6c621201250ea331))
+
+
+### Features
+
+* --training flag starts vllm without ollama via _extra_services ([5a80dc2](https://github.com/project-david-ai/projectdavid-core/commit/5a80dc2d214375bab15a4406dcc47d997d259dc4))
+* add --training, --gpu, --ollama, --vllm overlay flags to docker_manager CLI ([4a91af6](https://github.com/project-david-ai/projectdavid-core/commit/4a91af68a5c9fde141d657b1e5918c87f0e68735))
+* add max_tokens, fix float columns, drop batfish_snapshots ([881d711](https://github.com/project-david-ai/projectdavid-core/commit/881d71108be1dbd660f6f5fe3a2e971008397c27))
+* add max_tokens, top_p, and temperature to assistant cache payload. Bump toprojectdavid[text-embeddings]==1.94.0 ([795106d](https://github.com/project-david-ai/projectdavid-core/commit/795106db4112d432823d81d75e94604d0ef5c7e8))
+* add sovereignty guard to unsloth_train.py — enforce HF_HUB_OFFLINE to prevent runtime model downloads ([25ae45c](https://github.com/project-david-ai/projectdavid-core/commit/25ae45c35d8e64b994343967bdf67ac2a20df547))
+* interactive Ray cluster join walkthrough on first --training invocation ([225429f](https://github.com/project-david-ai/projectdavid-core/commit/225429f49b34fe1fba0de68bd94bdc90009a9abb))
+* propagate max_tokens, top_p, and temperature from assistant cache to inference workers ([38606ef](https://github.com/project-david-ai/projectdavid-core/commit/38606ef9d1bd3d419183d6de775a263472af9419))
+* propagate max_tokens, top_p, and temperature from assistant cache to Ollama stream inference ([d984971](https://github.com/project-david-ai/projectdavid-core/commit/d98497104122950909c449cd771167c68de73b22))
+* propagate max_tokens, top_p, and temperature from assistant cache to vLLM stream inference ([47056d7](https://github.com/project-david-ai/projectdavid-core/commit/47056d77bb673bcddaaa5161d47e8fab82a22c2b))
+* propagate max_tokens, top_p, and temperature from assistant cache to vLLM stream inference ([b16b5d6](https://github.com/project-david-ai/projectdavid-core/commit/b16b5d66bd64724573ecfd087d470056dfec5aa6))
+
+
+### Reverts
+
+* remove vllm from --training flag, DeploymentSupervisor manages vllm lifecycle ([745064b](https://github.com/project-david-ai/projectdavid-core/commit/745064b04e3f0e68766ff30cd298087993e07105))
+
 # [1.29.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.28.0...v1.29.0) (2026-03-29)
 
 
