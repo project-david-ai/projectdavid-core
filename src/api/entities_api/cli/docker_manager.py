@@ -166,6 +166,7 @@ class DockerManager:
         "OLLAMA_BASE_URL": "http://ollama:11434",
         "HF_TOKEN": "",  # nosec B105
         "HF_CACHE_PATH": "",
+        "HF_CACHE_PATH_HOST": "",  # derived at generation time from HF_CACHE_PATH
         "VLLM_MODEL": "Qwen/Qwen2.5-1.5B-Instruct",
         "VLLM_EXTRA_FLAGS": "",
         "TRAINING_PROFILE": "laptop",
@@ -184,6 +185,7 @@ class DockerManager:
         "CODE_EXECUTION_URL": "ws://sandbox_api:8000/ws/execute",
         "DISABLE_FIREJAIL": "true",
         "SHARED_PATH": "./shared_data",
+        "SHARED_PATH_HOST": "",  # derived at generation time from SHARED_PATH
         "AUTO_MIGRATE": "1",
         "MYSQL_HOST": DEFAULT_DB_SERVICE_NAME,
         "MYSQL_PORT": DEFAULT_DB_CONTAINER_PORT,
@@ -202,7 +204,13 @@ class DockerManager:
     }
 
     _ENV_STRUCTURE = {
-        "Mesh Configuration": ["NODE_ID", "TRAINING_PROFILE", "SHARED_PATH"],
+        "Mesh Configuration": [
+            "NODE_ID",
+            "TRAINING_PROFILE",
+            "SHARED_PATH",
+            "SHARED_PATH_HOST",
+            "HF_CACHE_PATH_HOST",
+        ],
         "Base URLs": [
             "ASSISTANTS_BASE_URL",
             "SANDBOX_SERVER_URL",
@@ -414,7 +422,6 @@ class DockerManager:
         injected: List[str] = []
 
         # ── RAY_ADDRESS — interactive cluster join walkthrough ────────────
-        # Only prompt if RAY_ADDRESS is absent from both .env and environment.
         if (
             not re.search(r"^RAY_ADDRESS=", content, re.MULTILINE)
             and not os.environ.get("RAY_ADDRESS", "").strip()
@@ -680,10 +687,28 @@ class DockerManager:
             )
             generation_log["SPECIAL_DB_URL"] = "Constructed using host port (3307)"
 
+        # ── HF_CACHE_PATH — default to system huggingface cache ──────────
         if not env_values.get("HF_CACHE_PATH"):
             env_values["HF_CACHE_PATH"] = os.path.join(
                 os.path.expanduser("~"), ".cache", "huggingface"
             )
+            generation_log["HF_CACHE_PATH"] = "Derived from system default"
+
+        # ── Host-side paths for vLLM sibling container volume mounts ─────
+        # vLLM is spawned as a sibling Docker container by the DeploymentSupervisor.
+        # It cannot inherit volume mounts from training_worker — Docker requires
+        # the actual host filesystem path for bind mounts between sibling containers.
+        # These are derived automatically at .env generation time so operators
+        # never need to set them manually.
+        if not env_values.get("SHARED_PATH_HOST"):
+            env_values["SHARED_PATH_HOST"] = os.path.abspath(
+                env_values.get("SHARED_PATH", "./shared_data")
+            )
+            generation_log["SHARED_PATH_HOST"] = "Derived from SHARED_PATH (absolute)"
+
+        if not env_values.get("HF_CACHE_PATH_HOST"):
+            env_values["HF_CACHE_PATH_HOST"] = env_values.get("HF_CACHE_PATH", "")
+            generation_log["HF_CACHE_PATH_HOST"] = "Derived from HF_CACHE_PATH"
 
         self._prompt_user_required(env_values, generation_log)
 
@@ -876,9 +901,6 @@ class DockerManager:
         vllm = getattr(self.args, "vllm", False)
         gpu = getattr(self.args, "gpu", False)
 
-        # Mesh enforcement for static vLLM — only relevant when --gpu or --vllm
-        # is explicitly requested. Dynamic pd_vllm_* containers are managed by
-        # DeploymentSupervisor and do not go through this path.
         if vllm or gpu:
             deployments = self._get_all_active_deployments_for_node()
             if deployments:
@@ -940,8 +962,6 @@ class DockerManager:
         if getattr(self.args, "build_before_up", False):
             up_cmd.append("--build")
 
-        # Only pass explicit service names when NO profile flags are active.
-        # With profiles, Docker Compose resolves the service set automatically.
         if final_services and not self._profile_flags():
             up_cmd.extend(sorted(final_services))
 

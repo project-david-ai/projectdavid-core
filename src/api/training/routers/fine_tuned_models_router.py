@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from src.api.training.db.database import get_db
 from src.api.training.dependencies import get_current_user_id
-from src.api.training.services import model_registry_service
+from src.api.training.services.model_registry_service import ModelRegistryService
 
 router = APIRouter()
 
@@ -25,7 +25,8 @@ def list_models_endpoint(
     db: Session = Depends(get_db),
 ):
     """List all fine-tuned models belonging to the user."""
-    models = model_registry_service.list_fine_tuned_models(db, user_id, limit, offset)
+    service = ModelRegistryService(db)
+    models = service.list_fine_tuned_models(user_id, limit, offset)
     return ValidationInterface.FineTunedModelList(
         data=[ValidationInterface.FineTunedModelRead.model_validate(m) for m in models],
         total=len(models),
@@ -39,7 +40,8 @@ def get_model_endpoint(
     db: Session = Depends(get_db),
 ):
     """Retrieve metadata for a specific fine-tuned model."""
-    model = model_registry_service.get_fine_tuned_model(db, model_id, user_id)
+    service = ModelRegistryService(db)
+    model = service.get_fine_tuned_model(model_id, user_id)
     return ValidationInterface.FineTunedModelRead.model_validate(model)
 
 
@@ -50,7 +52,7 @@ def delete_model_endpoint(
     db: Session = Depends(get_db),
 ):
     """Soft-delete a model from the registry."""
-    model_registry_service.soft_delete_model(db, model_id, user_id)
+    ModelRegistryService(db).soft_delete_model(model_id, user_id)
     return ValidationInterface.FineTunedModelDeleted(deleted=True, model_id=model_id)
 
 
@@ -78,15 +80,15 @@ def activate_model_endpoint(
 ):
     """
     Promote a fine-tuned model to 'Active' status.
-    Triggers the Node Agent to provision vLLM with the LoRA adapters.
+    Triggers the DeploymentSupervisor to provision vLLM with the LoRA adapters.
 
     Use tensor_parallel_size > 1 to shard the model across multiple GPUs
     for larger models that exceed single-GPU VRAM.
     """
-    return model_registry_service.activate_model(
-        db,
-        model_id,
-        user_id,
+    service = ModelRegistryService(db)
+    return service.activate_model(
+        model_id=model_id,
+        user_id=user_id,
         target_node_id=node_id,
         tensor_parallel_size=tensor_parallel_size,
     )
@@ -102,7 +104,8 @@ def deactivate_model_endpoint(
     Surgically shutdown a specific fine-tuned model deployment.
     Releases VRAM on the associated node.
     """
-    return model_registry_service.deactivate_model(db, model_id, user_id)
+    service = ModelRegistryService(db)
+    return service.deactivate_model(model_id, user_id)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -132,19 +135,23 @@ def activate_base_model_endpoint(
     Use tensor_parallel_size > 1 to shard the model across multiple GPUs
     for larger models that exceed single-GPU VRAM.
     """
-    return model_registry_service.activate_base_model(
-        db,
-        base_model_id,
-        user_id,
+    service = ModelRegistryService(db)
+    return service.activate_base_model(
+        base_model_id=base_model_id,
+        user_id=user_id,
         target_node_id=node_id,
         tensor_parallel_size=tensor_parallel_size,
     )
 
 
 @router.post("/base/{base_model_id}/deactivate")
-def deactivate_base_model_endpoint(base_model_id: str, db: Session = Depends(get_db)):
+def deactivate_base_model_endpoint(
+    base_model_id: str,
+    db: Session = Depends(get_db),
+):
     """Shutdown a specific standard backbone deployment."""
-    return model_registry_service.deactivate_base_model(db, base_model_id)
+    service = ModelRegistryService(db)
+    return service.deactivate_base_model(base_model_id)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -154,10 +161,12 @@ def deactivate_base_model_endpoint(base_model_id: str, db: Session = Depends(get
 
 @router.post("/deactivate-all")
 def deactivate_all_endpoint(
-    user_id: str = Depends(get_current_user_id), db: Session = Depends(get_db)
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
 ):
     """
     Emergency Stop: Deactivates ALL deployments for the user.
     Reverts the cluster to an idle/clean state.
     """
-    return model_registry_service.deactivate_all_models(db, user_id)
+    service = ModelRegistryService(db)
+    return service.deactivate_all_models(user_id)

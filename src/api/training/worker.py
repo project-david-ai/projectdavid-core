@@ -22,6 +22,13 @@ LOCAL_SCRATCH = "/tmp/training"  # nosec B108
 SHARED_PATH = os.getenv("SHARED_PATH", "/mnt/training_data")
 HF_CACHE_PATH = os.getenv("HF_CACHE_PATH", "/root/.cache/huggingface")
 
+# ── Host-side paths for vLLM volume mounts ───────────────────────────────────
+# vLLM is spawned as a sibling container on the Docker host — it cannot inherit
+# volume mounts from the training_worker container. These must be the actual
+# host filesystem paths so Docker can bind-mount them into the vLLM container.
+SHARED_PATH_HOST = os.getenv("SHARED_PATH_HOST", SHARED_PATH)
+HF_CACHE_PATH_HOST = os.getenv("HF_CACHE_PATH_HOST", HF_CACHE_PATH)
+
 DOCKER_NETWORK_NAME = os.getenv(
     "DOCKER_NETWORK_NAME", "projectdavid-core_my_custom_network"
 )
@@ -118,6 +125,10 @@ def manage_vllm_container(
     vLLM joins the cluster Ray for cross-node tensor parallelism.
     On the head node RAY_ADDRESS is empty — vLLM uses its own isolated
     Ray instance (correct for single-node deployments).
+
+    Volume mounts use SHARED_PATH_HOST and HF_CACHE_PATH_HOST — the host-side
+    paths — because vLLM is a sibling container and cannot inherit mounts from
+    the training_worker container.
 
     Returns:
         On 'start': the container's routable IP address.
@@ -219,8 +230,8 @@ def manage_vllm_container(
             network=DOCKER_NETWORK_NAME,
             ports={"8000/tcp": deployment.port},
             volumes={
-                HF_CACHE_PATH: {"bind": "/root/.cache/huggingface", "mode": "rw"},
-                SHARED_PATH: {"bind": "/mnt/training_data", "mode": "rw"},
+                HF_CACHE_PATH_HOST: {"bind": "/root/.cache/huggingface", "mode": "rw"},
+                SHARED_PATH_HOST: {"bind": "/mnt/training_data", "mode": "rw"},
             },
         )
 
@@ -276,6 +287,16 @@ class DeploymentSupervisor:
 
         _log = _UI.LoggingUtility()
         _network = self.docker_network
+
+        # ── Host-side paths for vLLM volume mounts ────────────────────────
+        # Must be host paths — vLLM is a sibling container, not a child.
+        _shared_host = _os.getenv(
+            "SHARED_PATH_HOST", _os.getenv("SHARED_PATH", "/mnt/training_data")
+        )
+        _hf_host = _os.getenv(
+            "HF_CACHE_PATH_HOST",
+            _os.getenv("HF_CACHE_PATH", "/root/.cache/huggingface"),
+        )
 
         try:
             _dc = _docker.from_env()
@@ -339,8 +360,6 @@ class DeploymentSupervisor:
                     f"--lora-modules {dep.fine_tuned_model_id}={adapter_path}"
                 )
             try:
-                shared = _os.getenv("SHARED_PATH", "/mnt/training_data")
-                hf = _os.getenv("HF_CACHE_PATH", "/root/.cache/huggingface")
                 all_c = _dc.containers.list(all=True)
                 for c in all_c:
                     pb = c.attrs.get("HostConfig", {}).get("PortBindings", {})
@@ -357,6 +376,7 @@ class DeploymentSupervisor:
                 _log.info(
                     f"🚢 Spawning vLLM: {container_name} (tp={tp_size}) model={model_endpoint}"
                 )
+                _log.info(f"📂 Volume mounts — HF: {_hf_host} | data: {_shared_host}")
                 container = _dc.containers.run(
                     "vllm/vllm-openai:latest",
                     name=container_name,
@@ -368,8 +388,8 @@ class DeploymentSupervisor:
                     network=_network,
                     ports={"8000/tcp": dep.port},
                     volumes={
-                        hf: {"bind": "/root/.cache/huggingface", "mode": "rw"},
-                        shared: {"bind": "/mnt/training_data", "mode": "rw"},
+                        _hf_host: {"bind": "/root/.cache/huggingface", "mode": "rw"},
+                        _shared_host: {"bind": "/mnt/training_data", "mode": "rw"},
                     },
                 )
                 ip = _resolve_ip(container)
