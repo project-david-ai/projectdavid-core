@@ -4,9 +4,6 @@ import socket
 
 # — required for Ray training process management
 import subprocess  # nosec B404
-import threading
-import time
-from typing import List, Optional
 
 import ray
 import redis
