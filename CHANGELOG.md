@@ -1,3 +1,10 @@
+## [1.29.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.29.0...v1.29.1) (2026-03-31)
+
+
+### Bug Fixes
+
+* suppress Ruff E402 for unsloth_train.py — sovereignty guard requires pre-import env setup ([0498edf](https://github.com/project-david-ai/projectdavid-core/commit/0498edf160377efeed43ac03df3f71cc500a1ef7))
+
 # [1.29.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.28.0...v1.29.0) (2026-03-31)
 
 
