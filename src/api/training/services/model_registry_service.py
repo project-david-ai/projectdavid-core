@@ -143,10 +143,12 @@ def deactivate_all_models(db: Session, user_id: str) -> dict:
     CLEAN SLATE: removes deployments to satisfy port constraints.
     Phase 2+: GPUAllocation deletes removed — Ray releases reservations.
     Phase 4: compute_nodes not touched.
+    Phase 5 candidate: node_id column removed from update — FK references
+    compute_nodes which is a legacy table.
     """
     db.query(FineTunedModel).filter(
         FineTunedModel.user_id == user_id, FineTunedModel.is_active
-    ).update({"is_active": False, "node_id": None}, synchronize_session=False)
+    ).update({"is_active": False}, synchronize_session=False)
 
     db.query(InferenceDeployment).filter(
         InferenceDeployment.node_id.is_not(None)
@@ -192,7 +194,8 @@ def activate_model(
     )
 
     model.is_active = True
-    model.node_id = node_id
+    # node_id removed from model update — FK references compute_nodes
+    # which is a legacy table. Phase 5 will drop this column entirely.
     db.add(deployment)
     db.commit()
 

@@ -15,5 +15,4 @@ activiate = client.models.activate_base(
     "unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit"
 )
 
-
 print(activiate)
