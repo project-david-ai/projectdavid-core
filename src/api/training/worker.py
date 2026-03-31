@@ -143,6 +143,25 @@ def manage_vllm_container(
     # ── Resolve tensor parallel size from the deployment record ───────────
     tp_size = getattr(deployment, "tensor_parallel_size", 1) or 1
 
+    # ── Resolve bm_... ID → HF endpoint for vLLM ─────────────────────────
+    # deployment.base_model_id is the registry bm_... ID.
+    # vLLM needs the actual HF model path from base_models.endpoint.
+    from src.api.training.db.database import SessionLocal as _SessionLocal
+    from src.api.training.models.models import BaseModel as _BaseModel
+
+    _db = _SessionLocal()
+    try:
+        base_record = (
+            _db.query(_BaseModel)
+            .filter(_BaseModel.id == deployment.base_model_id)
+            .first()
+        )
+        model_endpoint = (
+            base_record.endpoint if base_record else deployment.base_model_id
+        )
+    finally:
+        _db.close()
+
     env = {
         "HF_TOKEN": os.getenv("HF_TOKEN"),
         "NVIDIA_DISABLE_REQUIRE": "true",
@@ -156,7 +175,7 @@ def manage_vllm_container(
 
     # ── Build vLLM command ────────────────────────────────────────────────
     cmd = (
-        f"--model {deployment.base_model_id} "
+        f"--model {model_endpoint} "
         f"--dtype float16 "
         f"--max-model-len 2048 "
         f"--gpu-memory-utilization 0.5 "
@@ -168,7 +187,7 @@ def manage_vllm_container(
         cmd += f" --enable-lora --lora-modules {deployment.fine_tuned_model_id}={adapter_path}"
 
     logging_utility.info(
-        f"🔀 Tensor parallel size: {tp_size} GPU(s) for {deployment.base_model_id}"
+        f"🔀 Tensor parallel size: {tp_size} GPU(s) for {model_endpoint}"
     )
 
     try:
@@ -252,6 +271,7 @@ class DeploymentSupervisor:
 
         import docker as _docker
         from src.api.training.db.database import SessionLocal as _SessionLocal
+        from src.api.training.models.models import BaseModel as _BaseModel
         from src.api.training.models.models import InferenceDeployment as _Dep
 
         _log = _UI.LoggingUtility()
@@ -279,12 +299,20 @@ class DeploymentSupervisor:
                 pass
             return container.name
 
-        def _spawn(dep):
+        def _spawn(dep, db):
             if not _dc:
                 return None
             container_name = f"pd_vllm_{dep.id}"
 
             tp_size = getattr(dep, "tensor_parallel_size", 1) or 1
+
+            # ── Resolve bm_... ID → HF endpoint for vLLM ─────────────────
+            # dep.base_model_id is the registry bm_... ID.
+            # vLLM needs the actual HF model path from base_models.endpoint.
+            base_record = (
+                db.query(_BaseModel).filter(_BaseModel.id == dep.base_model_id).first()
+            )
+            model_endpoint = base_record.endpoint if base_record else dep.base_model_id
 
             env = {
                 "HF_TOKEN": _os.getenv("HF_TOKEN"),
@@ -298,7 +326,7 @@ class DeploymentSupervisor:
             }
 
             cmd = (
-                f"--model {dep.base_model_id} "
+                f"--model {model_endpoint} "
                 f"--dtype float16 "
                 f"--max-model-len 2048 "
                 f"--gpu-memory-utilization 0.5 "
@@ -326,7 +354,9 @@ class DeploymentSupervisor:
                 gpu = _docker.types.DeviceRequest(
                     count=-1, capabilities=[["gpu", "compute", "utility"]]
                 )
-                _log.info(f"🚢 Spawning vLLM: {container_name} (tp={tp_size})")
+                _log.info(
+                    f"🚢 Spawning vLLM: {container_name} (tp={tp_size}) model={model_endpoint}"
+                )
                 container = _dc.containers.run(
                     "vllm/vllm-openai:latest",
                     name=container_name,
@@ -374,7 +404,7 @@ class DeploymentSupervisor:
 
                     if dep.status == _Status.pending or not is_running:
                         _log.warning(f"🚨 Deployment drift! Syncing {container_name}")
-                        ip = _spawn(dep)
+                        ip = _spawn(dep, db)
                         if ip:
                             dep.status = _Status.active
                             dep.internal_hostname = ip
