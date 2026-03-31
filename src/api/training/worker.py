@@ -2,8 +2,6 @@ import json
 import os
 import socket
 import subprocess  # nosec B404
-import time
-from typing import Optional
 
 import ray
 import redis
