@@ -80,7 +80,7 @@ target-version = ["py39", "py310", "py311", "py312"]
 [tool.isort]
 profile = "black"
 line_length = 88
-known_third_party = ["pytest"]
+known_third_party = ["pytest", "docker", "ray", "redis"]
 skip_glob = ["tests/integration/*"]
 
 
