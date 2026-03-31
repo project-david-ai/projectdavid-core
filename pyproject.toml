@@ -82,6 +82,7 @@ profile = "black"
 line_length = 88
 known_third_party = ["pytest", "docker", "ray", "redis"]
 skip_glob = ["tests/integration/*"]
+skip = ["src/api/training/worker.py"]
 
 
 [tool.ruff]
