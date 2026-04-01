@@ -97,22 +97,15 @@ def activate_model_endpoint(
 @router.post("/{model_id}/deactivate")
 def deactivate_model_endpoint(
     model_id: str,
-    user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
-    """
-    Surgically shutdown a specific fine-tuned model deployment.
-    Releases VRAM on the associated node.
-    """
     service = ModelRegistryService(db)
-    return service.deactivate_model(model_id, user_id)
+    return service.deactivate_model(model_id)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # BASE MODEL LIFECYCLE (Factory Models)
 # ──────────────────────────────────────────────────────────────────────────────
-
-
 @router.post("/base/{base_model_id:path}/activate")
 def activate_base_model_endpoint(
     base_model_id: str,
@@ -157,8 +150,6 @@ def deactivate_base_model_endpoint(
 # ──────────────────────────────────────────────────────────────────────────────
 # GLOBAL CLUSTER RESET
 # ──────────────────────────────────────────────────────────────────────────────
-
-
 @router.post("/deactivate-all")
 def deactivate_all_endpoint(
     user_id: str = Depends(get_current_user_id),

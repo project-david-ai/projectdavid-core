@@ -47,3 +47,5 @@ pymysql
 docker>=7.0.0
 pynvml>=11.5.0
 packaging>=23.0
+
+ray[default]==2.40.0
