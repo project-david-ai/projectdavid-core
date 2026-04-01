@@ -49,3 +49,29 @@ print(f"📦 Base model registered: {registered.id}")
 print(f"🎯 Activating model: {FINE_TUNED_MODEL_ID}")
 result = admin_client.models.activate(FINE_TUNED_MODEL_ID)
 print(f"✅ Result: {result}")
+
+# =============================================================================
+# DUAL INFERENCE NOTE — for documentation
+# =============================================================================
+#
+# After activation, vLLM serves TWO inference routes from the same GPU:
+#
+#   1. Base model (raw backbone):
+#      {"model": "unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit", ...}
+#
+#   2. Fine-tuned adapter (LoRA on top of base):
+#      {"model": "ftm_G05BERHAEvSRr2KTyUqWIJ", ...}
+#
+# vLLM loads the base weights once and dynamically swaps LoRA adapters
+# per request. Both routes share the same GPU memory footprint — the
+# adapter costs no additional VRAM to serve alongside the base model.
+#
+# This means an admin can register a single base model and serve multiple
+# fine-tuned adapters from the same vLLM instance simultaneously, provided
+# --max-lora-rank and --max-cpu-loras are configured appropriately in the
+# DeploymentSupervisor spawn command.
+#
+# Practical implication: users can compare base vs fine-tuned behaviour
+# on identical prompts by switching the model parameter — no additional
+# deployment required.
+# =============================================================================

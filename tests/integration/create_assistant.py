@@ -9,11 +9,11 @@ from projectdavid import Entity
 # ------------------------------------------------------------------
 # 0.  SDK init + env
 # ------------------------------------------------------------------
-load_dotenv()
+load_dotenv(".tests.env")
 
 client = Entity(
-    base_url=os.getenv("BASE_URL", "http://localhost:80"),
-    api_key=os.getenv("ENTITIES_API_KEY"),
+    base_url="http://localhost:80",
+    api_key=os.getenv("DEV_PROJECT_DAVID_CORE_TEST_USER_KEY"),
 )
 
 
