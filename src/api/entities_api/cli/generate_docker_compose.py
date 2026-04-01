@@ -117,6 +117,9 @@ services:
     networks:
       - my_custom_network
 
+  # ---------------------------------------------------------------------------
+  # ollama — Local Ollama inference (ai profile only)
+  # ---------------------------------------------------------------------------
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
@@ -129,33 +132,9 @@ services:
     networks:
       - my_custom_network
 
-  vllm:
-    image: vllm/vllm-openai:latest
-    container_name: vllm_server
-    restart: unless-stopped
-    profiles: [ "ai" ]
-    runtime: nvidia
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - HF_TOKEN=${HF_TOKEN}
-      - PYTORCH_ALLOC_CONF=expandable_segments:True
-    volumes:
-      - ${HF_CACHE_PATH}:/root/.cache/huggingface
-      - ${SHARED_PATH}:/mnt/training_data
-    ports:
-      - "8001:8000"
-    command: >
-      --model ${VLLM_MODEL}
-      ${VLLM_EXTRA_FLAGS}
-      --dtype float16
-      --max-model-len 2048
-      --gpu-memory-utilization 0.5
-    networks:
-      - my_custom_network
-
   # ---------------------------------------------------------------------------
   # training-api — Fine-tuning REST API (no GPU required)
-  # Opt-in: platform-api docker-manager --mode up --training
+  # Opt-in: docker compose --profile training up
   # ---------------------------------------------------------------------------
   training-api:
     build:
@@ -188,8 +167,9 @@ services:
       - my_custom_network
 
   # ---------------------------------------------------------------------------
-  # training-worker — GPU training runner (requires nvidia-container-toolkit)
-  # Opt-in: platform-api docker-manager --mode up --training
+  # training-worker — Ray WORKER node
+  # Joins the Ray cluster via ray://inference_worker:10001
+  # Opt-in: docker compose --profile training up
   # ---------------------------------------------------------------------------
   training-worker:
     build:
@@ -197,48 +177,78 @@ services:
       dockerfile: docker/training/Dockerfile
     container_name: training_worker
     restart: unless-stopped
-    profiles: [ "training" ]
-    env_file:
-      - .env
-    runtime: nvidia
-    shm_size: '5gb'
-    environment:
-      - RAY_CLIENT_SERVER_PORT=10001
-      - TRAINING_PROFILE=${TRAINING_PROFILE:-standard}
-      - DATABASE_URL=${DATABASE_URL}
-      - REDIS_URL=redis://redis:6379/0
-      - ASSISTANTS_BASE_URL=http://api:9000
-      - WORKER_API_KEY=${ADMIN_API_KEY}
-      - SHARED_PATH=/mnt/training_data
-      - SHARED_PATH_HOST=${SHARED_PATH:-./shared_data}
-      - HF_TOKEN=${HF_TOKEN:-}
-      - HF_HOME=/root/.cache/huggingface
-      - HF_CACHE_PATH_HOST=${HF_CACHE_PATH}
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      - PYTHONUNBUFFERED=1
-      - RAY_ADDRESS=${RAY_ADDRESS:-}
-      - RAY_DASHBOARD_PORT=${RAY_DASHBOARD_PORT:-8265}
-    ports:
-      - "8265:8265"    # Ray dashboard
-      - "10001:10001"  # Ray client (external)
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ${SHARED_PATH:-./shared_data}:/mnt/training_data
-      - ${HF_CACHE_PATH}:/root/.cache/huggingface
-      - ./src:/app/src
-    command: [ "python", "src/api/training/worker.py" ]
-    depends_on:
-      - redis
-    networks:
-      - my_custom_network
+    profiles: ["training"]
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
               count: all
-              capabilities: [ gpu ]
+              capabilities: [gpu]
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - SHARED_PATH=/mnt/training_data
+      - HF_CACHE_PATH=/root/.cache/huggingface
+      - DATABASE_URL=${DATABASE_URL}
+      - NODE_ID=${NODE_ID:-}
+      - PYTHONUNBUFFERED=1
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    volumes:
+      - ${SHARED_PATH:-./shared_data}:/mnt/training_data
+      - ${HF_CACHE_PATH}:/root/.cache/huggingface
+      - ./src/api/training:/app/src/api/training
+    networks:
+      - my_custom_network
+    depends_on:
+      - redis
+    command: ["python", "src/api/training/worker.py"]
+
+  # ---------------------------------------------------------------------------
+  # inference-worker — Ray HEAD node
+  # Owns the GPU, runs Ray Serve, hosts the InferenceReconciler.
+  # All vLLM inference is managed here via Ray Serve deployments.
+  # VLLM_BASE_URL on the main api points to this container.
+  # Opt-in: docker compose --profile training up
+  # ---------------------------------------------------------------------------
+  inference-worker:
+    build:
+      context: .
+      dockerfile: docker/inference/Dockerfile
+    container_name: inference_worker
+    restart: unless-stopped
+    profiles: ["training"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      - RAY_DASHBOARD_PORT=${RAY_DASHBOARD_PORT:-8265}
+      - RAY_CLIENT_SERVER_PORT=10001
+      - SERVE_HTTP_PORT=8000
+      - SHARED_PATH=/mnt/training_data
+      - HF_CACHE_PATH=/root/.cache/huggingface
+      - DATABASE_URL=${DATABASE_URL}
+      - NODE_ID=${NODE_ID:-}
+      - PYTHONUNBUFFERED=1
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - RAY_IGNORE_VERSION_MISMATCH=1
+    ports:
+      - "8002:8000"
+      - "8265:8265"
+      - "10001:10001"
+    volumes:
+      - ${SHARED_PATH:-./shared_data}:/mnt/training_data
+      - ${HF_CACHE_PATH}:/root/.cache/huggingface
+      - ./src/api/training:/app/src/api/training
+    networks:
+      - my_custom_network
+    depends_on:
+      - redis
 
   api:
     build:
@@ -263,10 +273,10 @@ services:
       - OTEL_METRICS_EXPORTER=none
       - OTEL_LOGS_EXPORTER=none
       - OLLAMA_BASE_URL=http://ollama:11434/v1
-      - VLLM_BASE_URL=http://vllm_server:8000
+      - VLLM_BASE_URL=http://inference_worker:8000
       - SHARED_PATH=/app/shared_data
-      - ASSISTANTS_BASE_URL=http://localhost:80
-      - DOWNLOAD_BASE_URL=http://localhost:80/v1/files/download
+      - ASSISTANTS_BASE_URL=http://api:9000
+      - DOWNLOAD_BASE_URL=http://api:9000/v1/files/download
     ports:
       - "9000:9000"
     volumes:
@@ -359,7 +369,7 @@ networks:
 """
 
     output_path.write_text(compose_yaml)
-    print("✅  docker-compose.yml generated (AI + training are opt-in profiles).")
+    print("✅  docker-compose.yml generated (ai and training are opt-in profiles).")
 
 
 if __name__ == "__main__":
