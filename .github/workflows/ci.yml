@@ -79,6 +79,7 @@ jobs:
           hadolint docker/api/Dockerfile || true
           hadolint docker/sandbox/Dockerfile || true
           hadolint docker/training/Dockerfile || true
+          hadolint docker/inference/Dockerfile || true
 
   # ──────────────────────────────────────────────────────────────────────────
   #  ✅  Tests
@@ -168,6 +169,16 @@ jobs:
           platforms: linux/amd64
           cache-from: type=gha,scope=training
           cache-to: type=gha,mode=max,scope=training
+
+      - name: "🏗️ Build Inference Worker Image (No Push)"
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./docker/inference/Dockerfile
+          push: false
+          platforms: linux/amd64
+          cache-from: type=gha,scope=inference
+          cache-to: type=gha,mode=max,scope=inference
 
   # ──────────────────────────────────────────────────────────────────────────
   #  🚀  Build & Publish Docker images (MAIN BRANCH ONLY)
@@ -276,6 +287,16 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
 
+      - name: "🔧 Define Inference Worker Image Metadata"
+        id: meta_inference_worker
+        uses: docker/metadata-action@v5
+        with:
+          images: thanosprime/projectdavid-core-inference-worker
+          tags: |
+            type=semver,pattern={{version}},value=${{ steps.get_version.outputs.VERSION }}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+
       - name: "🏗️ Build & Push API Image"
         uses: docker/build-push-action@v5
         with:
@@ -313,3 +334,15 @@ jobs:
           platforms: linux/amd64
           cache-from: type=gha,scope=training
           cache-to: type=gha,mode=max,scope=training
+
+      - name: "🏗️ Build & Push Inference Worker Image"
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./docker/inference/Dockerfile
+          push: true
+          tags: ${{ steps.meta_inference_worker.outputs.tags }}
+          labels: ${{ steps.meta_inference_worker.outputs.labels }}
+          platforms: linux/amd64
+          cache-from: type=gha,scope=inference
+          cache-to: type=gha,mode=max,scope=inference
