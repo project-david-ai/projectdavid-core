@@ -37,7 +37,7 @@ RESET = "\033[0m"
 # ------------------------------------------------------------------
 # Config
 # ------------------------------------------------------------------
-BASE_URL = os.getenv("BASE_URL", "http://localhost:80")
+BASE_URL = os.getenv("BASE_URL", "http://localhost:9000")
 API_KEY = os.getenv("DEV_PROJECT_DAVID_CORE_TEST_USER_KEY")
 
 # CRITICAL: The identity of the behavior container
@@ -46,11 +46,11 @@ ASSISTANT_ID = os.getenv("DEV_PROJECT_DAVID_CORE_TEST_ASSISTANT_ID")
 # Target the LoRA adapter name defined in the orchestrator/vllm config
 # MODEL_ID = "vllm/david-ft"
 
-MODEL_ID = "vllm/vllm_dep_BPd9QqKDGVtaCCiywYKdhR"
 
+MODEL_ID = "vllm/vllm_dep_JuXjE2FNjNQ1ugenEq03H6"
 VLLM_BASE_URL = os.getenv("VLLM_BASE_URL", "http://vllm_server:8000")
 
-TEST_PROMPT = "Hello Assistant! Can you confirm you are currently utilizing your new fine-tuned weights ('david-ft') to answer me?"
+TEST_PROMPT = "Hello Assistant!"
 
 # ------------------------------------------------------------------
 # Execution
@@ -64,7 +64,7 @@ def run_assistant_ft_test():
 
     assistant = client.assistants.create_assistant(
         name="Sovereign-Forge Test",
-        instructions="You are a helpful assistant that can answer questions about fine-tuned weights.",
+        instructions="You are a helpful assistant.",
     )
 
     # 1. Setup Thread
@@ -107,7 +107,6 @@ def run_assistant_ft_test():
         # 5. Execute unified stream
         for event in stream.stream_events(
             model=MODEL_ID,
-            meta_data={"vllm_base_url": VLLM_BASE_URL},
         ):
             now = time.perf_counter()
             delta = now - last_tick
