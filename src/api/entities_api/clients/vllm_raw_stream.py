@@ -12,6 +12,10 @@ For MULTIMODAL requests (any message has list content with image blocks)
 the pipeline automatically upgrades to:
     vLLM /v1/chat/completions  (messages array, vLLM handles the template)
 
+For SOVEREIGN FORGE deployments (Ray Serve managed via InferenceReconciler):
+    VLLMDeployment route directly  (full URL from internal_hostname, no /v1/... appended)
+    Detected by the presence of /vllm_dep_/ in the resolved base URL.
+
 This is required because /v1/completions is a text-only endpoint —
 serialising base64 image arrays as JSON strings into a prompt string
 tokenises them as raw text (thousands of tokens) and loses the vision
@@ -31,6 +35,11 @@ from projectdavid_common.utilities.logging_service import LoggingUtility
 
 load_dotenv()
 LOG = LoggingUtility()
+
+# URL fragment written by InferenceReconciler into internal_hostname for all
+# Ray Serve deployments. Its presence in the resolved base URL signals that
+# the request must go directly to the deployment route rather than /v1/completions.
+_SOVEREIGN_FORGE_URL_MARKER = "/vllm_dep_"
 
 
 # ── Multimodal detection ──────────────────────────────────────────────────────
@@ -192,7 +201,6 @@ def _normalise_for_chat(messages: List[Dict]) -> List[Dict]:
         content = m.get("content")
 
         if not isinstance(content, list):
-            # Plain text — pass straight through
             normalised.append(m)
             continue
 
@@ -207,7 +215,6 @@ def _normalise_for_chat(messages: List[Dict]) -> List[Dict]:
                 converted_blocks.append({"type": "text", "text": block.get("text", "")})
 
             elif btype == "image":
-                # Hydrated format → OpenAI image_url format
                 data_uri = block.get("image", "")
                 converted_blocks.append(
                     {
@@ -217,11 +224,9 @@ def _normalise_for_chat(messages: List[Dict]) -> List[Dict]:
                 )
 
             elif btype == "image_url":
-                # Already in the right format — pass through
                 converted_blocks.append(block)
 
             else:
-                # Unknown block type — skip
                 LOG.warning(
                     "_normalise_for_chat: unknown block type '%s', skipping.", btype
                 )
@@ -240,9 +245,10 @@ class VLLMRawStream:
     """
     Mixin / base class that provides _stream_vllm_raw().
 
-    Routing logic:
-        • Text-only  → /v1/completions   (prompt string, chat template rendered here)
-        • Multimodal → /v1/chat/completions  (messages array, vLLM owns the template)
+    Routing logic (in priority order):
+        1. Sovereign Forge  → deployment URL directly   (Ray Serve VLLMDeployment, SSE)
+        2. Multimodal       → /v1/chat/completions       (messages array, vLLM native)
+        3. Text-only        → /v1/completions            (rendered prompt string)
     """
 
     VLLM_DEFAULT_BASE_URL: str = os.getenv("VLLM_BASE_URL", "http://localhost:8000")
@@ -264,7 +270,23 @@ class VLLMRawStream:
 
         resolved_base = (base_url or self.VLLM_DEFAULT_BASE_URL).rstrip("/")
 
-        # ── Route decision ────────────────────────────────────────────────
+        # ── Sovereign Forge: Ray Serve deployment ─────────────────────────
+        # InferenceReconciler writes internal_hostname as the full deployment URL:
+        #   http://inference_worker:8000/vllm_dep_{id}
+        # These deployments have no /v1/... sub-path — they must be called
+        # directly at the route prefix with stream=True in the POST body.
+        if _SOVEREIGN_FORGE_URL_MARKER in resolved_base:
+            async for chunk in self._stream_sovereign_forge(
+                messages=messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                endpoint=resolved_base,
+            ):
+                yield chunk
+            return
+
+        # ── Standard vLLM: multimodal vs text-only ────────────────────────
         multimodal = _is_multimodal(messages)
 
         if multimodal:
@@ -289,6 +311,45 @@ class VLLMRawStream:
                 skip_special_tokens=skip_special_tokens,
             ):
                 yield chunk
+
+    # ── SOVEREIGN FORGE path: Ray Serve VLLMDeployment ───────────────────────
+
+    async def _stream_sovereign_forge(
+        self,
+        *,
+        messages: List[Dict[str, Any]],
+        model: str,
+        temperature: float,
+        max_tokens: int,
+        endpoint: str,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        Stream from a Sovereign Forge Ray Serve deployment.
+
+        The endpoint is the complete deployment URL written by InferenceReconciler:
+            http://inference_worker:8000/vllm_dep_{id}
+
+        VLLMDeployment.__call__ accepts this POST body and returns SSE in the
+        choices[0].delta.content format when stream=True, which is the same
+        shape _http_stream_chat expects. No URL rewriting needed.
+        """
+        payload: Dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": True,
+        }
+
+        LOG.info(
+            "VLLMRawStream ▸ Sovereign Forge POST %s | model=%s | max_tokens=%d",
+            endpoint,
+            model,
+            max_tokens,
+        )
+
+        async for chunk in self._http_stream_chat(endpoint, payload):
+            yield chunk
 
     # ── TEXT-ONLY path: /v1/completions ──────────────────────────────────────
 
@@ -380,7 +441,6 @@ class VLLMRawStream:
             max_tokens,
         )
 
-        # /v1/chat/completions already returns delta.content — no re-wrapping needed
         async for chunk in self._http_stream_chat(endpoint, payload):
             yield chunk
 
@@ -483,8 +543,8 @@ class VLLMRawStream:
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         POST `payload` to `endpoint`, stream SSE lines.
-        /v1/chat/completions already returns choices[0].delta.content —
-        pass through unchanged so DeltaNormalizer sees the same shape.
+        /v1/chat/completions and VLLMDeployment both return choices[0].delta.content
+        — pass through unchanged so DeltaNormalizer sees the same shape.
         """
         try:
             async with httpx.AsyncClient(timeout=self.VLLM_REQUEST_TIMEOUT) as client:
@@ -533,7 +593,6 @@ class VLLMRawStream:
                         if not choices:
                             continue
                         choice = choices[0]
-                        # delta.content already present — pass straight through
                         yield {
                             "choices": [
                                 {

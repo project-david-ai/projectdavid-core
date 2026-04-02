@@ -166,7 +166,21 @@ class VLLMDeployment:
         log.info("✅ VLLMDeployment ready — model=%s", model_endpoint)
 
     async def __call__(self, request):
-        """Handle OpenAI-compatible chat completion requests."""
+        """
+        Handle OpenAI-compatible chat completion requests.
+
+        Supports both streaming (SSE) and non-streaming modes.
+        Pass stream=true in the request body for SSE — required when called
+        from VLLMRawStream's Sovereign Forge path.
+
+        LoRA lookup: the model field may be either the fine_tuned_model_id
+        (ftm_...) or the deployment ID (vllm_dep_...). If no matching LoRA
+        request is found by name and exactly one adapter is loaded, the
+        loaded adapter is used automatically.
+        """
+        import json as _json
+
+        from starlette.responses import StreamingResponse
         from vllm import SamplingParams
 
         body = await request.json()
@@ -175,6 +189,7 @@ class VLLMDeployment:
         max_tokens = body.get("max_tokens", 512)
         temperature = body.get("temperature", 0.7)
         top_p = body.get("top_p", 0.9)
+        stream = body.get("stream", False)
 
         prompt = self._format_messages(messages)
         sampling_params = SamplingParams(
@@ -183,10 +198,56 @@ class VLLMDeployment:
             max_tokens=max_tokens,
         )
 
+        # LoRA lookup: try exact name match first, then fall back to the
+        # single loaded adapter (handles vllm_dep_... model field).
         lora_request = self._lora_requests.get(model_name)
-        request_id = f"req_{int(time.time() * 1000)}"
-        output_text = ""
+        if lora_request is None and len(self._lora_requests) == 1:
+            lora_request = next(iter(self._lora_requests.values()))
+            log.debug(
+                "VLLMDeployment: model field '%s' did not match a LoRA key — "
+                "using sole loaded adapter '%s'.",
+                model_name,
+                next(iter(self._lora_requests.keys())),
+            )
 
+        request_id = f"req_{int(time.time() * 1000)}"
+
+        if stream:
+            # ── SSE streaming path ───────────────────────────────────────
+            async def _event_stream():
+                prev_text = ""
+                async for output in self.engine.generate(
+                    prompt,
+                    sampling_params,
+                    request_id=request_id,
+                    lora_request=lora_request,
+                ):
+                    if output.outputs:
+                        full_text = output.outputs[0].text
+                        delta = full_text[len(prev_text) :]
+                        prev_text = full_text
+                        if delta:
+                            chunk = {
+                                "choices": [
+                                    {
+                                        "delta": {"content": delta},
+                                        "finish_reason": None,
+                                    }
+                                ]
+                            }
+                            yield f"data: {_json.dumps(chunk)}\n\n"
+
+                # Final chunk signals end of stream
+                final = {
+                    "choices": [{"delta": {"content": ""}, "finish_reason": "stop"}]
+                }
+                yield f"data: {_json.dumps(final)}\n\n"
+                yield "data: [DONE]\n\n"
+
+            return StreamingResponse(_event_stream(), media_type="text/event-stream")
+
+        # ── Non-streaming path ───────────────────────────────────────────
+        output_text = ""
         async for output in self.engine.generate(
             prompt,
             sampling_params,
