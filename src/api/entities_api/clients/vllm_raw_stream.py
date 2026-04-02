@@ -15,6 +15,10 @@ the pipeline automatically upgrades to:
 For SOVEREIGN FORGE deployments (Ray Serve, URL contains /vllm_dep_):
     POST directly to the deployment URL — no path appended.
     The deployment URL IS the endpoint.
+
+Supported model families (CHAT_TEMPLATE_REGISTRY):
+    Qwen, DeepSeek, Mistral, Llama, Phi, Gemma, GPT-OSS
+    Unknown models fall back to Qwen format.
 """
 
 from __future__ import annotations
@@ -26,6 +30,15 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 import httpx
 from dotenv import load_dotenv
 from projectdavid_common.utilities.logging_service import LoggingUtility
+
+from src.api.entities_api.clients.renderers.deepseek import _render_deepseek
+from src.api.entities_api.clients.renderers.gemma import _render_gemma
+from src.api.entities_api.clients.renderers.gpt_oss import _render_gpt_oss
+from src.api.entities_api.clients.renderers.llama3 import _render_llama3
+from src.api.entities_api.clients.renderers.mistral import _render_mistral
+from src.api.entities_api.clients.renderers.moonshot import _render_moonshot
+from src.api.entities_api.clients.renderers.phi import _render_phi
+from src.api.entities_api.clients.renderers.qwen import _render_qwen
 
 load_dotenv()
 LOG = LoggingUtility()
@@ -51,105 +64,30 @@ def _is_multimodal(messages: List[Dict]) -> bool:
 
 # ── Per-family chat templates (text-only path) ────────────────────────────────
 
-
-def _render_qwen(messages: List[Dict], tools: Optional[List] = None) -> str:
-    """Qwen2.5 / Qwen3 im_start/im_end format — TEXT ONLY."""
-    parts = []
-
-    if tools:
-        tool_json = "\n".join(json.dumps(t) for t in tools)
-        system_content = None
-        filtered = []
-        for m in messages:
-            if m["role"] == "system":
-                system_content = m["content"]
-            else:
-                filtered.append(m)
-
-        system_block = system_content or "You are a helpful assistant."
-        system_block += (
-            "\n\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\n"
-            "You are provided with function signatures within <tools></tools> XML tags:\n"
-            f"<tools>\n{tool_json}\n</tools>"
-        )
-        parts.append(f"<|im_start|>system\n{system_block}<|im_end|>")
-        messages = filtered
-    else:
-        for m in messages:
-            if m["role"] == "system":
-                parts.append(f"<|im_start|>system\n{m['content']}<|im_end|>")
-                messages = [x for x in messages if x is not m]
-                break
-
-    for m in messages:
-        role = m["role"]
-        # TEXT ONLY — list content must never reach this renderer
-        content = (
-            m["content"] if isinstance(m["content"], str) else json.dumps(m["content"])
-        )
-        parts.append(f"<|im_start|>{role}\n{content}<|im_end|>")
-
-    parts.append("<|im_start|>assistant\n")
-    return "\n".join(parts)
-
-
-def _render_mistral(messages: List[Dict], tools: Optional[List] = None) -> str:
-    """Mistral [INST] format."""
-    system = ""
-    turns = []
-
-    for m in messages:
-        if m["role"] == "system":
-            system = m["content"]
-        else:
-            turns.append(m)
-
-    if tools:
-        tool_json = json.dumps(tools)
-        system += f"\n\nYou have access to the following tools:\n{tool_json}"
-
-    parts = ["<s>"]
-    for i, m in enumerate(turns):
-        if m["role"] == "user":
-            prefix = f"{system}\n\n" if system and i == 0 else ""
-            parts.append(f"[INST] {prefix}{m['content']} [/INST]")
-        elif m["role"] == "assistant":
-            parts.append(f" {m['content']}</s>")
-
-    return "".join(parts)
-
-
-def _render_llama3(messages: List[Dict], tools: Optional[List] = None) -> str:
-    """Llama 3.x header/eot format."""
-    parts = ["<|begin_of_text|>"]
-    system_injected = False
-
-    for m in messages:
-        role = m["role"]
-        content = (
-            m["content"] if isinstance(m["content"], str) else json.dumps(m["content"])
-        )
-
-        if role == "system" and tools and not system_injected:
-            tool_json = json.dumps(tools)
-            content += f"\n\nTools available:\n{tool_json}"
-            system_injected = True
-
-        parts.append(
-            f"<|start_header_id|>{role}<|end_header_id|>\n\n{content}<|eot_id|>"
-        )
-
-    parts.append("<|start_header_id|>assistant<|end_header_id|>\n\n")
-    return "".join(parts)
-
-
 CHAT_TEMPLATE_REGISTRY = [
     ("Qwen", _render_qwen),
     ("qwen", _render_qwen),
+    ("DeepSeek", _render_deepseek),
+    ("deepseek", _render_deepseek),
     ("Mistral", _render_mistral),
     ("mistral", _render_mistral),
     ("Llama", _render_llama3),
     ("llama", _render_llama3),
+    ("Phi", _render_phi),
+    ("phi", _render_phi),
+    ("Gemma", _render_gemma),
+    ("gemma", _render_gemma),
+    ("gpt", _render_gpt_oss),
+    ("GPT", _render_gpt_oss),
+    ("cerebras", _render_gpt_oss),
+    ("gpt-j", _render_gpt_oss),
+    ("gpt-neo", _render_gpt_oss),
+    ("falcon", _render_gpt_oss),
+    ("Falcon", _render_gpt_oss),
+    ("moonshot", _render_moonshot),
+    ("Moonshot", _render_moonshot),
+    ("kimi", _render_moonshot),
+    ("Kimi", _render_moonshot),
 ]
 
 
@@ -160,7 +98,7 @@ def render_prompt(
 ) -> str:
     """
     Resolve and apply the correct chat template for a given model ID.
-    Falls back to Qwen format.  Called only on the TEXT-ONLY path.
+    Falls back to Qwen format for unknown model families.
     """
     for substr, renderer in CHAT_TEMPLATE_REGISTRY:
         if substr in model_id:
@@ -180,14 +118,6 @@ def _normalise_for_chat(messages: List[Dict]) -> List[Dict]:
     """
     Convert hydrated messages into the OpenAI multimodal chat format that
     vLLM's /v1/chat/completions endpoint expects.
-
-    Hydrated image blocks arrive as:
-        {"type": "image", "image": "data:image/jpeg;base64,<b64>"}
-
-    OpenAI / vLLM chat format expects:
-        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,<b64>"}}
-
-    Plain text content strings are left unchanged.
     """
     normalised = []
     for m in messages:
@@ -240,7 +170,7 @@ class VLLMRawStream:
 
     Routing logic (in priority order):
         1. Sovereign Forge (URL contains /vllm_dep_) → POST directly to deployment URL
-        2. Multimodal      → /v1/chat/completions
+        2. Multimodal      → /v1/chat/completions  (holding pattern — see WP-sovereign-multimodal)
         3. Text-only       → /v1/completions
     """
 
@@ -264,8 +194,6 @@ class VLLMRawStream:
         resolved_base = (base_url or self.VLLM_DEFAULT_BASE_URL).rstrip("/")
 
         # ── Sovereign Forge routing (Ray Serve deployment URL) ────────────
-        # When the resolved URL contains /vllm_dep_, it IS the endpoint —
-        # post directly without appending any path.
         if _SOVEREIGN_FORGE_URL_MARKER in resolved_base:
             async for chunk in self._stream_sovereign_forge(
                 messages=messages,
@@ -319,7 +247,7 @@ class VLLMRawStream:
 
         The deployment URL IS the endpoint — no path appended.
         Ray Serve routes the request to the VLLMDeployment.__call__ handler
-        which returns SSE deltas in completions format.
+        which returns SSE deltas in completions format (choices[0].text).
         """
         prompt = render_prompt(model_id=model, messages=messages)
 
@@ -391,7 +319,8 @@ class VLLMRawStream:
         async for chunk in self._http_stream(endpoint, payload):
             yield chunk
 
-    # ── MULTIMODAL path: /v1/chat/completions ────────────────────────────────
+    # ── MULTIMODAL path: /v1/chat/completions (holding pattern) ──────────────
+    # See WP-sovereign-multimodal-pipeline.md for planned replacement.
 
     async def _stream_vllm_chat(
         self,
@@ -405,11 +334,8 @@ class VLLMRawStream:
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Route multimodal requests through /v1/chat/completions.
-
-        vLLM applies the model's chat template and multimodal processor
-        internally — we send the messages array with properly formatted
-        image_url blocks and receive delta.content chunks back, which is
-        already the shape DeltaNormalizer expects.
+        Holding pattern — will be replaced by sovereign raw pipeline.
+        See: WP-sovereign-multimodal-pipeline.md
         """
         endpoint = f"{base_url}/v1/chat/completions"
 
@@ -536,6 +462,7 @@ class VLLMRawStream:
         POST `payload` to `endpoint`, stream SSE lines.
         /v1/chat/completions already returns choices[0].delta.content —
         pass through unchanged so DeltaNormalizer sees the same shape.
+        Holding pattern — see WP-sovereign-multimodal-pipeline.md
         """
         try:
             async with httpx.AsyncClient(timeout=self.VLLM_REQUEST_TIMEOUT) as client:
