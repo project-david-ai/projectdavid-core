@@ -4,15 +4,10 @@ inference_worker.py
 Sovereign Forge — Inference Worker (Ray HEAD Node)
 
 This container is the Ray HEAD node. It owns the GPU, runs Ray Serve,
-and hosts the InferenceReconciler. training_worker joins as a Ray WORKER
-via ray://inference_worker:10001.
-
-Because this is the HEAD node, Ray Serve actors default to this node —
-where vLLM is installed. No node pinning required.
+and hosts the InferenceReconciler.
 
 Architecture:
     - Starts Ray HEAD node
-    - Starts Ray client server on port 10001 (for training_worker to join)
     - Polls inference_deployments DB table every poll_interval seconds
     - Reconciles Ray Serve deployments with DB state
 
@@ -48,7 +43,6 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 RAY_DASHBOARD_PORT = int(os.getenv("RAY_DASHBOARD_PORT", "8265"))
-RAY_CLIENT_SERVER_PORT = int(os.getenv("RAY_CLIENT_SERVER_PORT", "10001"))
 POLL_INTERVAL = int(os.getenv("INFERENCE_POLL_INTERVAL", "20"))
 HF_CACHE_PATH = os.getenv("HF_CACHE_PATH", "/root/.cache/huggingface")
 SHARED_PATH = os.getenv("SHARED_PATH", "/mnt/training_data")
@@ -113,8 +107,7 @@ class VLLMDeployment:
     Ray Serve deployment wrapping a vLLM AsyncLLMEngine.
 
     Runs on the inference_worker HEAD node where vLLM is installed.
-    Reserves 1 GPU via ray_actor_options — Ray's scheduler prevents
-    training jobs from claiming this GPU while inference is active.
+    Reserves 1 GPU via ray_actor_options.
 
     Supports:
       - Base model inference
@@ -161,7 +154,6 @@ class VLLMDeployment:
 
         self.engine = AsyncLLMEngine.from_engine_args(engine_args)
 
-        # Use lora_path (lora_local_path is deprecated in vLLM 0.8.x+)
         self._lora_requests = {
             name: LoRARequest(
                 lora_name=name,
@@ -251,10 +243,6 @@ def _deployment_name(deployment_id: str) -> str:
 
     Ray Serve names must be alphanumeric + underscore.
     dep_DWtgOyY5iTpkV1gfslIUwJ → vllm_dep_DWtgOyY5iTpkV1gfslIUwJ
-
-    Note: we only replace hyphens — the ID itself never contains hyphens
-    (projectdavid IDs use alphanumeric + underscore already). This makes
-    the name→ID reverse mapping unambiguous.
     """
     return f"vllm_{deployment_id.replace('-', '_')}"
 
@@ -280,8 +268,6 @@ class InferenceReconciler:
         self._SessionLocal = SessionLocal
         self._InferenceDeployment = InferenceDeployment
         self._BaseModel = BaseModel
-        # Maps deployment DB ID → Ray Serve app name
-        # e.g. "dep_DWtgOyY5iTpkV1gfslIUwJ" → "vllm_dep_DWtgOyY5iTpkV1gfslIUwJ"
         self._active: dict[str, str] = {}
 
     def _get_db(self) -> Session:
@@ -302,12 +288,25 @@ class InferenceReconciler:
         )
 
     def _resolve_model_endpoint(self, db: Session, base_model_id: str) -> str:
+        """
+        Resolve a base_model_id to its HuggingFace endpoint string.
+
+        Raises RuntimeError if the BaseModel record no longer exists.
+        A missing record means the deployment references a deregistered model
+        and should not proceed.
+        """
         base = (
             db.query(self._BaseModel)
             .filter(self._BaseModel.id == base_model_id)
             .first()
         )
-        return base.endpoint if base else base_model_id
+        if not base:
+            raise RuntimeError(
+                f"BaseModel '{base_model_id}' not found in registry. "
+                f"The InferenceDeployment references a model that no longer exists. "
+                f"Deregister this deployment or re-register the base model."
+            )
+        return base.endpoint
 
     def _build_lora_modules(self, dep) -> dict:
         if not dep.fine_tuned_model_id:
@@ -325,9 +324,6 @@ class InferenceReconciler:
         model_endpoint = self._resolve_model_endpoint(db, dep.base_model_id)
         lora_modules = self._build_lora_modules(dep)
         tp_size = getattr(dep, "tensor_parallel_size", 1) or 1
-
-        # Resolve gpu_memory_utilization: DB record → env override → safe default.
-        # This is the primary fix for OOM during vLLM's profile_run on small GPUs.
         gpu_mem_util = _resolve_gpu_memory_utilization(dep)
 
         log.info(
@@ -386,13 +382,9 @@ class InferenceReconciler:
         try:
             deployments = self._get_pending_deployments(db)
             db_ids = {dep.id for dep in deployments}
-
-            # Build the expected set of serve names from DB records
             expected_serve_names = {_deployment_name(dep_id) for dep_id in db_ids}
-
             serve_names = self._get_active_serve_deployments()
 
-            # Deploy anything that should exist but doesn't
             for dep in deployments:
                 deployment_name = _deployment_name(dep.id)
                 if deployment_name not in serve_names:
@@ -400,11 +392,11 @@ class InferenceReconciler:
                         "🚨 Deployment drift — %s not in Ray Serve. Redeploying.",
                         deployment_name,
                     )
-                    self._deploy(db, dep)
+                    try:
+                        self._deploy(db, dep)
+                    except RuntimeError as e:
+                        log.error("Skipping deployment %s: %s", deployment_name, e)
 
-            # Delete anything running in Ray Serve that has no DB record.
-            # Compare against expected_serve_names derived from DB — NOT by
-            # reconstructing IDs from serve names (which is lossy and buggy).
             for name in serve_names:
                 if name.startswith("vllm_") and name not in expected_serve_names:
                     log.info("🧹 Orphaned Ray Serve deployment — deleting: %s", name)
@@ -432,28 +424,16 @@ def main():
         logging_level="WARNING",
     )
     log.info("🌐 Ray HEAD started — dashboard: http://localhost:%d", RAY_DASHBOARD_PORT)
-
-    # ── Phase 2: Start Ray client server ─────────────────────────────────
-    # Allows training_worker to join the cluster via ray://inference_worker:10001
-    # ray.util.client.server.serve() is non-blocking — starts gRPC server
-    # in background threads and returns immediately.
-    from ray.util.client.server import serve as start_ray_client_server
-
-    _client_server_handle = start_ray_client_server(  # noqa: F841
-        f"0.0.0.0:{RAY_CLIENT_SERVER_PORT}"  # nosec B104
-    )
-    time.sleep(2)  # Give gRPC server time to bind
-    log.info("🔌 Ray client server started on port %d", RAY_CLIENT_SERVER_PORT)
     log.info("🔵 Ray resources: %s", ray.cluster_resources())
 
-    # ── Phase 3: Start Ray Serve ──────────────────────────────────────────
+    # ── Phase 2: Start Ray Serve ──────────────────────────────────────────
     serve.start(
         detached=True,
         http_options={"host": "0.0.0.0", "port": SERVE_HTTP_PORT},  # nosec B104
     )
     log.info("🎯 Ray Serve started on port %d", SERVE_HTTP_PORT)
 
-    # ── Phase 4: Reconciliation loop ──────────────────────────────────────
+    # ── Phase 3: Reconciliation loop ──────────────────────────────────────
     reconciler = InferenceReconciler()
     log.info("👀 InferenceReconciler active — polling every %ds", POLL_INTERVAL)
 
