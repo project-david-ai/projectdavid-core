@@ -1,3 +1,5 @@
+# src/api/entities_api/services/inference_resolver.py
+
 import os
 from typing import Optional
 
@@ -8,44 +10,59 @@ from sqlalchemy.orm import Session
 
 logging_utility = UtilsInterface.LoggingUtility()
 
+# Prefix written by InferenceReconciler when creating Ray Serve deployments.
+# Used to distinguish Sovereign Forge deployments from legacy IP-based ones.
+_SOVEREIGN_FORGE_DEP_PREFIX = "vllm_dep_"
+
 
 class InferenceResolver:
     """
     STAGE 6: Global Mesh Resolver.
 
-    Phase 4 update: ComputeNode JOIN removed. inference_deployments.node_id
-    now stores a Ray node ID (hex string) rather than a compute_nodes FK,
-    so the JOIN would always return zero rows. Node health is now verified
-    by the Ray cluster — the presence of an active InferenceDeployment row
-    with a populated internal_hostname is sufficient to route the request.
+    Resolves a model identifier to a live vLLM endpoint URL.
+
+    Supports two deployment architectures:
+
+    Legacy (DeploymentSupervisor):
+        internal_hostname = bare IP, e.g. "172.18.0.14"
+        URL constructed as: http://{ip}:8000
+
+    Sovereign Forge (Ray Serve / InferenceReconciler):
+        internal_hostname = full URL, e.g. "http://inference_worker:8000/vllm_dep_{id}"
+        URL returned as-is — no wrapping needed.
+
+    Model lookup supports three identifier formats:
+        ftm_...      fine_tuned_model_id column
+        bm_...       base_model_id column (HF path stored here)
+        vllm_dep_... InferenceDeployment.id (primary key)
     """
 
     @staticmethod
     def resolve_vllm_url(db: Session, model_tag: str) -> Optional[str]:
         """
-        Finds the active endpoint for a requested model.
+        Find the active inference endpoint for a requested model tag.
 
-        Routing:
-          internal_hostname (dotted-quad IP written by DeploymentSupervisor)
-          → http://<internal_hostname>:8000
-          This is always a Docker-internal address — port 8000 is the
-          container's native vLLM port, not the host-mapped 8001.
+        Args:
+            model_tag: One of:
+                - "ftm_..."         fine-tuned model ID
+                - "bm_..." or HF path   base model
+                - "vllm_dep_..."    deployment primary key (Sovereign Forge)
 
-        Falls back to None with a warning if no active deployment is found
-        or if internal_hostname has not yet been populated by the supervisor.
+        Returns:
+            Full URL string ready to use as base_url in VLLMRawStream,
+            or None if no active deployment is found.
         """
-        # 1. Normalise model tag — strip vllm/ prefix if SDK provided one
+        # Strip provider prefix if present (e.g. "vllm/vllm_dep_..." → "vllm_dep_...")
         target_id = model_tag.replace("vllm/", "")
 
-        # 2. Query inference_deployments directly — no ComputeNode JOIN.
-        #    Order by last_seen descending so the most recently confirmed
-        #    active deployment is preferred when multiple rows exist.
         deployment = (
             db.query(InferenceDeployment)
             .filter(
                 InferenceDeployment.status == StatusEnum.active,
                 (InferenceDeployment.fine_tuned_model_id == target_id)
-                | (InferenceDeployment.base_model_id == target_id),
+                | (InferenceDeployment.base_model_id == target_id)
+                # Sovereign Forge: target_id is the deployment primary key
+                | (InferenceDeployment.id == target_id),
             )
             .order_by(InferenceDeployment.last_seen.desc())
             .first()
@@ -53,26 +70,41 @@ class InferenceResolver:
 
         if not deployment:
             logging_utility.warning(
-                f"🌐 Resolver: No active deployment found for model '{target_id}'"
+                "Resolver: no active deployment found for model '%s'", target_id
             )
             return None
 
-        # 3. Route via internal container IP written by DeploymentSupervisor.
-        #    This is the only routing path in Phase 4 — the node relationship
-        #    and fallback to node.ip_address are removed because node_id is
-        #    no longer a FK to compute_nodes.
-        if deployment.internal_hostname:
-            internal_url = f"http://{deployment.internal_hostname}:8000"
-            logging_utility.info(
-                f"🌐 Resolver: Resolved '{target_id}' → {internal_url} "
-                f"(node: {deployment.node_id[:16]}...)"
+        if not deployment.internal_hostname:
+            # Deployment exists but reconciler has not written the hostname yet.
+            # Transient state — reconciler runs every 20s.
+            logging_utility.warning(
+                "Resolver: deployment '%s' found for model '%s' but "
+                "internal_hostname not yet populated — reconciler pending.",
+                deployment.id,
+                target_id,
             )
-            return internal_url
+            return None
 
-        # 4. Deployment exists but supervisor hasn't written the IP yet.
-        #    This is a transient state — the supervisor reconciles every 20s.
-        logging_utility.warning(
-            f"🌐 Resolver: Deployment found for '{target_id}' but "
-            f"internal_hostname not yet populated — supervisor reconciling."
+        hostname = deployment.internal_hostname
+
+        # Sovereign Forge / Ray Serve: internal_hostname is a complete URL.
+        # Return it directly — do not wrap with http://{...}:8000.
+        if hostname.startswith(("http://", "https://")):
+            logging_utility.info(
+                "Resolver: '%s' → %s (Ray Serve / Sovereign Forge, node=%s...)",
+                target_id,
+                hostname,
+                deployment.node_id[:16] if deployment.node_id else "unknown",
+            )
+            return hostname
+
+        # Legacy / DeploymentSupervisor: internal_hostname is a bare IP.
+        # Wrap with scheme and vLLM default port.
+        legacy_url = f"http://{hostname}:8000"
+        logging_utility.info(
+            "Resolver: '%s' → %s (legacy IP routing, node=%s...)",
+            target_id,
+            legacy_url,
+            deployment.node_id[:16] if deployment.node_id else "unknown",
         )
-        return None
+        return legacy_url
