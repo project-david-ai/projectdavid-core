@@ -22,7 +22,7 @@ from projectdavid import (
     ToolCallRequestEvent,
 )
 
-load_dotenv()
+load_dotenv(".tests.env")
 
 # ------------------------------------------------------------------
 # ANSI Colors
@@ -46,7 +46,7 @@ ASSISTANT_ID = os.getenv("DEV_PROJECT_DAVID_CORE_TEST_ASSISTANT_ID")
 # Target the LoRA adapter name defined in the orchestrator/vllm config
 # MODEL_ID = "vllm/david-ft"
 
-MODEL_ID = "vllm/unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit"
+MODEL_ID = "vllm/vllm_dep_BPd9QqKDGVtaCCiywYKdhR"
 
 VLLM_BASE_URL = os.getenv("VLLM_BASE_URL", "http://vllm_server:8000")
 
@@ -55,7 +55,7 @@ TEST_PROMPT = "Hello Assistant! Can you confirm you are currently utilizing your
 # ------------------------------------------------------------------
 # Execution
 # ------------------------------------------------------------------
-client = Entity(base_url=BASE_URL, api_key=API_KEY)
+client = Entity(api_key=API_KEY)
 
 
 def run_assistant_ft_test():
