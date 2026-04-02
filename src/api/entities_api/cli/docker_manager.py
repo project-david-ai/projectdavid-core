@@ -60,10 +60,6 @@ DEFAULT_DB_HOST_PORT = "3307"
 DEFAULT_DB_SERVICE_NAME = "db"
 
 BASE_COMPOSE_FILE = "docker-compose.yml"
-GPU_COMPOSE_FILE = "docker-compose.gpu.yml"
-OLLAMA_COMPOSE_FILE = "docker-compose.ollama.yml"
-VLLM_COMPOSE_FILE = "docker-compose.vllm.yml"
-TRAINING_COMPOSE_FILE = "docker-compose.training.yml"
 
 _NVIDIA_TOOLKIT_INSTALL_URL = "https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html"
 
@@ -78,13 +74,10 @@ app = typer.Typer(
         "Manage Docker Compose stack for Project David Core.\n\n"
         "BASE STACK:\n"
         "  platform-api docker-manager --mode up\n\n"
-        "GPU INFERENCE (opt-in, requires NVIDIA GPU):\n"
-        "  platform-api docker-manager --mode up --ollama\n"
-        "  platform-api docker-manager --mode up --vllm\n"
-        "  platform-api docker-manager --mode up --gpu\n\n"
-        "SOVEREIGN FORGE — training + inference mesh (opt-in):\n"
-        "  platform-api docker-manager --mode up --training\n"
-        "  platform-api docker-manager --mode up --gpu --training\n\n"
+        "GPU INFERENCE — Ollama (opt-in, requires NVIDIA GPU):\n"
+        "  platform-api docker-manager --mode up --ollama\n\n"
+        "SOVEREIGN FORGE — training + Ray inference mesh (opt-in):\n"
+        "  platform-api docker-manager --mode up --training\n\n"
         "CONFIGURATION:\n"
         "  platform-api docker-manager configure --set HF_TOKEN=hf_abc123\n"
         "  platform-api docker-manager bootstrap-admin\n"
@@ -141,7 +134,7 @@ class DockerManager:
             "HF_TOKEN",
             (
                 "HuggingFace personal access token.\n"
-                "  Required for downloading gated models (vLLM) and pushing fine-tuned models.\n"
+                "  Required for downloading gated models and pushing fine-tuned adapters.\n"
                 "  Get one at: https://huggingface.co/settings/tokens"
             ),
             True,
@@ -162,15 +155,13 @@ class DockerManager:
         "DOWNLOAD_BASE_URL": "http://localhost:9000/v1/files/download",
         "HYPERBOLIC_BASE_URL": "https://api.hyperbolic.xyz/v1",
         "TOGETHER_BASE_URL": "https://api.together.xyz/v1",
-        "VLLM_BASE_URL": "http://vllm_server:8000",
+        # vLLM inference is served by inference-worker via Ray Serve, not a
+        # standalone vllm container. VLLM_BASE_URL points to inference-worker.
+        "VLLM_BASE_URL": "http://inference_worker:8000",
         "OLLAMA_BASE_URL": "http://ollama:11434",
         "HF_TOKEN": "",  # nosec B105
         "HF_CACHE_PATH": "",
-        "HF_CACHE_PATH_HOST": "",  # derived at generation time from HF_CACHE_PATH
-        "VLLM_MODEL": "Qwen/Qwen2.5-1.5B-Instruct",
-        "VLLM_EXTRA_FLAGS": "",
         "TRAINING_PROFILE": "laptop",
-        "RAY_ADDRESS": "",
         "RAY_DASHBOARD_PORT": "8265",
         "NODE_ID": f"node_{socket.gethostname()}",
         "TOGETHER_API_KEY": "",
@@ -185,7 +176,6 @@ class DockerManager:
         "CODE_EXECUTION_URL": "ws://sandbox_api:8000/ws/execute",
         "DISABLE_FIREJAIL": "true",
         "SHARED_PATH": "./shared_data",
-        "SHARED_PATH_HOST": "",  # derived at generation time from SHARED_PATH
         "AUTO_MIGRATE": "1",
         "MYSQL_HOST": DEFAULT_DB_SERVICE_NAME,
         "MYSQL_PORT": DEFAULT_DB_CONTAINER_PORT,
@@ -204,12 +194,12 @@ class DockerManager:
     }
 
     _ENV_STRUCTURE = {
-        "Mesh Configuration": [
+        "Sovereign Forge Configuration": [
             "NODE_ID",
             "TRAINING_PROFILE",
             "SHARED_PATH",
-            "SHARED_PATH_HOST",
-            "HF_CACHE_PATH_HOST",
+            "HF_CACHE_PATH",
+            "RAY_DASHBOARD_PORT",
         ],
         "Base URLs": [
             "ASSISTANTS_BASE_URL",
@@ -222,14 +212,7 @@ class DockerManager:
         ],
         "AI Model Configuration": [
             "HF_TOKEN",
-            "HF_CACHE_PATH",
-            "VLLM_MODEL",
-            "VLLM_EXTRA_FLAGS",
             "TRAINING_PROFILE",
-        ],
-        "Training Stack": [
-            "RAY_ADDRESS",
-            "RAY_DASHBOARD_PORT",
         ],
         "Database Configuration": [
             "DATABASE_URL",
@@ -300,9 +283,6 @@ class DockerManager:
         self._configure_shared_path()
         self._configure_hf_cache_path()
 
-        if getattr(self.args, "training", False):
-            self._merge_env_for_training()
-
         self._ensure_dockerignore()
         self.node_id = os.getenv("NODE_ID", f"node_{socket.gethostname()}")
 
@@ -317,22 +297,22 @@ class DockerManager:
     def _profile_flags(self) -> List[str]:
         """
         Maps CLI flags to Docker Compose profile activations.
-        training → --profile training
-        gpu/ollama/vllm → --profile ai
 
-        --training alone does NOT activate the ai profile.
-        The DeploymentSupervisor inside the training worker manages
-        vLLM container lifecycle dynamically — no static vLLM container
-        is needed unless --gpu or --vllm is explicitly requested.
+        --training  → --profile training
+                      Starts: training-api, training-worker, inference-worker
+                      inference-worker is the Ray HEAD node. It owns the GPU,
+                      runs Ray Serve, and hosts the InferenceReconciler.
+                      training-worker is a pure Redis/subprocess runner — no Ray.
+
+        --ollama    → --profile ai
+                      Starts: ollama only.
+
+        --training and --ollama can be combined.
         """
         flags = []
         if getattr(self.args, "training", False):
             flags += ["--profile", "training"]
-        if (
-            getattr(self.args, "gpu", False)
-            or getattr(self.args, "ollama", False)
-            or getattr(self.args, "vllm", False)
-        ):
+        if getattr(self.args, "ollama", False):
             flags += ["--profile", "ai"]
         return flags
 
@@ -375,177 +355,15 @@ class DockerManager:
         if not self._has_docker():
             return False
 
-        gpu = getattr(self.args, "gpu", False)
         ollama = getattr(self.args, "ollama", False)
-        vllm = getattr(self.args, "vllm", False)
         training = getattr(self.args, "training", False)
 
-        if gpu and not self._validate_gpu_prereqs("--gpu"):
-            return False
-        if ollama and not gpu and not self._validate_gpu_prereqs("--ollama"):
-            return False
-        if vllm and not gpu and not self._validate_gpu_prereqs("--vllm"):
+        if ollama and not self._validate_gpu_prereqs("--ollama"):
             return False
         if training and not self._validate_gpu_prereqs("--training"):
             return False
 
         return True
-
-    # ------------------------------------------------------------------
-    # Training env injection — with interactive cluster join walkthrough
-    # ------------------------------------------------------------------
-
-    def _merge_env_for_training(self) -> None:
-        """
-        Safely injects training-specific variables into an existing .env
-        without touching any values already set.
-
-        If RAY_ADDRESS is not yet set and the terminal is interactive,
-        walks the operator through head vs worker node selection so that
-        worker nodes join the existing cluster instead of starting their own
-        Ray instance. This is the primary mechanism for multi-node scale-out.
-
-        Head node  → RAY_ADDRESS=""   → starts Ray cluster + dashboard
-        Worker node → RAY_ADDRESS set → joins cluster, no dashboard spawned
-        """
-        required = {
-            "TRAINING_PROFILE": "laptop",
-            "RAY_DASHBOARD_PORT": "8265",
-            "VLLM_EXTRA_FLAGS": "",
-        }
-
-        env_path = Path(self._ENV_FILE)
-        if not env_path.exists():
-            return
-
-        content = env_path.read_text(encoding="utf-8")
-        injected: List[str] = []
-
-        # ── RAY_ADDRESS — interactive cluster join walkthrough ────────────
-        if (
-            not re.search(r"^RAY_ADDRESS=", content, re.MULTILINE)
-            and not os.environ.get("RAY_ADDRESS", "").strip()
-        ):
-
-            ray_address = ""
-
-            if sys.stdin.isatty():
-                typer.echo("\n" + "=" * 60)
-                typer.echo("  Sovereign Forge — Node Configuration")
-                typer.echo("=" * 60)
-                typer.echo(
-                    "\n  Is this node joining an existing Ray cluster?\n"
-                    "  Answer 'yes' for worker nodes 2..N.\n"
-                    "  Answer 'no' if this is the head node (starts the cluster).\n"
-                )
-                joining = typer.confirm("  Join an existing cluster?", default=False)
-
-                if joining:
-                    ray_address = typer.prompt(
-                        "  Ray cluster address",
-                        default="ray://192.168.1.10:10001",
-                    )
-                    typer.echo(
-                        f"\n  ✓ Worker node configured.\n"
-                        f"  Will join cluster at: {ray_address}\n"
-                        "  This node will NOT start a Ray dashboard.\n"
-                        "  DeploymentSupervisor will reuse the head actor.\n"
-                    )
-                else:
-                    dashboard_port = os.environ.get("RAY_DASHBOARD_PORT", "8265")
-                    typer.echo(
-                        f"\n  ✓ Head node configured.\n"
-                        f"  This node will start the Ray cluster and expose\n"
-                        f"  the dashboard on port {dashboard_port}.\n"
-                        "  Worker nodes should set:\n"
-                        "    RAY_ADDRESS=ray://<this_host_ip>:10001\n"
-                    )
-            else:
-                self.log.info(
-                    "Non-interactive environment — RAY_ADDRESS defaulting to '' (head node)."
-                )
-
-            if not injected:
-                content += "\n# Added by docker-manager --training overlay\n"
-            content += f"RAY_ADDRESS={ray_address}\n"
-            os.environ["RAY_ADDRESS"] = ray_address
-            injected.append(
-                f"RAY_ADDRESS={'(head node — empty)' if not ray_address else ray_address}"
-            )
-
-        # ── Remaining required vars ───────────────────────────────────────
-        for key, default in required.items():
-            if re.search(rf"^{re.escape(key)}=", content, re.MULTILINE):
-                continue
-            if os.environ.get(key, "").strip():
-                continue
-            if not injected:
-                content += "\n# Added by docker-manager --training overlay\n"
-            content += f"{key}={default}\n"
-            os.environ[key] = default
-            injected.append(f"{key}={default}")
-            self.log.info("Injected '%s=%s' into .env", key, default)
-
-        if injected:
-            env_path.write_text(content, encoding="utf-8")
-            typer.echo(
-                f"\n  Added {len(injected)} variable(s) to .env for --training overlay:\n"
-                + "\n".join(f"    {k}" for k in injected)
-                + "\n  Edit any time: platform-api docker-manager configure --set KEY=VALUE\n"
-            )
-
-        typer.echo("=" * 60 + "\n")
-
-    # ------------------------------------------------------------------
-    # Mesh resolution
-    # ------------------------------------------------------------------
-
-    def _get_all_active_deployments_for_node(self) -> List[Dict[str, str]]:
-        raw_db_url = os.getenv("DATABASE_URL")
-        if not raw_db_url:
-            return []
-        try:
-            import pymysql
-
-            pattern = re.compile(
-                r"mysql\+pymysql://(?P<user>[^:]+):(?P<password>[^@]+)@(?P<host>[^:/]+)(?::(?P<port>\d+))?/(?P<db>.*)"
-            )
-            match = pattern.match(raw_db_url)
-            if not match:
-                return []
-
-            connection = pymysql.connect(
-                host="localhost",
-                port=int(DEFAULT_DB_HOST_PORT),
-                user=match.group("user"),
-                password=match.group("password"),
-                database=match.group("db"),
-                connect_timeout=5,
-            )
-            deployments = []
-            with connection.cursor() as cursor:
-                sql = """
-                      SELECT d.base_model_id, f.storage_path, d.fine_tuned_model_id
-                      FROM inference_deployments d
-                               LEFT JOIN fine_tuned_models f ON d.fine_tuned_model_id = f.id
-                      WHERE d.node_id = %s AND d.status = 'active'
-                      """
-                cursor.execute(sql, (self.node_id,))
-                for row in cursor.fetchall():
-                    deployments.append(
-                        {
-                            "base_model": row[0],
-                            "adapter_path": (
-                                f"/mnt/training_data/{row[1]}" if row[1] else None
-                            ),
-                            "ftm_id": row[2],
-                        }
-                    )
-            connection.close()
-            return deployments
-        except Exception as e:
-            self.log.debug("Mesh Ledger lookup failed or skipped: %s", e)
-        return []
 
     # ------------------------------------------------------------------
     # Core utilities
@@ -687,28 +505,11 @@ class DockerManager:
             )
             generation_log["SPECIAL_DB_URL"] = "Constructed using host port (3307)"
 
-        # ── HF_CACHE_PATH — default to system huggingface cache ──────────
         if not env_values.get("HF_CACHE_PATH"):
             env_values["HF_CACHE_PATH"] = os.path.join(
                 os.path.expanduser("~"), ".cache", "huggingface"
             )
             generation_log["HF_CACHE_PATH"] = "Derived from system default"
-
-        # ── Host-side paths for vLLM sibling container volume mounts ─────
-        # vLLM is spawned as a sibling Docker container by the DeploymentSupervisor.
-        # It cannot inherit volume mounts from training_worker — Docker requires
-        # the actual host filesystem path for bind mounts between sibling containers.
-        # These are derived automatically at .env generation time so operators
-        # never need to set them manually.
-        if not env_values.get("SHARED_PATH_HOST"):
-            env_values["SHARED_PATH_HOST"] = os.path.abspath(
-                env_values.get("SHARED_PATH", "./shared_data")
-            )
-            generation_log["SHARED_PATH_HOST"] = "Derived from SHARED_PATH (absolute)"
-
-        if not env_values.get("HF_CACHE_PATH_HOST"):
-            env_values["HF_CACHE_PATH_HOST"] = env_values.get("HF_CACHE_PATH", "")
-            generation_log["HF_CACHE_PATH_HOST"] = "Derived from HF_CACHE_PATH"
 
         self._prompt_user_required(env_values, generation_log)
 
@@ -897,37 +698,6 @@ class DockerManager:
 
     def _handle_up(self):
         self._validate_secrets()
-
-        vllm = getattr(self.args, "vllm", False)
-        gpu = getattr(self.args, "gpu", False)
-
-        if vllm or gpu:
-            deployments = self._get_all_active_deployments_for_node()
-            if deployments:
-                base_model = deployments[0]["base_model"]
-                self.log.info(
-                    "MESH RESOLVED: Node '%s' -> Backbone: %s", self.node_id, base_model
-                )
-                os.environ["VLLM_MODEL"] = base_model
-                lora_bundles = [
-                    f"{d['ftm_id']}={d['adapter_path']}"
-                    for d in deployments
-                    if d.get("ftm_id") and d.get("adapter_path")
-                ]
-                if lora_bundles:
-                    self.log.info("MESH: Mounting %d LoRA adapters.", len(lora_bundles))
-                    os.environ["VLLM_EXTRA_FLAGS"] = (
-                        f"--enable-lora --lora-modules {' '.join(lora_bundles)}"
-                    )
-                else:
-                    self.log.info("MESH: Running standard backbone (no adapters).")
-                    os.environ["VLLM_EXTRA_FLAGS"] = ""
-            else:
-                self.log.warning(
-                    "No active deployment found for node '%s'. "
-                    "vLLM will start with default VLLM_MODEL from .env.",
-                    self.node_id,
-                )
 
         all_services = self.compose_config.get("services", {})
         requested = set(self.args.services or [])
@@ -1193,25 +963,18 @@ def docker_manager(
         False,
         "--training",
         help=(
-            "Start Sovereign Forge training stack (training-api + worker). "
-            "On first run prompts for head vs worker node configuration. "
-            "Requires NVIDIA GPU."
+            "Start the Sovereign Forge training stack "
+            "(training-api + training-worker + inference-worker). "
+            "inference-worker is the Ray HEAD node — it owns the GPU, "
+            "runs Ray Serve, and hosts the InferenceReconciler. "
+            "training-worker is a Redis/subprocess runner. "
+            "Requires NVIDIA GPU + nvidia-container-toolkit."
         ),
-    ),
-    gpu: bool = typer.Option(
-        False,
-        "--gpu",
-        help="Start both Ollama and static vLLM. Requires NVIDIA GPU.",
     ),
     ollama: bool = typer.Option(
         False,
         "--ollama",
-        help="Start Ollama inference overlay. Requires NVIDIA GPU.",
-    ),
-    vllm: bool = typer.Option(
-        False,
-        "--vllm",
-        help="Start static vLLM inference overlay. Requires NVIDIA GPU.",
+        help="Start Ollama local inference. Requires NVIDIA GPU.",
     ),
     services: Optional[List[str]] = typer.Option(None, "--services"),
     exclude: Optional[List[str]] = typer.Option(None, "--exclude", "-x"),
@@ -1242,14 +1005,12 @@ def docker_manager(
       platform-api docker-manager --mode logs --follow\n
       platform-api docker-manager --mode down_only\n
 
-    GPU INFERENCE (opt-in, requires NVIDIA GPU + nvidia-container-toolkit):\n
+    OLLAMA (opt-in, requires NVIDIA GPU + nvidia-container-toolkit):\n
       platform-api docker-manager --mode up --ollama\n
-      platform-api docker-manager --mode up --vllm\n
-      platform-api docker-manager --mode up --gpu\n
 
-    SOVEREIGN FORGE — training stack (opt-in):\n
+    SOVEREIGN FORGE — training + Ray inference (opt-in):\n
       platform-api docker-manager --mode up --training\n
-      platform-api docker-manager --mode up --gpu --training\n
+      platform-api docker-manager --mode up --training --ollama\n
 
     CONFIGURATION:\n
       platform-api docker-manager configure --set HF_TOKEN=hf_abc123\n
@@ -1265,9 +1026,7 @@ def docker_manager(
     args = SimpleNamespace(
         mode=mode,
         training=training,
-        gpu=gpu,
         ollama=ollama,
-        vllm=vllm,
         services=services or [],
         exclude=exclude or [],
         down=down,
@@ -1391,9 +1150,7 @@ def bootstrap_admin(
     args = SimpleNamespace(
         mode="up",
         training=False,
-        gpu=False,
         ollama=False,
-        vllm=False,
         services=[],
         exclude=[],
         no_cache=False,
