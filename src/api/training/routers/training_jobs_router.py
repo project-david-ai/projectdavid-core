@@ -9,13 +9,7 @@ from sqlalchemy.orm import Session
 
 from src.api.training.db.database import get_db
 from src.api.training.dependencies import get_current_user_id
-from src.api.training.services.training_service import (
-    cancel_training_job,
-    create_training_job,
-    get_training_job,
-    list_training_jobs,
-    peek_training_queue,
-)
+from src.api.training.services.training_service import TrainingService
 
 router = APIRouter()
 
@@ -31,8 +25,8 @@ def create_training_job_endpoint(
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
-    job = create_training_job(
-        db=db,
+    service = TrainingService(db)
+    job = service.create_training_job(
         user_id=user_id,
         dataset_id=payload.dataset_id,
         base_model=payload.base_model,
@@ -63,8 +57,9 @@ def list_training_jobs_endpoint(
                 status_code=422, detail=f"Invalid status value '{status}'."
             )
 
-    jobs = list_training_jobs(
-        db=db, user_id=user_id, status=status_filter, limit=limit, offset=offset
+    service = TrainingService(db)
+    jobs = service.list_training_jobs(
+        user_id=user_id, status=status_filter, limit=limit, offset=offset
     )
     return ValidationInterface.TrainingJobList(
         data=[ValidationInterface.TrainingJobRead.model_validate(j) for j in jobs],
@@ -82,7 +77,8 @@ def get_training_job_endpoint(
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
-    job = get_training_job(db=db, job_id=job_id, user_id=user_id)
+    service = TrainingService(db)
+    job = service.get_training_job(job_id=job_id, user_id=user_id)
     return ValidationInterface.TrainingJobRead.model_validate(job)
 
 
@@ -95,18 +91,21 @@ def cancel_training_job_endpoint(
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
-    return cancel_training_job(db=db, job_id=job_id, user_id=user_id)
+    service = TrainingService(db)
+    return service.cancel_training_job(job_id=job_id, user_id=user_id)
 
 
 @router.get(
     "/queue/peek",
-    response_model=ValidationInterface.TrainingQueueList,  # Use the new schema
+    response_model=ValidationInterface.TrainingQueueList,
     summary="Diagnostic: See pending jobs in the Redis queue for this user",
 )
 def peek_queue_endpoint(
     user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
 ):
-    items = peek_training_queue(user_id=user_id)
+    service = TrainingService(db)
+    items = service.peek_training_queue(user_id=user_id)
     return ValidationInterface.TrainingQueueList(
         total_in_queue=len(items),
         data=[ValidationInterface.TrainingQueueItem(**item) for item in items],

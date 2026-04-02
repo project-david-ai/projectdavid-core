@@ -53,7 +53,7 @@ class InferenceResolver:
             or None if no active deployment is found.
         """
         # Strip provider prefix if present (e.g. "vllm/vllm_dep_..." → "vllm_dep_...")
-        target_id = model_tag.replace("vllm/", "")
+        target_id = model_tag.replace("vllm/", "").replace("vllm_dep_", "dep_")
 
         deployment = (
             db.query(InferenceDeployment)
