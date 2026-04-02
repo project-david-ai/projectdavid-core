@@ -1,3 +1,22 @@
+# [1.30.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.29.1...v1.30.0) (2026-04-02)
+
+
+### Bug Fixes
+
+* **inference:** complete Sovereign Forge end-to-end routing chain ([db53110](https://github.com/project-david-ai/projectdavid-core/commit/db531109423a95acee8dc6a6d9e7e6d9ab4c1e5e))
+* **inference:** complete Sovereign Forge routing — resolver ID lookup, URL passthrough, VLLMDeployment SSE streaming ([a522cf8](https://github.com/project-david-ai/projectdavid-core/commit/a522cf889603fe5fffe9fa3fd38ecf8b11af0601))
+* **inference:** correct deployment ID resolution for Sovereign Forge models ([3b42e5d](https://github.com/project-david-ai/projectdavid-core/commit/3b42e5d348ac2dd838a9585a08b4f6e6c422713d))
+* remove node_id writes from activate_model and deactivate_all_models to avoid compute_nodes FK constraint ([32caca2](https://github.com/project-david-ai/projectdavid-core/commit/32caca27d0b472033b4b2d8f35cb78ddf3bd9d41))
+
+
+### Features
+
+* **inference:** expand CHAT_TEMPLATE_REGISTRY to all major open-weight model families ([2292846](https://github.com/project-david-ai/projectdavid-core/commit/22928466fc96b94e7f9a1ec0f642be47871a6c76))
+* resolve bm_... ID to HF endpoint in vLLM spawn, admin bypass for model activation ([8c5f7ad](https://github.com/project-david-ai/projectdavid-core/commit/8c5f7ad59069a30ef39f21a95e8c27d4ee45e410))
+* resolve HF path to bm_... ID in activate_model via RegistryService, make user_id optional for admin bypass ([89a3e78](https://github.com/project-david-ai/projectdavid-core/commit/89a3e78b6423ee2563374d8fdf314d4932f5d37f))
+* sovereign forge activation pipeline — ModelRegistryService class, bm_... ID resolution, host path volume mounts for vLLM, admin bypass for user-scoped models, capacity guard on activation ([aa99ff7](https://github.com/project-david-ai/projectdavid-core/commit/aa99ff796e13776546dbd1ea0e55b9b54776c3b3))
+* **sovereign-forge:** inference pipeline overhaul — vLLM OOM fix, activation/deactivation stress tests, router bug fixes, Ray cluster integration, and admin docs ([c9f4a7c](https://github.com/project-david-ai/projectdavid-core/commit/c9f4a7c2b56c67fec3efe262f76e22c82bb02bfa))
+
 ## [1.29.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.29.0...v1.29.1) (2026-03-31)
 
 
