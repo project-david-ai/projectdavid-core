@@ -12,15 +12,9 @@ For MULTIMODAL requests (any message has list content with image blocks)
 the pipeline automatically upgrades to:
     vLLM /v1/chat/completions  (messages array, vLLM handles the template)
 
-For SOVEREIGN FORGE deployments (Ray Serve managed via InferenceReconciler):
-    VLLMDeployment route directly  (full URL from internal_hostname, no /v1/... appended)
-    Detected by the presence of /vllm_dep_/ in the resolved base URL.
-
-This is required because /v1/completions is a text-only endpoint —
-serialising base64 image arrays as JSON strings into a prompt string
-tokenises them as raw text (thousands of tokens) and loses the vision
-signal entirely.  /v1/chat/completions passes the typed content blocks
-natively to the model's multimodal processor.
+For SOVEREIGN FORGE deployments (Ray Serve, URL contains /vllm_dep_):
+    POST directly to the deployment URL — no path appended.
+    The deployment URL IS the endpoint.
 """
 
 from __future__ import annotations
@@ -36,9 +30,8 @@ from projectdavid_common.utilities.logging_service import LoggingUtility
 load_dotenv()
 LOG = LoggingUtility()
 
-# URL fragment written by InferenceReconciler into internal_hostname for all
-# Ray Serve deployments. Its presence in the resolved base URL signals that
-# the request must go directly to the deployment route rather than /v1/completions.
+# Marker that identifies a Sovereign Forge / Ray Serve deployment URL.
+# When present in resolved_base, POST directly to the URL — no path appended.
 _SOVEREIGN_FORGE_URL_MARKER = "/vllm_dep_"
 
 
@@ -246,9 +239,9 @@ class VLLMRawStream:
     Mixin / base class that provides _stream_vllm_raw().
 
     Routing logic (in priority order):
-        1. Sovereign Forge  → deployment URL directly   (Ray Serve VLLMDeployment, SSE)
-        2. Multimodal       → /v1/chat/completions       (messages array, vLLM native)
-        3. Text-only        → /v1/completions            (rendered prompt string)
+        1. Sovereign Forge (URL contains /vllm_dep_) → POST directly to deployment URL
+        2. Multimodal      → /v1/chat/completions
+        3. Text-only       → /v1/completions
     """
 
     VLLM_DEFAULT_BASE_URL: str = os.getenv("VLLM_BASE_URL", "http://localhost:8000")
@@ -270,23 +263,21 @@ class VLLMRawStream:
 
         resolved_base = (base_url or self.VLLM_DEFAULT_BASE_URL).rstrip("/")
 
-        # ── Sovereign Forge: Ray Serve deployment ─────────────────────────
-        # InferenceReconciler writes internal_hostname as the full deployment URL:
-        #   http://inference_worker:8000/vllm_dep_{id}
-        # These deployments have no /v1/... sub-path — they must be called
-        # directly at the route prefix with stream=True in the POST body.
+        # ── Sovereign Forge routing (Ray Serve deployment URL) ────────────
+        # When the resolved URL contains /vllm_dep_, it IS the endpoint —
+        # post directly without appending any path.
         if _SOVEREIGN_FORGE_URL_MARKER in resolved_base:
             async for chunk in self._stream_sovereign_forge(
                 messages=messages,
                 model=model,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                endpoint=resolved_base,
+                base_url=resolved_base,
             ):
                 yield chunk
             return
 
-        # ── Standard vLLM: multimodal vs text-only ────────────────────────
+        # ── Route decision ────────────────────────────────────────────────
         multimodal = _is_multimodal(messages)
 
         if multimodal:
@@ -312,7 +303,7 @@ class VLLMRawStream:
             ):
                 yield chunk
 
-    # ── SOVEREIGN FORGE path: Ray Serve VLLMDeployment ───────────────────────
+    # ── SOVEREIGN FORGE path: POST directly to Ray Serve deployment URL ───────
 
     async def _stream_sovereign_forge(
         self,
@@ -321,34 +312,34 @@ class VLLMRawStream:
         model: str,
         temperature: float,
         max_tokens: int,
-        endpoint: str,
+        base_url: str,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
-        Stream from a Sovereign Forge Ray Serve deployment.
+        Post directly to a Ray Serve deployment URL.
 
-        The endpoint is the complete deployment URL written by InferenceReconciler:
-            http://inference_worker:8000/vllm_dep_{id}
-
-        VLLMDeployment.__call__ accepts this POST body and returns SSE in the
-        choices[0].delta.content format when stream=True, which is the same
-        shape _http_stream_chat expects. No URL rewriting needed.
+        The deployment URL IS the endpoint — no path appended.
+        Ray Serve routes the request to the VLLMDeployment.__call__ handler
+        which returns SSE deltas in completions format.
         """
+        prompt = render_prompt(model_id=model, messages=messages)
+
         payload: Dict[str, Any] = {
             "model": model,
-            "messages": messages,
+            "prompt": prompt,
             "max_tokens": max_tokens,
             "temperature": temperature,
             "stream": True,
+            "stream_options": {"include_usage": False},
         }
 
         LOG.info(
             "VLLMRawStream ▸ Sovereign Forge POST %s | model=%s | max_tokens=%d",
-            endpoint,
+            base_url,
             model,
             max_tokens,
         )
 
-        async for chunk in self._http_stream_chat(endpoint, payload):
+        async for chunk in self._http_stream(base_url, payload):
             yield chunk
 
     # ── TEXT-ONLY path: /v1/completions ──────────────────────────────────────
@@ -543,8 +534,8 @@ class VLLMRawStream:
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         POST `payload` to `endpoint`, stream SSE lines.
-        /v1/chat/completions and VLLMDeployment both return choices[0].delta.content
-        — pass through unchanged so DeltaNormalizer sees the same shape.
+        /v1/chat/completions already returns choices[0].delta.content —
+        pass through unchanged so DeltaNormalizer sees the same shape.
         """
         try:
             async with httpx.AsyncClient(timeout=self.VLLM_REQUEST_TIMEOUT) as client:

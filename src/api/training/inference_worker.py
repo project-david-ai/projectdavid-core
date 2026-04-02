@@ -112,7 +112,10 @@ class VLLMDeployment:
     Supports:
       - Base model inference
       - LoRA adapter inference (via enable_lora + lora_request)
-      - OpenAI-compatible chat completions API
+      - Sovereign Forge raw completions API
+
+    SSE chunks are returned in /v1/completions format (choices[0].text)
+    so _http_stream in VLLMRawStream can consume them without adaptation.
 
     gpu_memory_utilization defaults to 0.50 (safe for 8 GiB cards).
     Pass a higher value only when you have profiled headroom on your
@@ -167,11 +170,15 @@ class VLLMDeployment:
 
     async def __call__(self, request):
         """
-        Handle OpenAI-compatible chat completion requests.
+        Handle raw completions requests from the Sovereign Forge path.
 
-        Supports both streaming (SSE) and non-streaming modes.
-        Pass stream=true in the request body for SSE — required when called
-        from VLLMRawStream's Sovereign Forge path.
+        Accepts either:
+          - "prompt"   : pre-rendered prompt string (from _stream_sovereign_forge)
+          - "messages" : ChatML messages array (fallback for direct callers)
+
+        SSE chunks are returned in /v1/completions format:
+            choices[0].text   ← delta text
+        This matches what _http_stream in VLLMRawStream expects.
 
         LoRA lookup: the model field may be either the fine_tuned_model_id
         (ftm_...) or the deployment ID (vllm_dep_...). If no matching LoRA
@@ -191,7 +198,9 @@ class VLLMDeployment:
         top_p = body.get("top_p", 0.9)
         stream = body.get("stream", False)
 
-        prompt = self._format_messages(messages)
+        # Accept pre-rendered prompt string or fall back to messages rendering
+        prompt = body.get("prompt") or self._format_messages(messages)
+
         sampling_params = SamplingParams(
             temperature=temperature,
             top_p=top_p,
@@ -214,6 +223,8 @@ class VLLMDeployment:
 
         if stream:
             # ── SSE streaming path ───────────────────────────────────────
+            # Returns /v1/completions format: choices[0].text
+            # Consumed by _http_stream in VLLMRawStream.
             async def _event_stream():
                 prev_text = ""
                 async for output in self.engine.generate(
@@ -230,7 +241,7 @@ class VLLMDeployment:
                             chunk = {
                                 "choices": [
                                     {
-                                        "delta": {"content": delta},
+                                        "text": delta,
                                         "finish_reason": None,
                                     }
                                 ]
@@ -238,9 +249,7 @@ class VLLMDeployment:
                             yield f"data: {_json.dumps(chunk)}\n\n"
 
                 # Final chunk signals end of stream
-                final = {
-                    "choices": [{"delta": {"content": ""}, "finish_reason": "stop"}]
-                }
+                final = {"choices": [{"text": "", "finish_reason": "stop"}]}
                 yield f"data: {_json.dumps(final)}\n\n"
                 yield "data: [DONE]\n\n"
 
@@ -259,12 +268,12 @@ class VLLMDeployment:
 
         return {
             "id": request_id,
-            "object": "chat.completion",
+            "object": "text_completion",
             "model": model_name,
             "choices": [
                 {
                     "index": 0,
-                    "message": {"role": "assistant", "content": output_text},
+                    "text": output_text,
                     "finish_reason": "stop",
                 }
             ],
@@ -276,7 +285,7 @@ class VLLMDeployment:
         }
 
     def _format_messages(self, messages: list) -> str:
-        """Format ChatML messages into a prompt string."""
+        """Format ChatML messages into a prompt string (fallback path)."""
         parts = []
         for msg in messages:
             role = msg.get("role", "user")
