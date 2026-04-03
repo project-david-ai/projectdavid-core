@@ -1,3 +1,10 @@
+## [1.30.2](https://github.com/project-david-ai/projectdavid-core/compare/v1.30.1...v1.30.2) (2026-04-03)
+
+
+### Bug Fixes
+
+* make batfish_snapshots index drops defensive in migration 02e27dca8262 ([abc0887](https://github.com/project-david-ai/projectdavid-core/commit/abc0887f580dba8893e7e3b06a6893ae03ab7cb8))
+
 ## [1.30.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.30.0...v1.30.1) (2026-04-03)
 
 
