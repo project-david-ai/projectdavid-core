@@ -1,3 +1,10 @@
+## [1.30.4](https://github.com/project-david-ai/projectdavid-core/compare/v1.30.3...v1.30.4) (2026-04-03)
+
+
+### Bug Fixes
+
+* make both migrations fully idempotent using safe_ddl utilities ([cf4baa2](https://github.com/project-david-ai/projectdavid-core/commit/cf4baa2024d7f442060924289900f6dbe00c32f6))
+
 ## [1.30.3](https://github.com/project-david-ai/projectdavid-core/compare/v1.30.2...v1.30.3) (2026-04-03)
 
 
