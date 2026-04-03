@@ -812,9 +812,11 @@ class DockerManager:
         self._run_command(
             ["docker", "compose"]
             + self._compose_files()
+            + ["--profile", "training", "--profile", "ai"]
             + ["down", "--volumes", "--remove-orphans"],
             check=False,
         )
+
         self._run_command(
             ["docker", "system", "prune", "-a", "--volumes", "--force"], check=True
         )
