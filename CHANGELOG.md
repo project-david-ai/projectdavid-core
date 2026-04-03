@@ -1,3 +1,11 @@
+## [1.30.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.30.0...v1.30.1) (2026-04-03)
+
+
+### Bug Fixes
+
+* **docker-manager:** include all profiles in nuke to ensure training and ai services are torn down ([4e24913](https://github.com/project-david-ai/projectdavid-core/commit/4e249139df493d815aea76bd3a2e45f9c9464bb3))
+* **renderers:** add missing json import to gpt_oss and any other renderer files ([d50146a](https://github.com/project-david-ai/projectdavid-core/commit/d50146ac31d6cada8382a8b9e59386b72535ad9e))
+
 # [1.30.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.29.1...v1.30.0) (2026-04-02)
 
 
