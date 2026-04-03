@@ -12,61 +12,76 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import mysql
 
+from migrations.utils.safe_ddl import (
+    add_column_if_missing,
+    drop_fk_if_exists,
+    drop_index_if_exists,
+    drop_table_if_exists,
+    has_table,
+    safe_alter_column,
+)
+
 # revision identifiers, used by Alembic.
 revision: str = "02e27dca8262"
 down_revision: Union[str, None] = "db67202be996"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
-def _drop_index_if_exists(bind, index_name: str, table_name: str) -> None:
-    """
-    Drop a MySQL index only if it exists.
-
-    MySQL 8.0 does not support DROP INDEX IF EXISTS (MariaDB only).
-    We query information_schema.statistics instead.
-    """
-    result = bind.execute(
-        sa.text(
-            "SELECT COUNT(*) FROM information_schema.statistics "
-            "WHERE table_schema = DATABASE() "
-            "AND table_name = :table "
-            "AND index_name = :index"
-        ),
-        {"table": table_name, "index": index_name},
-    ).scalar()
-    if result:
-        bind.execute(sa.text(f"DROP INDEX `{index_name}` ON `{table_name}`"))
+# ---------------------------------------------------------------------------
+# Shared ENUM definition
+# ---------------------------------------------------------------------------
+_STATUS_ENUM = mysql.ENUM(
+    "deleted",
+    "active",
+    "queued",
+    "in_progress",
+    "pending_action",
+    "completed",
+    "failed",
+    "cancelling",
+    "cancelled",
+    "pending",
+    "processing",
+    "expired",
+    "retrying",
+    "offline",
+)
 
 
 def upgrade() -> None:
     """Upgrade schema."""
-    # ---------------------------------------------------------------------------
-    # Drop batfish_snapshots indexes defensively before dropping the table.
-    # MySQL 8.0 does not support DROP INDEX IF EXISTS (MariaDB only).
-    # We check information_schema.statistics first to avoid OperationalError
-    # 1091 on fresh installs where indexes may not exist.
-    # ---------------------------------------------------------------------------
-    bind = op.get_bind()
-    for index_name in [
-        "idx_batfish_status",
-        "idx_batfish_user_id",
-        "ix_batfish_snapshots_id",
-        "ix_batfish_snapshots_snapshot_key",
-        "ix_batfish_snapshots_user_id",
-        "uq_batfish_user_snapshot_name",
-    ]:
-        _drop_index_if_exists(bind, index_name, "batfish_snapshots")
 
-    op.drop_table("batfish_snapshots")
+    # -------------------------------------------------------------------------
+    # 1. Remove batfish_snapshots
+    #    Order matters: FK → indexes → table
+    # -------------------------------------------------------------------------
+    if has_table("batfish_snapshots"):
+        drop_fk_if_exists("batfish_snapshots", "batfish_snapshots_ibfk_1")
+        for idx in [
+            "uq_batfish_user_snapshot_name",
+            "idx_batfish_status",
+            "idx_batfish_user_id",
+            "ix_batfish_snapshots_id",
+            "ix_batfish_snapshots_snapshot_key",
+            "ix_batfish_snapshots_user_id",
+        ]:
+            drop_index_if_exists(idx, "batfish_snapshots")
+        drop_table_if_exists("batfish_snapshots")
 
-    op.alter_column(
+    # -------------------------------------------------------------------------
+    # 2. api_keys
+    # -------------------------------------------------------------------------
+    safe_alter_column(
         "api_keys",
         "is_active",
         existing_type=mysql.TINYINT(display_width=1),
         nullable=False,
     )
-    op.add_column(
+
+    # -------------------------------------------------------------------------
+    # 3. assistants
+    # -------------------------------------------------------------------------
+    add_column_if_missing(
         "assistants",
         sa.Column(
             "max_tokens",
@@ -76,21 +91,21 @@ def upgrade() -> None:
             comment="Maximum tokens to generate per inference pass. Overrides provider defaults at runtime.",
         ),
     )
-    op.alter_column(
+    safe_alter_column(
         "assistants",
         "top_p",
         existing_type=mysql.INTEGER(),
         type_=sa.Float(),
         existing_nullable=True,
     )
-    op.alter_column(
+    safe_alter_column(
         "assistants",
         "temperature",
         existing_type=mysql.INTEGER(),
         type_=sa.Float(),
         existing_nullable=True,
     )
-    op.alter_column(
+    safe_alter_column(
         "assistants",
         "agent_mode",
         existing_type=mysql.TINYINT(display_width=1),
@@ -98,7 +113,7 @@ def upgrade() -> None:
         existing_nullable=False,
         existing_server_default=sa.text("'0'"),
     )
-    op.alter_column(
+    safe_alter_column(
         "assistants",
         "web_access",
         existing_type=mysql.TINYINT(display_width=1),
@@ -106,7 +121,7 @@ def upgrade() -> None:
         existing_nullable=False,
         existing_server_default=sa.text("'0'"),
     )
-    op.alter_column(
+    safe_alter_column(
         "assistants",
         "deep_research",
         existing_type=mysql.TINYINT(display_width=1),
@@ -114,7 +129,7 @@ def upgrade() -> None:
         existing_nullable=False,
         existing_server_default=sa.text("'0'"),
     )
-    op.alter_column(
+    safe_alter_column(
         "assistants",
         "engineer",
         existing_type=mysql.TINYINT(display_width=1),
@@ -122,7 +137,7 @@ def upgrade() -> None:
         existing_nullable=False,
         existing_server_default=sa.text("'0'"),
     )
-    op.alter_column(
+    safe_alter_column(
         "assistants",
         "decision_telemetry",
         existing_type=mysql.TINYINT(display_width=1),
@@ -130,69 +145,55 @@ def upgrade() -> None:
         existing_nullable=False,
         existing_server_default=sa.text("'0'"),
     )
-    op.alter_column(
+
+    # -------------------------------------------------------------------------
+    # 4. datasets
+    # -------------------------------------------------------------------------
+    safe_alter_column(
         "datasets",
         "status",
-        existing_type=mysql.ENUM(
-            "deleted",
-            "active",
-            "queued",
-            "in_progress",
-            "pending_action",
-            "completed",
-            "failed",
-            "cancelling",
-            "cancelled",
-            "pending",
-            "processing",
-            "expired",
-            "retrying",
-            "offline",
-        ),
+        existing_type=_STATUS_ENUM,
         nullable=False,
     )
-    op.alter_column(
+
+    # -------------------------------------------------------------------------
+    # 5. file_storage
+    # -------------------------------------------------------------------------
+    safe_alter_column(
         "file_storage",
         "is_primary",
         existing_type=mysql.TINYINT(display_width=1),
         comment="Indicates if this is the primary storage location",
         existing_nullable=True,
     )
-    op.alter_column(
+
+    # -------------------------------------------------------------------------
+    # 6. fine_tuned_models
+    # -------------------------------------------------------------------------
+    safe_alter_column(
         "fine_tuned_models",
         "is_active",
         existing_type=mysql.TINYINT(display_width=1),
         nullable=False,
     )
-    op.alter_column(
+    safe_alter_column(
         "fine_tuned_models",
         "status",
-        existing_type=mysql.ENUM(
-            "deleted",
-            "active",
-            "queued",
-            "in_progress",
-            "pending_action",
-            "completed",
-            "failed",
-            "cancelling",
-            "cancelled",
-            "pending",
-            "processing",
-            "expired",
-            "retrying",
-            "offline",
-        ),
+        existing_type=_STATUS_ENUM,
         nullable=False,
     )
-    op.alter_column(
+
+    # -------------------------------------------------------------------------
+    # 7. messages
+    # -------------------------------------------------------------------------
+    safe_alter_column(
         "messages",
         "content",
         existing_type=mysql.LONGTEXT(),
         type_=sa.Text(length=4294967295),
         nullable=False,
     )
-    op.alter_column(
+    safe_alter_column(
         "messages",
         "reasoning",
         existing_type=mysql.LONGTEXT(),
@@ -200,63 +201,45 @@ def upgrade() -> None:
         comment="Stores the internal 'thinking' or reasoning tokens from the model.",
         existing_nullable=True,
     )
-    op.alter_column(
+
+    # -------------------------------------------------------------------------
+    # 8. runs
+    # -------------------------------------------------------------------------
+    safe_alter_column(
         "runs",
         "status",
-        existing_type=mysql.ENUM(
-            "deleted",
-            "active",
-            "queued",
-            "in_progress",
-            "pending_action",
-            "completed",
-            "failed",
-            "cancelling",
-            "cancelled",
-            "pending",
-            "processing",
-            "expired",
-            "retrying",
-            "offline",
-        ),
+        existing_type=_STATUS_ENUM,
         nullable=False,
     )
-    op.alter_column(
+    safe_alter_column(
         "runs",
         "temperature",
         existing_type=mysql.INTEGER(),
         type_=sa.Float(),
         existing_nullable=True,
     )
-    op.alter_column(
+    safe_alter_column(
         "runs",
         "top_p",
         existing_type=sa.Float(),
         type_=mysql.INTEGER(),
         existing_nullable=True,
     )
-    op.alter_column(
+
+    # -------------------------------------------------------------------------
+    # 9. training_jobs
+    # -------------------------------------------------------------------------
+    safe_alter_column(
         "training_jobs",
         "status",
-        existing_type=mysql.ENUM(
-            "deleted",
-            "active",
-            "queued",
-            "in_progress",
-            "pending_action",
-            "completed",
-            "failed",
-            "cancelling",
-            "cancelled",
-            "pending",
-            "processing",
-            "expired",
-            "retrying",
-            "offline",
-        ),
+        existing_type=_STATUS_ENUM,
         nullable=False,
     )
-    op.alter_column(
+
+    # -------------------------------------------------------------------------
+    # 10. users
+    # -------------------------------------------------------------------------
+    safe_alter_column(
         "users",
         "is_admin",
         existing_type=mysql.TINYINT(display_width=1),
@@ -264,62 +247,34 @@ def upgrade() -> None:
         existing_nullable=False,
         existing_server_default=sa.text("'0'"),
     )
-    op.alter_column(
+    safe_alter_column(
         "users",
         "email_verified",
         existing_type=mysql.TINYINT(display_width=1),
         comment="Whether the email address has been verified",
         existing_nullable=True,
     )
-    op.alter_column(
+
+    # -------------------------------------------------------------------------
+    # 11. vector_stores
+    # -------------------------------------------------------------------------
+    safe_alter_column(
         "vector_stores",
         "status",
-        existing_type=mysql.ENUM(
-            "deleted",
-            "active",
-            "queued",
-            "in_progress",
-            "pending_action",
-            "completed",
-            "failed",
-            "cancelling",
-            "cancelled",
-            "pending",
-            "processing",
-            "expired",
-            "retrying",
-            "offline",
-        ),
+        existing_type=_STATUS_ENUM,
         nullable=False,
     )
-    # ### end Alembic commands ###
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    # ### commands auto generated by Alembic - please adjust! ###
-    op.alter_column(
+    safe_alter_column(
         "vector_stores",
         "status",
-        existing_type=mysql.ENUM(
-            "deleted",
-            "active",
-            "queued",
-            "in_progress",
-            "pending_action",
-            "completed",
-            "failed",
-            "cancelling",
-            "cancelled",
-            "pending",
-            "processing",
-            "expired",
-            "retrying",
-            "offline",
-        ),
+        existing_type=_STATUS_ENUM,
         nullable=True,
     )
-    op.alter_column(
+    safe_alter_column(
         "users",
         "email_verified",
         existing_type=mysql.TINYINT(display_width=1),
@@ -327,7 +282,7 @@ def downgrade() -> None:
         existing_comment="Whether the email address has been verified",
         existing_nullable=True,
     )
-    op.alter_column(
+    safe_alter_column(
         "users",
         "is_admin",
         existing_type=mysql.TINYINT(display_width=1),
@@ -336,63 +291,33 @@ def downgrade() -> None:
         existing_nullable=False,
         existing_server_default=sa.text("'0'"),
     )
-    op.alter_column(
+    safe_alter_column(
         "training_jobs",
         "status",
-        existing_type=mysql.ENUM(
-            "deleted",
-            "active",
-            "queued",
-            "in_progress",
-            "pending_action",
-            "completed",
-            "failed",
-            "cancelling",
-            "cancelled",
-            "pending",
-            "processing",
-            "expired",
-            "retrying",
-            "offline",
-        ),
+        existing_type=_STATUS_ENUM,
         nullable=True,
     )
-    op.alter_column(
+    safe_alter_column(
         "runs",
         "top_p",
         existing_type=sa.Float(),
         type_=mysql.INTEGER(),
         existing_nullable=True,
     )
-    op.alter_column(
+    safe_alter_column(
         "runs",
         "temperature",
         existing_type=sa.Float(),
         type_=mysql.INTEGER(),
         existing_nullable=True,
     )
-    op.alter_column(
+    safe_alter_column(
         "runs",
         "status",
-        existing_type=mysql.ENUM(
-            "deleted",
-            "active",
-            "queued",
-            "in_progress",
-            "pending_action",
-            "completed",
-            "failed",
-            "cancelling",
-            "cancelled",
-            "pending",
-            "processing",
-            "expired",
-            "retrying",
-            "offline",
-        ),
+        existing_type=_STATUS_ENUM,
         nullable=True,
     )
-    op.alter_column(
+    safe_alter_column(
         "messages",
         "reasoning",
         existing_type=sa.Text(length=4294967295),
@@ -401,41 +326,26 @@ def downgrade() -> None:
         existing_comment="Stores the internal 'thinking' or reasoning tokens from the model.",
         existing_nullable=True,
     )
-    op.alter_column(
+    safe_alter_column(
         "messages",
         "content",
         existing_type=sa.Text(length=4294967295),
         type_=mysql.LONGTEXT(),
         nullable=True,
     )
-    op.alter_column(
+    safe_alter_column(
         "fine_tuned_models",
         "status",
-        existing_type=mysql.ENUM(
-            "deleted",
-            "active",
-            "queued",
-            "in_progress",
-            "pending_action",
-            "completed",
-            "failed",
-            "cancelling",
-            "cancelled",
-            "pending",
-            "processing",
-            "expired",
-            "retrying",
-            "offline",
-        ),
+        existing_type=_STATUS_ENUM,
         nullable=True,
     )
-    op.alter_column(
+    safe_alter_column(
         "fine_tuned_models",
         "is_active",
         existing_type=mysql.TINYINT(display_width=1),
         nullable=True,
     )
-    op.alter_column(
+    safe_alter_column(
         "file_storage",
         "is_primary",
         existing_type=mysql.TINYINT(display_width=1),
@@ -443,28 +353,13 @@ def downgrade() -> None:
         existing_comment="Indicates if this is the primary storage location",
         existing_nullable=True,
     )
-    op.alter_column(
+    safe_alter_column(
         "datasets",
         "status",
-        existing_type=mysql.ENUM(
-            "deleted",
-            "active",
-            "queued",
-            "in_progress",
-            "pending_action",
-            "completed",
-            "failed",
-            "cancelling",
-            "cancelled",
-            "pending",
-            "processing",
-            "expired",
-            "retrying",
-            "offline",
-        ),
+        existing_type=_STATUS_ENUM,
         nullable=True,
     )
-    op.alter_column(
+    safe_alter_column(
         "assistants",
         "decision_telemetry",
         existing_type=mysql.TINYINT(display_width=1),
@@ -473,7 +368,7 @@ def downgrade() -> None:
         existing_nullable=False,
         existing_server_default=sa.text("'0'"),
     )
-    op.alter_column(
+    safe_alter_column(
         "assistants",
         "engineer",
         existing_type=mysql.TINYINT(display_width=1),
@@ -482,7 +377,7 @@ def downgrade() -> None:
         existing_nullable=False,
         existing_server_default=sa.text("'0'"),
     )
-    op.alter_column(
+    safe_alter_column(
         "assistants",
         "deep_research",
         existing_type=mysql.TINYINT(display_width=1),
@@ -491,7 +386,7 @@ def downgrade() -> None:
         existing_nullable=False,
         existing_server_default=sa.text("'0'"),
     )
-    op.alter_column(
+    safe_alter_column(
         "assistants",
         "web_access",
         existing_type=mysql.TINYINT(display_width=1),
@@ -500,7 +395,7 @@ def downgrade() -> None:
         existing_nullable=False,
         existing_server_default=sa.text("'0'"),
     )
-    op.alter_column(
+    safe_alter_column(
         "assistants",
         "agent_mode",
         existing_type=mysql.TINYINT(display_width=1),
@@ -509,14 +404,14 @@ def downgrade() -> None:
         existing_nullable=False,
         existing_server_default=sa.text("'0'"),
     )
-    op.alter_column(
+    safe_alter_column(
         "assistants",
         "temperature",
         existing_type=sa.Float(),
         type_=mysql.INTEGER(),
         existing_nullable=True,
     )
-    op.alter_column(
+    safe_alter_column(
         "assistants",
         "top_p",
         existing_type=sa.Float(),
@@ -524,7 +419,7 @@ def downgrade() -> None:
         existing_nullable=True,
     )
     op.drop_column("assistants", "max_tokens")
-    op.alter_column(
+    safe_alter_column(
         "api_keys",
         "is_active",
         existing_type=mysql.TINYINT(display_width=1),
@@ -559,26 +454,7 @@ def downgrade() -> None:
             nullable=False,
             comment="List of hostnames ingested into this snapshot",
         ),
-        sa.Column(
-            "status",
-            mysql.ENUM(
-                "deleted",
-                "active",
-                "queued",
-                "in_progress",
-                "pending_action",
-                "completed",
-                "failed",
-                "cancelling",
-                "cancelled",
-                "pending",
-                "processing",
-                "expired",
-                "retrying",
-                "offline",
-            ),
-            nullable=True,
-        ),
+        sa.Column("status", _STATUS_ENUM, nullable=True),
         sa.Column("error_message", mysql.TEXT(), nullable=True),
         sa.Column("created_at", mysql.BIGINT(), autoincrement=False, nullable=False),
         sa.Column("updated_at", mysql.BIGINT(), autoincrement=False, nullable=False),
@@ -618,4 +494,3 @@ def downgrade() -> None:
         "idx_batfish_user_id", "batfish_snapshots", ["user_id"], unique=False
     )
     op.create_index("idx_batfish_status", "batfish_snapshots", ["status"], unique=False)
-    # ### end Alembic commands ###
