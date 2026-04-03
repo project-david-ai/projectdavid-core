@@ -19,23 +19,45 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _drop_index_if_exists(bind, index_name: str, table_name: str) -> None:
+    """
+    Drop a MySQL index only if it exists.
+
+    MySQL 8.0 does not support DROP INDEX IF EXISTS (MariaDB only).
+    We query information_schema.statistics instead.
+    """
+    result = bind.execute(
+        sa.text(
+            "SELECT COUNT(*) FROM information_schema.statistics "
+            "WHERE table_schema = DATABASE() "
+            "AND table_name = :table "
+            "AND index_name = :index"
+        ),
+        {"table": table_name, "index": index_name},
+    ).scalar()
+    if result:
+        bind.execute(sa.text(f"DROP INDEX `{index_name}` ON `{table_name}`"))
+
+
 def upgrade() -> None:
     """Upgrade schema."""
     # ---------------------------------------------------------------------------
     # Drop batfish_snapshots indexes defensively before dropping the table.
-    # Using IF EXISTS guards against fresh-database scenarios where the baseline
-    # migration created the table but index state may differ from expectations.
+    # MySQL 8.0 does not support DROP INDEX IF EXISTS (MariaDB only).
+    # We check information_schema.statistics first to avoid OperationalError
+    # 1091 on fresh installs where indexes may not exist.
     # ---------------------------------------------------------------------------
-    op.execute("DROP INDEX IF EXISTS idx_batfish_status ON batfish_snapshots")
-    op.execute("DROP INDEX IF EXISTS idx_batfish_user_id ON batfish_snapshots")
-    op.execute("DROP INDEX IF EXISTS ix_batfish_snapshots_id ON batfish_snapshots")
-    op.execute(
-        "DROP INDEX IF EXISTS ix_batfish_snapshots_snapshot_key ON batfish_snapshots"
-    )
-    op.execute("DROP INDEX IF EXISTS ix_batfish_snapshots_user_id ON batfish_snapshots")
-    op.execute(
-        "DROP INDEX IF EXISTS uq_batfish_user_snapshot_name ON batfish_snapshots"
-    )
+    bind = op.get_bind()
+    for index_name in [
+        "idx_batfish_status",
+        "idx_batfish_user_id",
+        "ix_batfish_snapshots_id",
+        "ix_batfish_snapshots_snapshot_key",
+        "ix_batfish_snapshots_user_id",
+        "uq_batfish_user_snapshot_name",
+    ]:
+        _drop_index_if_exists(bind, index_name, "batfish_snapshots")
+
     op.drop_table("batfish_snapshots")
 
     op.alter_column(
