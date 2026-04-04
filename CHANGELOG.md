@@ -1,3 +1,10 @@
+## [1.30.6](https://github.com/project-david-ai/projectdavid-core/compare/v1.30.5...v1.30.6) (2026-04-04)
+
+
+### Bug Fixes
+
+* **deps:** bump projectdavid-common to 0.64.1 and projectdavid SDK to 1.96.5 Update dependency versions in pursuit of resolving check_admin_status ([5d7fd1f](https://github.com/project-david-ai/projectdavid-core/commit/5d7fd1fe7c21cab5f07ecb30b6b03d0fd262427e))
+
 ## [1.30.5](https://github.com/project-david-ai/projectdavid-core/compare/v1.30.4...v1.30.5) (2026-04-04)
 
 
