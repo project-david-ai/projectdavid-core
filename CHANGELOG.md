@@ -1,3 +1,10 @@
+## [1.30.7](https://github.com/project-david-ai/projectdavid-core/compare/v1.30.6...v1.30.7) (2026-04-04)
+
+
+### Bug Fixes
+
+* **training:** make tokenizer pad/eos token config model-aware ([4d5a932](https://github.com/project-david-ai/projectdavid-core/commit/4d5a932ba46d007d5519fcd80d746b7a8c282dc9))
+
 ## [1.30.6](https://github.com/project-david-ai/projectdavid-core/compare/v1.30.5...v1.30.6) (2026-04-04)
 
 
