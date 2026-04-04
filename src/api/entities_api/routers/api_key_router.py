@@ -11,7 +11,7 @@ from src.api.entities_api.dependencies import get_api_key, get_db
 from src.api.entities_api.models.models import ApiKey
 from src.api.entities_api.models.models import ApiKey as ApiKeyModel
 from src.api.entities_api.services.api_key_service import ApiKeyService
-from src.api.entities_api.utils.check_admin_status import _is_admin
+from src.api.entities_api.utilities.check_admin_status import _is_admin
 
 auth_router = APIRouter(tags=["API Keys"])
 

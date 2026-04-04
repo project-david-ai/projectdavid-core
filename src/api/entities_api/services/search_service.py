@@ -5,7 +5,7 @@ import requests
 from projectdavid_common.utilities.logging_service import LoggingUtility
 
 from src.api.entities_api.constants.platform import WEB_SEARCH_BASE_URL
-from src.api.entities_api.utils import count_tokens
+from src.api.entities_api.utilities import count_tokens
 
 logging_utility = LoggingUtility()
 

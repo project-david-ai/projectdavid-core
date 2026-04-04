@@ -10,7 +10,7 @@ from projectdavid_common import UtilsInterface, ValidationInterface
 from src.api.entities_api.db.database import SessionLocal
 from src.api.entities_api.models.models import Assistant, User, VectorStore
 from src.api.entities_api.services.logging_service import LoggingUtility
-from src.api.entities_api.utils.cache_utils import get_sync_invalidator
+from src.api.entities_api.utilities.cache_utils import get_sync_invalidator
 
 logging_utility = LoggingUtility()
 validator = ValidationInterface()

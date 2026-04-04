@@ -1,4 +1,4 @@
-# src/api/entities_api/utils/level2_utils.py
+# src/api/entities_api/utilities/level2_utils.py
 
 
 def format_level2_error(tool_name: str, error: Exception) -> str:

@@ -1,4 +1,4 @@
-# src/api/entities_api/utils/check_admin_status.py
+# src/api/entities_api/utilities/check_admin_status.py
 from sqlalchemy.orm import Session
 
 from src.api.entities_api.models.models import User as UserModel

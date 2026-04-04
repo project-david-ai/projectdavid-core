@@ -10,7 +10,7 @@ from sqlalchemy.orm import joinedload
 
 from src.api.entities_api.db.database import SessionLocal
 from src.api.entities_api.models.models import Action, Run
-from src.api.entities_api.utils.conversion_utils import datetime_to_iso
+from src.api.entities_api.utilities.conversion_utils import datetime_to_iso
 
 validator = ValidationInterface()
 logging_utility = LoggingUtility()
