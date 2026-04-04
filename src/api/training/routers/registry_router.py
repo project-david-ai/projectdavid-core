@@ -20,12 +20,11 @@ from projectdavid_common.schemas.registry_schemas import (
     BaseModelRead,
     BaseModelRegisterRequest,
 )
+from projectdavid_common.utilities.check_admin_status import _is_admin
 from sqlalchemy.orm import Session
 
-from src.api.entities_api.utils.check_admin_status import _is_admin
 from src.api.training.db.database import get_db
 from src.api.training.dependencies import get_current_user_id
-from src.api.training.services.model_registry_service import ModelRegistryService
 from src.api.training.services.registry_service import RegistryService
 
 router = APIRouter()

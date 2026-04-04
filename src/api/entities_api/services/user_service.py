@@ -20,7 +20,7 @@ from src.api.entities_api.models.models import (
     VectorStore,
 )
 from src.api.entities_api.services.logging_service import LoggingUtility
-from src.api.entities_api.utils.samba_client import SambaClient
+from src.api.entities_api.utilities.samba_client import SambaClient
 
 logging_utility = LoggingUtility()
 

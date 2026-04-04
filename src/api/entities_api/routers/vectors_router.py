@@ -14,7 +14,7 @@ from src.api.entities_api.services.vectors_service import (
     VectorStoreDBError,
     VectorStoreDBService,
 )
-from src.api.entities_api.utils.check_admin_status import _is_admin
+from src.api.entities_api.utilities.check_admin_status import _is_admin
 
 router = APIRouter()
 log = UtilsInterface.LoggingUtility()

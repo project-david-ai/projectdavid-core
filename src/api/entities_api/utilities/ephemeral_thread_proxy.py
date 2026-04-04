@@ -1,4 +1,4 @@
-# src/api/entities_api/utils/ephemeral_thread_proxy.py
+# src/api/entities_api/utilities/ephemeral_thread_proxy.py
 from dataclasses import dataclass
 
 

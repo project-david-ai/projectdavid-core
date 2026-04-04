@@ -1,5 +1,5 @@
 """
-migrations/utils/safe_ddl.py
+migrations/utilities/safe_ddl.py
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Fault-tolerant, idempotent helpers for Alembic migrations.
 
@@ -9,7 +9,7 @@ raise errors — operations are skipped with a warning log instead.
 
 Usage
 -----
-    from migrations.utils.safe_ddl import (
+    from migrations.utilities.safe_ddl import (
         add_column_if_missing,
         drop_column_if_exists,
         safe_alter_column,

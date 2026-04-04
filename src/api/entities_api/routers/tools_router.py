@@ -3,6 +3,7 @@ from typing import List, Optional
 
 from entities_api.services.scratchpad_service import ScratchpadService
 from fastapi import APIRouter, Depends, HTTPException, status
+from projectdavid_common.utilities.check_admin_status import _is_admin
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -18,7 +19,6 @@ from src.api.entities_api.models.models import User as UserModel
 from src.api.entities_api.orchestration.mixins.web_search_mixin import SearxNGClient
 from src.api.entities_api.services.logging_service import LoggingUtility
 from src.api.entities_api.services.web_reader import UniversalWebReader
-from src.api.entities_api.utils.check_admin_status import _is_admin
 
 # --- Router Setup ---
 router = APIRouter()
