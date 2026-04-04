@@ -58,18 +58,23 @@ def main():
         fix_tokenizer=True,
     )
 
-    # ─── QWEN/TRL COMPATIBILITY FIX ──────────────────────────────────────────
-    # Do NOT override eos_token with a fallback string — fix_tokenizer may set
-    # <EOS_TOKEN> which is not in Qwen2's vocabulary and causes TRL to reject it.
-    # Use Qwen2's native vocab tokens directly:
+    # ─── TOKENIZER COMPATIBILITY ──────────────────────────────────────────────
+    # Qwen2 uses native special tokens that differ from other model families:
     #   <|im_end|>    — end of turn, used as eos
-    #   <|endoftext|> — safe pad token, always in vocab
-    # max_seq_length is set on the tokenizer — newer TRL versions no longer
-    # accept it as an argument to SFTConfig or SFTTrainer.
+    #   <|endoftext|> — safe pad token, always in Qwen2 vocab
+    #
+    # For all other model families (Llama, Mistral, Phi, Gemma, etc.),
+    # fall back to the universal safe pattern: pad_token = eos_token.
+    #
+    # Do NOT hardcode <|endoftext|> globally — it is not in Llama-3.x vocab
+    # and will cause SFTTrainer to reject the tokenizer at init.
+    if "qwen" in args.model.lower():
+        tokenizer.eos_token = "<|im_end|>"  # nosec B105
+        tokenizer.pad_token = "<|endoftext|>"  # nosec B105
+    else:
+        tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.pad_token_id = tokenizer.eos_token_id
 
-    # Qwen2 native special tokens — not passwords, nosec B105 not recognised here
-    tokenizer.eos_token = "<|im_end|>"  # nosec B105
-    tokenizer.pad_token = "<|endoftext|>"  # nosec B105
     tokenizer.model_max_length = p["max_seq_length"]
     # ──────────────────────────────────────────────────────────────────────────
 
