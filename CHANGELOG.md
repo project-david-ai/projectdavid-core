@@ -1,3 +1,11 @@
+## [1.30.5](https://github.com/project-david-ai/projectdavid-core/compare/v1.30.4...v1.30.5) (2026-04-04)
+
+
+### Bug Fixes
+
+* **imports:** rename entities_api.utils to entities_api.utilities across codebase ([f7291a0](https://github.com/project-david-ai/projectdavid-core/commit/f7291a02f33dabab16d84b1951b23e6bbe4eb23e))
+* **tests:** update import path from entities_api.utils to entities_api.utilities ([66a7260](https://github.com/project-david-ai/projectdavid-core/commit/66a72607da5d2fd7ec969c9123c77467789b9c0a))
+
 ## [1.30.4](https://github.com/project-david-ai/projectdavid-core/compare/v1.30.3...v1.30.4) (2026-04-03)
 
 
