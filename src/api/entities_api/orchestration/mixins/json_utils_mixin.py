@@ -14,8 +14,7 @@ import re
 from typing import Dict, Optional
 
 from projectdavid_common.constants.ai_model_map import MODEL_MAP
-
-from src.api.entities_api.services.logging_service import LoggingUtility
+from projectdavid_common.utilities.logging_service import LoggingUtility
 
 LOG = LoggingUtility()
 

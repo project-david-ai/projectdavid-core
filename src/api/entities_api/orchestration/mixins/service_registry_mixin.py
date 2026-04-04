@@ -12,7 +12,6 @@ from entities_api.cache.assistant_cache import AssistantCache
 from entities_api.platform_tools.handlers.code_interpreter.code_execution_client import (
     StreamOutput,
 )
-from entities_api.utils.conversation_truncator import ConversationTruncator
 from projectdavid import Entity
 from projectdavid.clients.actions_client import ActionsClient
 from projectdavid.clients.assistants_client import AssistantsClient
@@ -27,6 +26,7 @@ from src.api.entities_api.orchestration.mixins.client_factory_mixin import (
     ClientFactoryMixin,
 )
 from src.api.entities_api.services.logging_service import LoggingUtility
+from src.api.entities_api.utilities.conversation_truncator import ConversationTruncator
 
 load_dotenv()
 LOG = LoggingUtility()
