@@ -38,7 +38,6 @@ from entities_api.dependencies import get_redis_sync
 from entities_api.platform_tools.delegated_model_map.delegation_model_map import (
     get_delegated_model,
 )
-from entities_api.utils.assistant_manager import AssistantManager
 
 # -------------------------------------------------------------------------
 # IMPORTS
@@ -74,6 +73,7 @@ from src.api.entities_api.orchestration.mixins.streaming_mixin import StreamingM
 from src.api.entities_api.orchestration.mixins.tool_routing_mixin import (
     ToolRoutingMixin,
 )
+from src.api.entities_api.utilities.assistant_manager import AssistantManager
 
 LOG = LoggingUtility()
 
