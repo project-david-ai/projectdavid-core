@@ -1,3 +1,10 @@
+## [1.30.9](https://github.com/project-david-ai/projectdavid-core/compare/v1.30.8...v1.30.9) (2026-04-05)
+
+
+### Bug Fixes
+
+* **inference-worker:** respect RAY_NODE_IP_ADDRESS env var in ray.init() ([bb15ecd](https://github.com/project-david-ai/projectdavid-core/commit/bb15ecd6c6af0996262b81d4e9baf58bf57d3c15))
+
 ## [1.30.8](https://github.com/project-david-ai/projectdavid-core/compare/v1.30.7...v1.30.8) (2026-04-05)
 
 
