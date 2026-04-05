@@ -36,14 +36,15 @@ passlib[bcrypt]
 bcrypt==3.2.0
 
 # --- Internal Dependencies ---
-projectdavid-common==0.64.1
-projectdavid-orm==1.6.1
-projectdavid-services==1.2.0
+projectdavid-common>=0.64.1
+projectdavid-orm>=1.6.2
+projectdavid-services>=1.2.1
 
 # --- DB ---
 SQLAlchemy>=2.0.0
 pymysql
-#--------------------------------------------------docker
+
+#--------------------------------------------------
 docker>=7.0.0
 pynvml>=11.5.0
 packaging>=23.0
