@@ -34,14 +34,16 @@ Import map
     entities_api.models.models.VectorStoreFile → projectdavid_orm.ormInterface.VectorStoreFile
     entities_api.models.models.AuditLog      → projectdavid_orm.ormInterface.AuditLog
 """
-from projectdavid_orm.ormInterface import (
+from projectdavid_orm import (
     Action,
     ApiKey,
     Assistant,
     AuditLog,
+    Base,
     File,
     FileStorage,
     Message,
+    OrmInterface,
     Run,
     Sandbox,
     Thread,
