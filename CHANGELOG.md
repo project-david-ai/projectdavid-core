@@ -1,3 +1,10 @@
+## [1.30.10](https://github.com/project-david-ai/projectdavid-core/compare/v1.30.9...v1.30.10) (2026-04-05)
+
+
+### Bug Fixes
+
+* **inference-worker:** guard node_ip_address to HEAD node path only ([cf123d1](https://github.com/project-david-ai/projectdavid-core/commit/cf123d1a57909ada02263ae90d766b166e090ac9))
+
 ## [1.30.9](https://github.com/project-david-ai/projectdavid-core/compare/v1.30.8...v1.30.9) (2026-04-05)
 
 
