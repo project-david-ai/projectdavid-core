@@ -1,3 +1,10 @@
+## [1.31.2](https://github.com/project-david-ai/projectdavid-core/compare/v1.31.1...v1.31.2) (2026-04-05)
+
+
+### Bug Fixes
+
+* **inference-worker:** remove node_ip_address from ray.init HEAD path ([cabed30](https://github.com/project-david-ai/projectdavid-core/commit/cabed306f9498e944bed1d14a0ea7c7576315427))
+
 ## [1.31.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.31.0...v1.31.1) (2026-04-05)
 
 
