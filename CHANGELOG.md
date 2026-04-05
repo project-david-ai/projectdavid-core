@@ -1,3 +1,13 @@
+## [1.30.8](https://github.com/project-david-ai/projectdavid-core/compare/v1.30.7...v1.30.8) (2026-04-05)
+
+
+### Bug Fixes
+
+* **deps:** relax internal package pins to minimum version constraints ([99ae2a7](https://github.com/project-david-ai/projectdavid-core/commit/99ae2a7b5fccdfc4f5367eff5fdad29bd85be2b9))
+* **deps:** relax internal package pins to minimum version constraints ([21dd1ab](https://github.com/project-david-ai/projectdavid-core/commit/21dd1aba111d949e6e686e05214eca2fb05d7f9c))
+* **deps:** relax projectdavid SDK pin to minimum version constraint ([4beccd9](https://github.com/project-david-ai/projectdavid-core/commit/4beccd93db3af44b821f8f0c17cbf6a6a52b5451))
+* **imports:** trim projectdavid_orm imports to core API surface ([d0a9891](https://github.com/project-david-ai/projectdavid-core/commit/d0a98912eb42dbef4718a8ad7a6c8508bdd80713))
+
 ## [1.30.7](https://github.com/project-david-ai/projectdavid-core/compare/v1.30.6...v1.30.7) (2026-04-04)
 
 
