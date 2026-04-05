@@ -1,3 +1,11 @@
+# [1.31.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.30.10...v1.31.0) (2026-04-05)
+
+
+### Features
+
+* **inference-worker:** add Tailscale mesh support for remote worker nodes ([57216a8](https://github.com/project-david-ai/projectdavid-core/commit/57216a8c2c93ec63f36200e8804011e969507ec4))
+* **inference-worker:** add Tailscale mesh support for remote worker nodes ([37abc4f](https://github.com/project-david-ai/projectdavid-core/commit/37abc4fe83378493f62d5bdba5e6a7aebb260b9b))
+
 ## [1.30.10](https://github.com/project-david-ai/projectdavid-core/compare/v1.30.9...v1.30.10) (2026-04-05)
 
 
