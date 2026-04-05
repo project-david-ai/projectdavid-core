@@ -485,6 +485,7 @@ class InferenceReconciler:
 
 def main():
     # ── Phase 1: Start Ray HEAD ───────────────────────────────────────────
+
     ray.init(
         address=None,
         ignore_reinit_error=True,
@@ -492,7 +493,9 @@ def main():
         dashboard_host="0.0.0.0",  # nosec B104
         dashboard_port=RAY_DASHBOARD_PORT,
         logging_level="WARNING",
+        node_ip_address=os.getenv("RAY_NODE_IP_ADDRESS") or None,
     )
+
     log.info("🌐 Ray HEAD started — dashboard: http://localhost:%d", RAY_DASHBOARD_PORT)
     log.info("🔵 Ray resources: %s", ray.cluster_resources())
 
