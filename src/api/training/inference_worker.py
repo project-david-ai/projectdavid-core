@@ -1,13 +1,15 @@
 """
 inference_worker.py
 
-Sovereign Forge — Inference Worker (Ray HEAD Node)
+Sovereign Forge — Inference Worker (Ray HEAD Node or Worker Node)
 
-This container is the Ray HEAD node. It owns the GPU, runs Ray Serve,
+This container is the Ray HEAD node by default. It owns the GPU, runs Ray Serve,
 and hosts the InferenceReconciler.
 
+When RAY_ADDRESS is set, it joins an existing Ray cluster as a worker node.
+
 Architecture:
-    - Starts Ray HEAD node
+    - Starts Ray HEAD node (or joins existing cluster if RAY_ADDRESS is set)
     - Polls inference_deployments DB table every poll_interval seconds
     - Reconciles Ray Serve deployments with DB state
 
@@ -49,25 +51,12 @@ SHARED_PATH = os.getenv("SHARED_PATH", "/mnt/training_data")
 NODE_ID = os.getenv("NODE_ID", f"node_{socket.gethostname()}")
 SERVE_HTTP_PORT = int(os.getenv("SERVE_HTTP_PORT", "8000"))
 
-# Safe default for gpu_memory_utilization.
-# vLLM's own default (0.90) is too aggressive for ≤ 8 GiB cards.
-# Override per-node with VLLM_DEFAULT_GPU_MEM_UTIL.
 _DEFAULT_GPU_MEM_UTIL = float(os.getenv("VLLM_DEFAULT_GPU_MEM_UTIL", "0.50"))
 _GPU_MEM_UTIL_MIN = 0.10
 _GPU_MEM_UTIL_MAX = 0.95
 
 
 def _resolve_gpu_memory_utilization(dep) -> float:
-    """
-    Return the gpu_memory_utilization to use for this deployment.
-
-    Priority:
-      1. dep.gpu_memory_utilization  (DB column, if present and valid)
-      2. VLLM_DEFAULT_GPU_MEM_UTIL   (node-level env override)
-      3. 0.50                        (built-in safe default)
-
-    The value is clamped to [0.10, 0.95] regardless of source.
-    """
     raw = getattr(dep, "gpu_memory_utilization", None)
     if raw is not None:
         try:
@@ -91,11 +80,6 @@ def _resolve_gpu_memory_utilization(dep) -> float:
     return _DEFAULT_GPU_MEM_UTIL
 
 
-# ---------------------------------------------------------------------------
-# Ray Serve deployment — vLLM wrapped as a serve application
-# ---------------------------------------------------------------------------
-
-
 @serve.deployment(
     name="vllm_inference",
     ray_actor_options={"num_gpus": 1},
@@ -103,26 +87,6 @@ def _resolve_gpu_memory_utilization(dep) -> float:
     health_check_timeout_s=60,
 )
 class VLLMDeployment:
-    """
-    Ray Serve deployment wrapping a vLLM AsyncLLMEngine.
-
-    Runs on the inference_worker HEAD node where vLLM is installed.
-    Reserves 1 GPU via ray_actor_options.
-
-    Supports:
-      - Base model inference
-      - LoRA adapter inference (via enable_lora + lora_request)
-      - Sovereign Forge raw completions API
-
-    SSE chunks are returned in /v1/completions format (choices[0].text)
-    so _http_stream in VLLMRawStream can consume them without adaptation.
-
-    gpu_memory_utilization defaults to 0.50 (safe for 8 GiB cards).
-    Pass a higher value only when you have profiled headroom on your
-    target hardware.  Values above 0.85 risk OOM during vLLM's
-    internal profile_run on small GPUs.
-    """
-
     def __init__(
         self,
         model_endpoint: str,
@@ -158,33 +122,13 @@ class VLLMDeployment:
         self.engine = AsyncLLMEngine.from_engine_args(engine_args)
 
         self._lora_requests = {
-            name: LoRARequest(
-                lora_name=name,
-                lora_int_id=idx + 1,
-                lora_path=path,
-            )
+            name: LoRARequest(lora_name=name, lora_int_id=idx + 1, lora_path=path)
             for idx, (name, path) in enumerate(self.lora_modules.items())
         }
 
         log.info("✅ VLLMDeployment ready — model=%s", model_endpoint)
 
     async def __call__(self, request):
-        """
-        Handle raw completions requests from the Sovereign Forge path.
-
-        Accepts either:
-          - "prompt"   : pre-rendered prompt string (from _stream_sovereign_forge)
-          - "messages" : ChatML messages array (fallback for direct callers)
-
-        SSE chunks are returned in /v1/completions format:
-            choices[0].text   ← delta text
-        This matches what _http_stream in VLLMRawStream expects.
-
-        LoRA lookup: the model field may be either the fine_tuned_model_id
-        (ftm_...) or the deployment ID (vllm_dep_...). If no matching LoRA
-        request is found by name and exactly one adapter is loaded, the
-        loaded adapter is used automatically.
-        """
         import json as _json
 
         from starlette.responses import StreamingResponse
@@ -198,7 +142,6 @@ class VLLMDeployment:
         top_p = body.get("top_p", 0.9)
         stream = body.get("stream", False)
 
-        # Accept pre-rendered prompt string or fall back to messages rendering
         prompt = body.get("prompt") or self._format_messages(messages)
 
         sampling_params = SamplingParams(
@@ -207,24 +150,14 @@ class VLLMDeployment:
             max_tokens=max_tokens,
         )
 
-        # LoRA lookup: try exact name match first, then fall back to the
-        # single loaded adapter (handles vllm_dep_... model field).
         lora_request = self._lora_requests.get(model_name)
         if lora_request is None and len(self._lora_requests) == 1:
             lora_request = next(iter(self._lora_requests.values()))
-            log.debug(
-                "VLLMDeployment: model field '%s' did not match a LoRA key — "
-                "using sole loaded adapter '%s'.",
-                model_name,
-                next(iter(self._lora_requests.keys())),
-            )
 
         request_id = f"req_{int(time.time() * 1000)}"
 
         if stream:
-            # ── SSE streaming path ───────────────────────────────────────
-            # Returns /v1/completions format: choices[0].text
-            # Consumed by _http_stream in VLLMRawStream.
+
             async def _event_stream():
                 prev_text = ""
                 async for output in self.engine.generate(
@@ -239,23 +172,15 @@ class VLLMDeployment:
                         prev_text = full_text
                         if delta:
                             chunk = {
-                                "choices": [
-                                    {
-                                        "text": delta,
-                                        "finish_reason": None,
-                                    }
-                                ]
+                                "choices": [{"text": delta, "finish_reason": None}]
                             }
                             yield f"data: {_json.dumps(chunk)}\n\n"
-
-                # Final chunk signals end of stream
                 final = {"choices": [{"text": "", "finish_reason": "stop"}]}
                 yield f"data: {_json.dumps(final)}\n\n"
                 yield "data: [DONE]\n\n"
 
             return StreamingResponse(_event_stream(), media_type="text/event-stream")
 
-        # ── Non-streaming path ───────────────────────────────────────────
         output_text = ""
         async for output in self.engine.generate(
             prompt,
@@ -270,13 +195,7 @@ class VLLMDeployment:
             "id": request_id,
             "object": "text_completion",
             "model": model_name,
-            "choices": [
-                {
-                    "index": 0,
-                    "text": output_text,
-                    "finish_reason": "stop",
-                }
-            ],
+            "choices": [{"index": 0, "text": output_text, "finish_reason": "stop"}],
             "usage": {
                 "prompt_tokens": len(prompt.split()),
                 "completion_tokens": len(output_text.split()),
@@ -285,7 +204,6 @@ class VLLMDeployment:
         }
 
     def _format_messages(self, messages: list) -> str:
-        """Format ChatML messages into a prompt string (fallback path)."""
         parts = []
         for msg in messages:
             role = msg.get("role", "user")
@@ -303,34 +221,11 @@ class VLLMDeployment:
         return True
 
 
-# ---------------------------------------------------------------------------
-# Deployment name helper
-# ---------------------------------------------------------------------------
-
-
 def _deployment_name(deployment_id: str) -> str:
-    """Convert dep_... ID to a valid Ray Serve deployment name.
-
-    Ray Serve names must be alphanumeric + underscore.
-    dep_DWtgOyY5iTpkV1gfslIUwJ → vllm_dep_DWtgOyY5iTpkV1gfslIUwJ
-    """
     return f"vllm_{deployment_id.replace('-', '_')}"
 
 
-# ---------------------------------------------------------------------------
-# Reconciliation loop
-# ---------------------------------------------------------------------------
-
-
 class InferenceReconciler:
-    """
-    Polls the inference_deployments DB table and reconciles Ray Serve state.
-
-    Pending deployments  → create Ray Serve deployment (GPU reserved)
-    Active deployments   → verify healthy
-    Orphaned deployments → delete Ray Serve deployment (GPU released)
-    """
-
     def __init__(self):
         from src.api.training.db.database import SessionLocal
         from src.api.training.models.models import BaseModel, InferenceDeployment
@@ -358,13 +253,6 @@ class InferenceReconciler:
         )
 
     def _resolve_model_endpoint(self, db: Session, base_model_id: str) -> str:
-        """
-        Resolve a base_model_id to its HuggingFace endpoint string.
-
-        Raises RuntimeError if the BaseModel record no longer exists.
-        A missing record means the deployment references a deregistered model
-        and should not proceed.
-        """
         base = (
             db.query(self._BaseModel)
             .filter(self._BaseModel.id == base_model_id)
@@ -373,8 +261,7 @@ class InferenceReconciler:
         if not base:
             raise RuntimeError(
                 f"BaseModel '{base_model_id}' not found in registry. "
-                f"The InferenceDeployment references a model that no longer exists. "
-                f"Deregister this deployment or re-register the base model."
+                f"The InferenceDeployment references a model that no longer exists."
             )
         return base.endpoint
 
@@ -387,7 +274,6 @@ class InferenceReconciler:
         return {dep.fine_tuned_model_id: adapter_path}
 
     def _deploy(self, db: Session, dep) -> None:
-        """Create a Ray Serve deployment on this HEAD node."""
         from projectdavid_common.schemas.enums import StatusEnum
 
         deployment_name = _deployment_name(dep.id)
@@ -484,20 +370,42 @@ class InferenceReconciler:
 
 
 def main():
-    # ── Phase 1: Start Ray HEAD ───────────────────────────────────────────
+    # ── Phase 1: Start Ray (HEAD or Worker) ──────────────────────────────
+    #
+    # RAY_ADDRESS unset → HEAD node.
+    #   node_ip_address passed so HEAD advertises the correct IP to workers.
+    #   Required for tunnel/NAT scenarios (e.g. SSH reverse tunnel).
+    #
+    # RAY_ADDRESS set → Worker node joining existing cluster.
+    #   Ray client builder path — does NOT accept node_ip_address or
+    #   dashboard kwargs. Passing them raises RuntimeError.
 
-    ray.init(
-        address=None,
-        ignore_reinit_error=True,
-        include_dashboard=True,
-        dashboard_host="0.0.0.0",  # nosec B104
-        dashboard_port=RAY_DASHBOARD_PORT,
-        logging_level="WARNING",
-        node_ip_address=os.getenv("RAY_NODE_IP_ADDRESS") or None,
-    )
+    ray_address = os.getenv("RAY_ADDRESS") or None
 
-    log.info("🌐 Ray HEAD started — dashboard: http://localhost:%d", RAY_DASHBOARD_PORT)
-    log.info("🔵 Ray resources: %s", ray.cluster_resources())
+    if ray_address:
+        # ── Worker node ───────────────────────────────────────────────────
+        log.info("🔗 Joining Ray cluster at %s", ray_address)
+        ray.init(
+            address=ray_address,
+            ignore_reinit_error=True,
+            logging_level="WARNING",
+        )
+        log.info("✅ Joined Ray cluster — resources: %s", ray.cluster_resources())
+    else:
+        # ── HEAD node ─────────────────────────────────────────────────────
+        ray.init(
+            address=None,
+            ignore_reinit_error=True,
+            include_dashboard=True,
+            dashboard_host="0.0.0.0",  # nosec B104
+            dashboard_port=RAY_DASHBOARD_PORT,
+            logging_level="WARNING",
+            node_ip_address=os.getenv("RAY_NODE_IP_ADDRESS") or None,
+        )
+        log.info(
+            "🌐 Ray HEAD started — dashboard: http://localhost:%d", RAY_DASHBOARD_PORT
+        )
+        log.info("🔵 Ray resources: %s", ray.cluster_resources())
 
     # ── Phase 2: Start Ray Serve ──────────────────────────────────────────
     serve.start(
