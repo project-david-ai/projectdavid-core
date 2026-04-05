@@ -1,3 +1,10 @@
+## [1.31.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.31.0...v1.31.1) (2026-04-05)
+
+
+### Bug Fixes
+
+* **inference-worker:** bust CI cache to force inference_worker.py rebuild ([785f240](https://github.com/project-david-ai/projectdavid-core/commit/785f2409dd4fd2cf6c43cc857a8725a00be9be93))
+
 # [1.31.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.30.10...v1.31.0) (2026-04-05)
 
 
