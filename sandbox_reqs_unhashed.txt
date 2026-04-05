@@ -1,12 +1,14 @@
 pip==25.0.1
 setuptools==79.0.1
 wheel==0.45.1
+
 # --- Framework and Server ---
 uvicorn[standard]==0.34.2
 uvloop==0.21.0
 watchfiles==1.0.5
 websockets==15.0.1
+
 # ------------------------------------------------------------------ #
 # Internal packages
-projectdavid==1.96.5
+projectdavid>=1.96.5
 jwt
