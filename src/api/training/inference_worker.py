@@ -535,7 +535,6 @@ def main():
             dashboard_host="0.0.0.0",  # nosec B104
             dashboard_port=RAY_DASHBOARD_PORT,
             logging_level="WARNING",
-            ray_client_server_port=int(os.getenv("RAY_CLIENT_SERVER_PORT", "10001")),
         )
 
         log.info(
