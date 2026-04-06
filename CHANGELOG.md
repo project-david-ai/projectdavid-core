@@ -1,3 +1,10 @@
+# [1.33.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.32.0...v1.33.0) (2026-04-06)
+
+
+### Features
+
+* **inference-worker:** add GatewayPorts yes to sshd config for reverse tunnel support ([3e95d23](https://github.com/project-david-ai/projectdavid-core/commit/3e95d232ac90c0ed70754ee482bf37cfb46f8303))
+
 # [1.32.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.31.5...v1.32.0) (2026-04-06)
 
 
