@@ -194,6 +194,8 @@ services:
       - PYTHONUNBUFFERED=1
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - HF_TOKEN=${HF_TOKEN:-}
+      - HF_HUB_OFFLINE=0
     volumes:
       - ${SHARED_PATH:-./shared_data}:/mnt/training_data
       - ${HF_CACHE_PATH}:/root/.cache/huggingface
@@ -242,6 +244,10 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - RAY_IGNORE_VERSION_MISMATCH=1
+      - HF_TOKEN=${HF_TOKEN:-}
+      - HF_HUB_OFFLINE=0
+
+
     ports:
       - "8002:8000"
       - "8265:8265"

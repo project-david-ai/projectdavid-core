@@ -16,8 +16,15 @@ else
     echo "[entrypoint] TAILSCALE_AUTH_KEY not set — skipping Tailscale."
 fi
 
+# HuggingFace login if token provided
+if [[ -n "${HF_TOKEN:-}" ]]; then
+    huggingface-cli login --token "${HF_TOKEN}" --add-to-git-credential || true
+    echo "[entrypoint] HuggingFace authenticated."
+else
+    echo "[entrypoint] HF_TOKEN not set — public models only."
+fi
+
 # Start Ray HEAD node with explicit client server port
-# This opens port 10001 for worker nodes to connect via ray://
 if [[ -z "${RAY_ADDRESS:-}" ]]; then
     echo "[entrypoint] Starting Ray HEAD node on client server port ${RAY_CLIENT_SERVER_PORT:-10001}"
     ray start --head \
