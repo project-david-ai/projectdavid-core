@@ -527,6 +527,7 @@ def main():
                 time.sleep(RAY_JOIN_RETRY_DELAY)
     else:
         # ── HEAD node ─────────────────────────────────────────────────────
+
         ray.init(
             address=None,
             ignore_reinit_error=True,
@@ -534,7 +535,9 @@ def main():
             dashboard_host="0.0.0.0",  # nosec B104
             dashboard_port=RAY_DASHBOARD_PORT,
             logging_level="WARNING",
+            ray_client_server_port=int(os.getenv("RAY_CLIENT_SERVER_PORT", "10001")),
         )
+
         log.info(
             "🌐 Ray HEAD started — dashboard: http://localhost:%d", RAY_DASHBOARD_PORT
         )
