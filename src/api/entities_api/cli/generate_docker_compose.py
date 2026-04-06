@@ -218,6 +218,11 @@ services:
     container_name: inference_worker
     restart: unless-stopped
     profiles: ["training"]
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun
     deploy:
       resources:
         reservations:
@@ -249,6 +254,7 @@ services:
       - my_custom_network
     depends_on:
       - redis
+
 
   api:
     build:

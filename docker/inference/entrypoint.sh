@@ -4,7 +4,7 @@ set -e
 # Start Tailscale in userspace mode — no NET_ADMIN required.
 # Works on RunPod, AWS, Azure, any unprivileged container.
 if [[ -n "${TAILSCALE_AUTH_KEY:-}" ]]; then
-    tailscaled --tun=userspace-networking --statedir=/tmp/tailscale &
+    tailscaled --statedir=/tmp/tailscale &
     sleep 3
     tailscale up \
         --authkey="${TAILSCALE_AUTH_KEY}" \
