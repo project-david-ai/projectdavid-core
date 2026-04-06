@@ -1,3 +1,10 @@
+# [1.34.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.33.2...v1.34.0) (2026-04-06)
+
+
+### Features
+
+* **dev-compose:** pass HF_TOKEN and HF_HUB_OFFLINE to inference and training workers ([90fa085](https://github.com/project-david-ai/projectdavid-core/commit/90fa08591ccf05ef381b07276661628ee0f50570))
+
 ## [1.33.2](https://github.com/project-david-ai/projectdavid-core/compare/v1.33.1...v1.33.2) (2026-04-06)
 
 
