@@ -1,3 +1,10 @@
+# [1.32.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.31.5...v1.32.0) (2026-04-06)
+
+
+### Features
+
+* **inference-worker:** add openssh server and authorized key for ssh tunnel support ([d945af4](https://github.com/project-david-ai/projectdavid-core/commit/d945af4ff89f34ad79e38cbd62ce02806ad75450))
+
 ## [1.31.5](https://github.com/project-david-ai/projectdavid-core/compare/v1.31.4...v1.31.5) (2026-04-06)
 
 
