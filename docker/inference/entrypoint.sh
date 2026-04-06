@@ -1,11 +1,13 @@
 #!/bin/bash
 set -e
 
-# Start Tailscale in kernel mode — requires NET_ADMIN and /dev/net/tun.
-# Cap and device are set in docker-compose.yml (inference-worker service).
+# Start Tailscale in userspace mode — no NET_ADMIN required.
+# Works on RunPod, AWS, Azure, any unprivileged container.
 if [[ -n "${TAILSCALE_AUTH_KEY:-}" ]]; then
-    tailscaled --statedir=/tmp/tailscale &
+    tailscaled --tun=userspace-networking --statedir=/tmp/tailscale &
     sleep 3
+
+
     tailscale up \
         --authkey="${TAILSCALE_AUTH_KEY}" \
         --hostname="${NODE_ID:-sovereign-forge-worker}" \
