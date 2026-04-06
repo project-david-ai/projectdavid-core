@@ -38,7 +38,8 @@ RUN pip install --no-cache-dir \
     "projectdavid-common" \
     "projectdavid-orm" \
     "passlib" \
-    "python-dotenv"
+    "python-dotenv" \
+    "huggingface_hub[cli]>=0.21.0"
 
 COPY src/api/training/inference_worker.py /app/inference_worker.py
 COPY src/api/training/models /app/src/api/training/models
