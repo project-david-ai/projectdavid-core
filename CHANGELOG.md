@@ -1,3 +1,10 @@
+## [1.33.2](https://github.com/project-david-ai/projectdavid-core/compare/v1.33.1...v1.33.2) (2026-04-06)
+
+
+### Bug Fixes
+
+* **inference-worker:** start Ray HEAD via CLI to explicitly bind client server port 10001 ([91f1826](https://github.com/project-david-ai/projectdavid-core/commit/91f18266b85f4ba77b4b111615a8acf9694210a1))
+
 ## [1.33.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.33.0...v1.33.1) (2026-04-06)
 
 
