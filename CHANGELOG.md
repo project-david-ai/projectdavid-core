@@ -1,3 +1,10 @@
+## [1.31.5](https://github.com/project-david-ai/projectdavid-core/compare/v1.31.4...v1.31.5) (2026-04-06)
+
+
+### Bug Fixes
+
+* **inference-worker:** restore userspace-networking and remove set -e to prevent tailscale errors killing entrypoint ([0ef6068](https://github.com/project-david-ai/projectdavid-core/commit/0ef6068df4858d2860057f771ead65dd42f919f7))
+
 ## [1.31.4](https://github.com/project-david-ai/projectdavid-core/compare/v1.31.3...v1.31.4) (2026-04-06)
 
 
