@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-# Start Tailscale in userspace mode — no NET_ADMIN required.
-# Works on RunPod, AWS, Azure, any unprivileged container.
+# Start Tailscale in kernel mode — requires NET_ADMIN and /dev/net/tun.
+# Cap and device are set in docker-compose.yml (inference-worker service).
 if [[ -n "${TAILSCALE_AUTH_KEY:-}" ]]; then
     tailscaled --statedir=/tmp/tailscale &
     sleep 3
