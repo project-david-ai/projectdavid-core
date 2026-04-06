@@ -1,3 +1,10 @@
+## [1.33.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.33.0...v1.33.1) (2026-04-06)
+
+
+### Bug Fixes
+
+* **inference-worker:** explicitly start Ray client server on port 10001 for worker node connectivity ([1decb23](https://github.com/project-david-ai/projectdavid-core/commit/1decb236530dd988ad1fc217a9b225a8c70eb3c7))
+
 # [1.33.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.32.0...v1.33.0) (2026-04-06)
 
 
