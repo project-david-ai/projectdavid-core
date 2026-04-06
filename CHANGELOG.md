@@ -1,3 +1,11 @@
+## [1.31.4](https://github.com/project-david-ai/projectdavid-core/compare/v1.31.3...v1.31.4) (2026-04-06)
+
+
+### Bug Fixes
+
+* **inference-worker:** add NET_ADMIN and tun device to dev compose generator ([f6db16a](https://github.com/project-david-ai/projectdavid-core/commit/f6db16a6156e4366746eb242d4e66f5a2f7adbac))
+* **inference-worker:** update entrypoint comment to reflect kernel-mode Tailscale ([dd17ce1](https://github.com/project-david-ai/projectdavid-core/commit/dd17ce173cf63eb0291b18d921b058254e39f491))
+
 ## [1.31.3](https://github.com/project-david-ai/projectdavid-core/compare/v1.31.2...v1.31.3) (2026-04-06)
 
 
