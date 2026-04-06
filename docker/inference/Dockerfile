@@ -21,14 +21,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Configure SSH — key-only, no password auth
+# Configure SSH — key-only, no password auth, gateway ports for reverse tunnels
 RUN mkdir -p /var/run/sshd /root/.ssh \
     && chmod 700 /root/.ssh \
     && echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILOVtSg1Tw4aiWqM9qkrWfxpQwYzXfMptG2+CEgQSWem francis.neequaye@gmail.com" \
        >> /root/.ssh/authorized_keys \
     && chmod 600 /root/.ssh/authorized_keys \
     && echo "PermitRootLogin yes" >> /etc/ssh/sshd_config \
-    && echo "PasswordAuthentication no" >> /etc/ssh/sshd_config
+    && echo "PasswordAuthentication no" >> /etc/ssh/sshd_config \
+    && echo "GatewayPorts yes" >> /etc/ssh/sshd_config
 
 RUN pip install --no-cache-dir \
     "ray[serve]==2.40.0" \
