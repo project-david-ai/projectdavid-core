@@ -1,3 +1,10 @@
+## [1.31.3](https://github.com/project-david-ai/projectdavid-core/compare/v1.31.2...v1.31.3) (2026-04-06)
+
+
+### Bug Fixes
+
+* **inference-worker:** clean up Dockerfile remove broken cache bust line ([6704861](https://github.com/project-david-ai/projectdavid-core/commit/6704861c241b12469db71ff875c4fe53abec083b))
+
 ## [1.31.2](https://github.com/project-david-ai/projectdavid-core/compare/v1.31.1...v1.31.2) (2026-04-05)
 
 
