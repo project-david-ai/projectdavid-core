@@ -1,3 +1,10 @@
+# [1.35.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.34.0...v1.35.0) (2026-04-07)
+
+
+### Features
+
+* **inference:** join Ray cluster as worker node when RAY_ADDRESS is set ([6c0d65b](https://github.com/project-david-ai/projectdavid-core/commit/6c0d65b0d858b9a675b1b515ac9ae219cb4c0a73))
+
 # [1.34.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.33.2...v1.34.0) (2026-04-06)
 
 
