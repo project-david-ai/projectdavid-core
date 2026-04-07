@@ -11,9 +11,6 @@
     </style>
   </defs>
 
-  <!-- Background -->
-  <rect width="900" height="520" fill="#ffffff" rx="16"/>
-
   <!-- Title -->
   <text x="450" y="38" text-anchor="middle" font-size="18" font-weight="500" fill="#1E3A5F">Project David — Core to Platform Pipeline</text>
   <text x="450" y="58" text-anchor="middle" font-size="12" fill="#555555">From research codebase to sovereign air-gapped AI deployment</text>

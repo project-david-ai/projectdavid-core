@@ -24,7 +24,7 @@ else
     echo "[entrypoint] HF_TOKEN not set — public models only."
 fi
 
-# Start Ray HEAD node with explicit client server port
+# Ray startup — HEAD or WORKER depending on RAY_ADDRESS
 if [[ -z "${RAY_ADDRESS:-}" ]]; then
     echo "[entrypoint] Starting Ray HEAD node on client server port ${RAY_CLIENT_SERVER_PORT:-10001}"
     ray start --head \
@@ -32,6 +32,14 @@ if [[ -z "${RAY_ADDRESS:-}" ]]; then
         --dashboard-port="${RAY_DASHBOARD_PORT:-8265}" \
         --ray-client-server-port="${RAY_CLIENT_SERVER_PORT:-10001}" \
         --disable-usage-stats
+else
+    # Strip ray:// prefix to get host:port for ray start --address
+    RAY_HEAD_ADDR="${RAY_ADDRESS#ray://}"
+    echo "[entrypoint] Joining Ray cluster as WORKER node at ${RAY_HEAD_ADDR}"
+    ray start \
+        --address="${RAY_HEAD_ADDR}" \
+        --disable-usage-stats
+    echo "[entrypoint] Ray worker node started."
 fi
 
 exec python3 /app/inference_worker.py

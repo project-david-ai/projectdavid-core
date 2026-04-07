@@ -4,12 +4,10 @@
       <path d="M2 1L8 5L2 9" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
     </marker>
     <style>
-      .bg { fill: #f8f9fc; }
       .title { font-family: Georgia, serif; font-size: 22px; font-weight: 600; fill: #1e293b; }
       .tagline { font-family: Georgia, serif; font-size: 13px; fill: #64748b; }
       .tier-label { font-family: Georgia, serif; font-size: 11px; font-weight: 600; fill: #94a3b8; letter-spacing: 0.08em; }
 
-      /* Styles from Reference */
       .sdk-box { fill: #e1f5ee; stroke: #0f6e56; stroke-width: 1px; }
       .api-box { fill: #dbeafe; stroke: #185fa5; stroke-width: 1px; }
       .infra-box { fill: #eeedfe; stroke: #534ab7; stroke-width: 1px; }
@@ -22,9 +20,6 @@
       .conn { stroke: #94a3b8; stroke-width: 1px; fill: none; }
     </style>
   </defs>
-
-  <!-- Background -->
-  <rect width="900" height="900" class="bg" rx="16"/>
 
   <!-- Header -->
   <text x="450" y="44" text-anchor="middle" class="title">Fine-Tuning Pipeline Architecture</text>
