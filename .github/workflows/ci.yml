@@ -2,7 +2,7 @@ name: Lint, Test, Build, and Publish Docker Images
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
     branches: [main]
 
@@ -179,6 +179,103 @@ jobs:
           platforms: linux/amd64
           cache-from: type=gha,scope=inference
           cache-to: type=gha,mode=max,scope=inference
+
+  # ──────────────────────────────────────────────────────────────────────────
+  #  🧪  Build & Publish Staging Images (DEV BRANCH ONLY)
+  #
+  #  Pushes images tagged :dev-<sha> to Docker Hub.
+  #  These are never tagged :latest and never affect production deployments.
+  #  The platform dev branch pins to these digests for pre-release testing.
+  # ──────────────────────────────────────────────────────────────────────────
+  build_staging:
+    name: "🧪 Build & Publish Staging Images"
+    runs-on: ubuntu-latest
+    needs: test
+    if: |
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/dev' &&
+      !contains(github.event.head_commit.message, '[skip ci]') &&
+      !contains(github.event.head_commit.message, 'chore(release)')
+
+    steps:
+      - name: "🕺 Checkout"
+        uses: actions/checkout@v4
+
+      - name: "⚙️ Setup QEMU"
+        uses: docker/setup-qemu-action@v3
+
+      - name: "⚙️ Setup Docker Buildx"
+        uses: docker/setup-buildx-action@v3
+
+      - name: "🔑 Login to Docker Hub"
+        uses: docker/login-action@v3
+        with:
+          username: thanosprime
+          password: ${{ secrets.DOCKERHUB_THANOSPRIME }}
+
+      - name: "🏷️ Resolve short SHA"
+        id: sha
+        run: echo "SHORT_SHA=${GITHUB_SHA::8}" >> $GITHUB_OUTPUT
+
+      - name: "🏗️ Build & Push Staging API Image"
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./docker/api/Dockerfile
+          push: true
+          tags: thanosprime/projectdavid-core-api:dev-${{ steps.sha.outputs.SHORT_SHA }}
+          platforms: linux/amd64
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+      - name: "🏗️ Build & Push Staging Sandbox Image"
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./docker/sandbox/Dockerfile
+          push: true
+          tags: thanosprime/projectdavid-core-sandbox:dev-${{ steps.sha.outputs.SHORT_SHA }}
+          platforms: linux/amd64
+          cache-from: type=gha,scope=sandbox
+          cache-to: type=gha,mode=max,scope=sandbox
+
+      - name: "🏗️ Build & Push Staging Training Images"
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./docker/training/Dockerfile
+          push: true
+          tags: |
+            thanosprime/projectdavid-core-training-api:dev-${{ steps.sha.outputs.SHORT_SHA }}
+            thanosprime/projectdavid-core-training-worker:dev-${{ steps.sha.outputs.SHORT_SHA }}
+          platforms: linux/amd64
+          cache-from: type=gha,scope=training
+          cache-to: type=gha,mode=max,scope=training
+
+      - name: "🏗️ Build & Push Staging Inference Worker Image"
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./docker/inference/Dockerfile
+          push: true
+          tags: thanosprime/projectdavid-core-inference-worker:dev-${{ steps.sha.outputs.SHORT_SHA }}
+          platforms: linux/amd64
+          cache-from: type=gha,scope=inference
+          cache-to: type=gha,mode=max,scope=inference
+
+      - name: "📋 Output staging image tags"
+        run: |
+          echo "## Staging images built from dev @ ${{ steps.sha.outputs.SHORT_SHA }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | Tag |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| api | \`dev-${{ steps.sha.outputs.SHORT_SHA }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| sandbox | \`dev-${{ steps.sha.outputs.SHORT_SHA }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| training-api | \`dev-${{ steps.sha.outputs.SHORT_SHA }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| training-worker | \`dev-${{ steps.sha.outputs.SHORT_SHA }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| inference-worker | \`dev-${{ steps.sha.outputs.SHORT_SHA }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Pin these in platform \`docker-compose.yml\` for pre-release testing." >> $GITHUB_STEP_SUMMARY
 
   # ──────────────────────────────────────────────────────────────────────────
   #  🚀  Build & Publish Docker images (MAIN BRANCH ONLY)
