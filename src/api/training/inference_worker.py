@@ -516,12 +516,11 @@ def main():
 
     ray_address = os.getenv("RAY_ADDRESS") or None
 
-    # Build optional node_ip_address kwarg — only passed when NODE_IP is set.
-    # This avoids passing None explicitly which Ray may handle differently
-    # across versions.
-    node_ip_kwargs = {"node_ip_address": NODE_IP} if NODE_IP else {}
+    # Set RAY_NODE_IP_ADDRESS so Ray advertises the Tailscale IP
+    # instead of auto-detecting the Docker bridge interface.
 
     if NODE_IP:
+        os.environ["RAY_NODE_IP_ADDRESS"] = NODE_IP
         log.info("🌐 Node IP override: %s (Tailscale)", NODE_IP)
 
     if ray_address:
@@ -533,7 +532,6 @@ def main():
                     address=ray_address,
                     ignore_reinit_error=True,
                     logging_level="WARNING",
-                    **node_ip_kwargs,
                 )
                 log.info(
                     "✅ Joined Ray cluster — resources: %s", ray.cluster_resources()
@@ -563,7 +561,6 @@ def main():
             dashboard_host="0.0.0.0",  # nosec B104
             dashboard_port=RAY_DASHBOARD_PORT,
             logging_level="WARNING",
-            **node_ip_kwargs,
         )
 
         log.info(
