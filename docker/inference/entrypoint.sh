@@ -28,6 +28,7 @@ fi
 if [[ -z "${RAY_ADDRESS:-}" ]]; then
     echo "[entrypoint] Starting Ray HEAD node on client server port ${RAY_CLIENT_SERVER_PORT:-10001}"
     ray start --head \
+        --node-ip-address="${NODE_IP:-0.0.0.0}" \
         --dashboard-host=0.0.0.0 \
         --dashboard-port="${RAY_DASHBOARD_PORT:-8265}" \
         --ray-client-server-port="${RAY_CLIENT_SERVER_PORT:-10001}" \
@@ -38,6 +39,7 @@ else
     echo "[entrypoint] Joining Ray cluster as WORKER node at ${RAY_HEAD_ADDR}"
     ray start \
         --address="${RAY_HEAD_ADDR}" \
+        --node-ip-address="${NODE_IP:-}" \
         --disable-usage-stats
     echo "[entrypoint] Ray worker node started."
 fi
