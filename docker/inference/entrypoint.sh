@@ -5,7 +5,7 @@ service ssh start
 
 # Start Tailscale in userspace mode — no NET_ADMIN required.
 if [[ -n "${TAILSCALE_AUTH_KEY:-}" ]]; then
-    tailscaled --tun=userspace-networking --statedir=/tmp/tailscale &
+    tailscaled --tun=userspace-networking --statedir=/var/lib/tailscale &
     sleep 3
     tailscale up \
         --authkey="${TAILSCALE_AUTH_KEY}" \
