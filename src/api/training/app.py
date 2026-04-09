@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from projectdavid_common import UtilsInterface
 
-from src.api.training.db.database import SessionLocal, engine, wait_for_db
+from src.api.training.db.database import wait_for_db
 from src.api.training.routers import training_router
 from src.api.training.services.lease_service import acquire_api_lease, renew_api_lease
 from src.api.training.services.training_service import get_redis_client
@@ -71,8 +71,8 @@ async def lifespan(app: FastAPI):
 
     # Note: training-api does NOT connect to Ray directly.
     # Resource availability is queried via the Ray dashboard HTTP API
-    # (http://inference_worker:8265/api/v0/nodes) in model_registry_service.py.
-    # This avoids GCS port conflicts and requires no Ray init here.
+    # (http://inference_worker:8265/api/v0/nodes) in deployment_service.py.
+    # This avoids GCC port conflicts and requires no Ray init here.
 
     maintenance_task = asyncio.create_task(cluster_maintenance_loop(r))
 
@@ -113,6 +113,8 @@ def create_app(init_db: bool = True) -> FastAPI:
         allow_headers=["*"],
     )
 
+    # All routers are registered via the training_router aggregator.
+    # See src/api/training/routers/__init__.py for the full routing table.
     app.include_router(training_router, prefix="/v1")
 
     @app.get("/")
