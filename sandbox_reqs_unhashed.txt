@@ -1,3 +1,4 @@
+# projectdavid-core, sandbox
 pip==25.0.1
 setuptools==79.0.1
 wheel==0.45.1
