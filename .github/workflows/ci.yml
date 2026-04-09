@@ -185,7 +185,9 @@ jobs:
   #
   #  Pushes images tagged :dev-<sha> to Docker Hub.
   #  These are never tagged :latest and never affect production deployments.
-  #  The platform dev branch pins to these digests for pre-release testing.
+  #  After a successful build, automatically updates docker-compose.yml in
+  #  projectdavid-platform-staging so the staging environment always tracks
+  #  the latest dev images without manual intervention.
   # ──────────────────────────────────────────────────────────────────────────
   build_staging:
     name: "🧪 Build & Publish Staging Images"
@@ -276,6 +278,29 @@ jobs:
           echo "| inference-worker | \`dev-${{ steps.sha.outputs.SHORT_SHA }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Pin these in platform \`docker-compose.yml\` for pre-release testing." >> $GITHUB_STEP_SUMMARY
+
+      - name: "📦 Update staging repo docker-compose.yml"
+        env:
+          STAGING_REPO_PAT: ${{ secrets.STAGING_REPO_PAT }}
+          SHORT_SHA: ${{ steps.sha.outputs.SHORT_SHA }}
+        run: |
+          git clone https://x-access-token:${STAGING_REPO_PAT}@github.com/project-david-ai/projectdavid-platform-staging.git /tmp/staging
+          cd /tmp/staging
+
+          git config user.email "ci@projectdavid.ai"
+          git config user.name "Project David CI"
+
+          # Replace any existing dev-<sha> tag with the new one
+          sed -i "s/dev-[a-f0-9]\{8\}/dev-${SHORT_SHA}/g" docker-compose.yml
+
+          # Update the pinned SHA comment in the header
+          sed -i "s/Pinned to staging build: dev-[a-f0-9]\{8\} ([0-9-]*)/Pinned to staging build: dev-${SHORT_SHA} ($(date +%Y-%m-%d))/g" docker-compose.yml
+
+          git add docker-compose.yml
+          git diff --cached --quiet && echo "No changes to commit" && exit 0
+
+          git commit -m "chore(deps): pin staging images to dev-${SHORT_SHA} [skip ci]"
+          git push origin main
 
   # ──────────────────────────────────────────────────────────────────────────
   #  🚀  Build & Publish Docker images (MAIN BRANCH ONLY)
