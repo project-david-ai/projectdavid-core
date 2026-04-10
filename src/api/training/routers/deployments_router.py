@@ -123,7 +123,7 @@ def activate_fine_tuned_model(
 
 
 @router.get(
-    "",
+    "/",
     response_model=DeploymentListResponse,
     summary="List active deployments",
     description=(
@@ -192,7 +192,7 @@ def deactivate_fine_tuned_model(
 
 
 @router.delete(
-    "",
+    "/",
     response_model=DeactivateAllResponse,
     summary="Deactivate all deployments",
     description=(
@@ -208,7 +208,7 @@ def deactivate_all(
 ) -> DeactivateAllResponse:
     _require_admin(current_user_id, db)
     service = DeploymentService(db)
-    result = service._clear_all_deployments()
+    service._clear_all_deployments()
     return DeactivateAllResponse(
         status="success",
         message="All deployments cleared. InferenceReconciler will release GPU resources on next poll.",
