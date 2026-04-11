@@ -27,7 +27,7 @@ from src.api.entities_api.clients.multimodal_utils import (
     is_multimodal,
     normalise_for_chat,
 )
-from src.api.entities_api.dependencies import get_redis, get_redis_sync
+from src.api.entities_api.dependencies import get_redis_sync
 from src.api.entities_api.orchestration.engine.orchestrator_core import OrchestratorCore
 
 # --- MIXINS ---
@@ -51,7 +51,16 @@ class GptOssBaseWorker(
         and normalised to the OpenAI image_url format before dispatch.
         Normalisation is applied to cleaned_ctx AFTER prepare_native_tool_context
         so the tool extraction step is unaffected.
+
+    Provider image limits:
+        VISION_MAX_IMAGES controls how many images are passed per request.
+        Default is None (unlimited). Subclasses override for providers with
+        per-request image caps.
     """
+
+    # Override in subclasses for providers with per-request image caps.
+    # None = unlimited.
+    VISION_MAX_IMAGES: Optional[int] = None
 
     def __init__(
         self,
@@ -65,6 +74,7 @@ class GptOssBaseWorker(
         assistant_cache_service: Optional[AssistantCache] = None,
         **extra,
     ) -> None:
+        super().__init__(**extra)
 
         self.api_key = api_key or extra.get("api_key")
         self.is_deep_research = None
@@ -96,11 +106,9 @@ class GptOssBaseWorker(
         )
 
         self._david_client: Any = None
-        self.redis = redis or get_redis()
         self.assistant_id = assistant_id
         self.thread_id = thread_id
         self.base_url = base_url or os.getenv("BASE_URL")
-        self.api_key = api_key
 
         self.model_name = extra.get("model_name", "openai/gpt-oss-120b")
         self.max_context_window = extra.get("max_context_window", 131072)
@@ -117,6 +125,8 @@ class GptOssBaseWorker(
             self.get_function_call_state = lambda: None
             self.set_function_call_state = lambda x: None
             self.set_tool_response_state = lambda x: None
+
+        LOG.debug("%s ready (assistant=%s)", self.__class__.__name__, assistant_id)
 
     @abstractmethod
     def _get_client_instance(self, api_key: str):
@@ -140,8 +150,6 @@ class GptOssBaseWorker(
         self.ephemeral_supervisor_id = None
         self._scratch_pad_thread = None
 
-        redis = self.redis
-        stream_key = f"stream:{run_id}"
         stop_event = self.start_cancellation_monitor(run_id)
 
         _original_assistant_id = assistant_id
@@ -173,7 +181,7 @@ class GptOssBaseWorker(
             self.is_engineer = self.assistant_config.get("is_engineer", False)
 
             agent_mode_setting = self.assistant_config.get("agent_mode", False)
-            decision_telemetry = self.assistant_config.get("decision_telemetry", True)
+            decision_telemetry = self.assistant_config.get("decision_telemetry", False)
 
             web_access_setting = self.assistant_config.get("web_access", False)
 
@@ -316,9 +324,13 @@ class GptOssBaseWorker(
             # ------------------------------------------------------------------
             if is_multimodal(cleaned_ctx):
                 LOG.info(
-                    "GptOssBaseWorker ▸ multimodal context detected — normalising to OpenAI image_url format."
+                    "GptOssBaseWorker ▸ multimodal context detected — normalising to OpenAI "
+                    "image_url format (max_images=%s).",
+                    self.VISION_MAX_IMAGES,
                 )
-                cleaned_ctx = normalise_for_chat(cleaned_ctx)
+                cleaned_ctx = normalise_for_chat(
+                    cleaned_ctx, max_images=self.VISION_MAX_IMAGES
+                )
 
             if not api_key:
                 yield json.dumps({"type": "error", "content": "Missing API key."})
@@ -335,6 +347,13 @@ class GptOssBaseWorker(
                 "temperature", kwargs.get("temperature", 0.6)
             )
             _top_p = self.assistant_config.get("top_p", None)
+
+            LOG.info(
+                "INFERENCE PARAMS ▸ max_tokens=%s | temperature=%s | top_p=%s",
+                _max_tokens,
+                _temperature,
+                _top_p,
+            )
 
             raw_stream = client.stream_chat_completion(
                 messages=cleaned_ctx,
@@ -474,9 +493,9 @@ class GptOssBaseWorker(
 
         except Exception as exc:
             LOG.error(f"DEBUG: Stream Exception: {exc}")
-            err = {"type": "error", "content": f"Stream error: {exc}", "run_id": run_id}
-            yield json.dumps(err)
-            await self._shunt_to_redis_stream(redis, stream_key, err)
+            yield json.dumps(
+                {"type": "error", "content": f"Stream error: {exc}", "run_id": run_id}
+            )
 
         finally:
             stop_event.set()

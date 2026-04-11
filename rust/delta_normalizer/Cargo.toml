@@ -1,0 +1,21 @@
+[package]
+name = "delta_normalizer_rs"
+version = "0.1.0"
+edition = "2021"
+description = "Rust-accelerated hot path components for the Project David inference pipeline"
+authors = ["Francis Neequaye Armah <engineering@projectdavid.co.uk>"]
+
+[lib]
+name = "delta_normalizer_rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.21", features = ["extension-module"] }
+serde_json = "1.0"
+pythonize = "0.21"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
