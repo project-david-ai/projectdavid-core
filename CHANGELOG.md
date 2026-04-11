@@ -1,3 +1,47 @@
+# [1.36.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.35.0...v1.36.0) (2026-04-11)
+
+
+### Bug Fixes
+
+* **deployments:** change list and deactivate_all route from empty string to slash ([a4e1a59](https://github.com/project-david-ai/projectdavid-core/commit/a4e1a59fa09a4ef912ba070ee83301b2edbb6283))
+* **deployment:** use resources_total for GPU check when no active deployments ([3b74553](https://github.com/project-david-ai/projectdavid-core/commit/3b7455398748b8e32d72f717b242c6319c7178ed))
+* **docker:** add libc6-dev to rust_builder stage for linking ([f51149a](https://github.com/project-david-ai/projectdavid-core/commit/f51149ac6ffa2dd43a3ea2d2928cd11f01c3b439))
+* **entities:** restore entities_api app.py — training app was mistakenly injected during license notice addition ([8fd71f2](https://github.com/project-david-ai/projectdavid-core/commit/8fd71f218b80363f2a6fbc39ed67dfeb19ec492e))
+* **inference-resolver:** join BaseModel table for HF path lookup; support dep PK, bm_ ID, ftm_ ID and bare HF endpoint string ([269f9a6](https://github.com/project-david-ai/projectdavid-core/commit/269f9a6f7c0422fb5b7854b2d7a7f7412f7a52f4))
+* **inference:** pass --node-ip-address to ray start for Tailscale cluster networking ([0829625](https://github.com/project-david-ai/projectdavid-core/commit/0829625db48acb47f384f76c5bc55efd34bcb6f9))
+* **inference:** persist tailscale state to volume mount instead of ephemeral /tmp ([cb10d55](https://github.com/project-david-ai/projectdavid-core/commit/cb10d55a3b4437fea8ad102a4a48eaf95e9e4735))
+* **inference:** self-configure NODE_IP from Tailscale and fix worker GCS port to 6379 ([3c7f597](https://github.com/project-david-ai/projectdavid-core/commit/3c7f59775317ece71735d7a3199ba8a62b6a359a))
+* **inference:** set RAY_NODE_IP_ADDRESS env var for Tailscale cluster networking ([f61a175](https://github.com/project-david-ai/projectdavid-core/commit/f61a17512ac5c1dce16420c5864a2df4da3b5492))
+* **migrations:** update alembic env.py Base import from projectdavid_common.projectdavid_orm.base to projectdavid_orm ([16170f9](https://github.com/project-david-ai/projectdavid-core/commit/16170f955a43c915c68cb1d0bccf00dd30209c79))
+* **nginx:** add /v1/deployments/ route to training_api:9001 ([3f58110](https://github.com/project-david-ai/projectdavid-core/commit/3f58110918359ba2c17e725639adc708fd40e2b7))
+* **orm:** declare Base locally in models.py — remove dependency on projectdavid_common.projectdavid_orm.base ([8e73e5d](https://github.com/project-david-ai/projectdavid-core/commit/8e73e5d2a1d6a9af44b97474888b00e6251c0008))
+* **platform:** add commercial sustainability notice to runtime startup ([56410ff](https://github.com/project-david-ai/projectdavid-core/commit/56410ffce97eccb7725afc4090636f89553443fe))
+* **platform:** add commercial sustainability notice to runtime startup ([b96b2f1](https://github.com/project-david-ai/projectdavid-core/commit/b96b2f1fefbb9e3f09335340aecfe767602feae4))
+* **router:** bump rust base image to 1.85 for edition2024 support ([1a0c54e](https://github.com/project-david-ai/projectdavid-core/commit/1a0c54e1d9c159583244a6617bb5d459138e2b34))
+* **router:** bump rust base image to 1.86 for icu crate compatibility ([fd4996d](https://github.com/project-david-ai/projectdavid-core/commit/fd4996d0f30a62f67b183572974bf077eef238c5))
+* **truncator:** degrade gracefully to char-based estimate when no tokenizer cache available — local_files_only=True, None-safe count methods, airgap safe ([0028b2d](https://github.com/project-david-ai/projectdavid-core/commit/0028b2db28272966f695070a36eba2c6c465cad4))
+* **version:** delete version,py ([e2a4754](https://github.com/project-david-ai/projectdavid-core/commit/e2a4754b39822d4512ed4f68291b87566bf41efa))
+
+
+### Features
+
+* **ci:** add router image builds and platform repo auto-update on main ([349ab84](https://github.com/project-david-ai/projectdavid-core/commit/349ab84b1f444ad204c6d5788610879b31520bde))
+* **ci:** auto-update staging repo docker-compose.yml after successful dev build ([90132ff](https://github.com/project-david-ai/projectdavid-core/commit/90132ff08a3ab2594fe637f7a2df3cb4f225f002))
+* **ci:** auto-update staging repo docker-compose.yml after successful dev build ([2b51fa9](https://github.com/project-david-ai/projectdavid-core/commit/2b51fa96bc3252a36b50df1c8264c2f3a4a8f51c))
+* **inference:** NODE_IP and Tailscale cluster networking strictly opt-in via env vars ([2ebce34](https://github.com/project-david-ai/projectdavid-core/commit/2ebce34874ab4414be03a1362f101e9246603aae))
+* **infra:** add rust_builder stage to Dockerfile, update dockerignore ([d1cd17b](https://github.com/project-david-ai/projectdavid-core/commit/d1cd17b921474d5247f3983d4af11573b9ef000e))
+* **perf:** Phase 2 — Rust SSE framer in stream_generator hot path ([c205c64](https://github.com/project-david-ai/projectdavid-core/commit/c205c642c9caf1a401353dbf8fe4f1ac8741345a))
+* **perf:** Phase 3 — Rust request router (pd_router) ([701448c](https://github.com/project-david-ai/projectdavid-core/commit/701448c37c8cb796fbac99ae598e95ef1a327bb3))
+* **perf:** replace C delta_normalizer with Rust via PyO3 ([143f189](https://github.com/project-david-ai/projectdavid-core/commit/143f189d1b7cd5245fcdb20c76dac6192fbadeb2))
+* **training:** add DeploymentService and deployments router, fix Ray entrypoint ([caa288a](https://github.com/project-david-ai/projectdavid-core/commit/caa288a79fadc1ffdb2873e3a44b9c91f563d8da))
+* **training:** add DeploymentService and deployments router, fix Ray entrypoint ([021fbd4](https://github.com/project-david-ai/projectdavid-core/commit/021fbd48b2a180e30d95df33a05d219d55aad4f4))
+
+
+### Reverts
+
+* Revert "docs(security): update SECURITY.md for SDK v1.96.5" ([c980f28](https://github.com/project-david-ai/projectdavid-core/commit/c980f28e5c2d099a74995302078d5099e564f890))
+* Revert "docs(security): update SECURITY.md for SDK v1.96.5" ([9a17d53](https://github.com/project-david-ai/projectdavid-core/commit/9a17d535e106f6605d709cc84ca1ae47bda75905))
+
 # [1.35.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.34.0...v1.35.0) (2026-04-07)
 
 
