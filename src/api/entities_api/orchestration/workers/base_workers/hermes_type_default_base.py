@@ -22,7 +22,11 @@ from projectdavid_common.utilities.logging_service import LoggingUtility
 from projectdavid_common.validation import StatusEnum
 
 # --- DEPENDENCIES ---
-from src.api.entities_api.dependencies import get_redis, get_redis_sync
+from src.api.entities_api.clients.multimodal_utils import (
+    is_multimodal,
+    normalise_for_chat,
+)
+from src.api.entities_api.dependencies import get_redis_sync
 from src.api.entities_api.orchestration.engine.orchestrator_core import OrchestratorCore
 
 # --- MIXINS ---
@@ -40,7 +44,20 @@ class HermesDefaultBaseWorker(
     """
     Async Base for 'deepcogito/cogito-v2-preview-llama-405B' (Hermes Type).
     Migrated to Async-First Architecture with Deep Research capabilities.
+
+    Vision support:
+        Multimodal messages (hydrated image blocks) are automatically detected
+        and normalised to the OpenAI image_url format before dispatch.
+
+    Provider image limits:
+        VISION_MAX_IMAGES controls how many images are passed per request.
+        Default is None (unlimited). Subclasses override for providers with
+        per-request image caps.
     """
+
+    # Override in subclasses for providers with per-request image caps.
+    # None = unlimited.
+    VISION_MAX_IMAGES: Optional[int] = None
 
     def __init__(
         self,
@@ -54,16 +71,14 @@ class HermesDefaultBaseWorker(
         assistant_cache_service: Optional[AssistantCache] = None,
         **extra,
     ) -> None:
+        super().__init__(**extra)
 
         # 1. Config & Dependencies
         self.api_key = api_key or extra.get("api_key")
-        # ephemeral worker config
-        # These objects are used for deep search and engineering flows
         self.is_deep_research = None
         self._scratch_pad_thread = None
         self._batfish_owner_user_id: str | None = None
 
-        # --- NEW: Engineer flow tracking variables ---
         self.is_engineer = None
 
         self._delete_ephemeral_thread = delete_ephemeral_thread or extra.get(
@@ -71,12 +86,8 @@ class HermesDefaultBaseWorker(
         )
         self.ephemeral_supervisor_id = None
 
-        # ---[FIX 3] Missing Init Property ---
         self._research_worker_thread = None
         self._worker_thread = None
-
-        # 1. Capture the 'assistant_cache' argument manually
-        arg_assistant_cache_dict = extra.get("assistant_cache")
 
         # 2. Setup Redis
         self.redis = redis or get_redis_sync()
@@ -91,17 +102,15 @@ class HermesDefaultBaseWorker(
             self._assistant_cache = extra["assistant_cache"]
 
         # 4. Setup Config
-        legacy_config = extra.get("assistant_config") or arg_assistant_cache_dict
+        legacy_config = extra.get("assistant_config") or extra.get("assistant_cache")
         self.assistant_config: Dict[str, Any] = (
             legacy_config if isinstance(legacy_config, dict) else {}
         )
 
         self._david_client: Any = None
-        self.redis = redis or get_redis()
         self.assistant_id = assistant_id
         self.thread_id = thread_id
         self.base_url = base_url or os.getenv("BASE_URL")
-        self.api_key = api_key or extra.get("api_key")
 
         self.model_name = extra.get(
             "model_name", "deepcogito/cogito-v2-preview-llama-405B"
@@ -109,21 +118,19 @@ class HermesDefaultBaseWorker(
         self.max_context_window = extra.get("max_context_window", 128000)
         self.threshold_percentage = extra.get("threshold_percentage", 0.8)
 
-        # Standardized tracking variables
         self._current_tool_call_id: str | None = None
         self._pending_tool_payload: Optional[Dict[str, Any]] = None
         self._decision_payload: Optional[Dict[str, Any]] = None
 
         self.setup_services()
 
-        # Safety stubbing
         if not hasattr(self, "get_function_call_state"):
             LOG.error("CRITICAL: ToolRoutingMixin failed to load.")
             self.get_function_call_state = lambda: None
             self.set_function_call_state = lambda x: None
             self.set_tool_response_state = lambda x: None
 
-        LOG.debug("DeepCogito worker initialized (assistant=%s)", assistant_id)
+        LOG.debug("%s ready (assistant=%s)", self.__class__.__name__, assistant_id)
 
     @abstractmethod
     def _get_client_instance(self, api_key: str):
@@ -147,20 +154,12 @@ class HermesDefaultBaseWorker(
         Includes Deep Research Supervisor Logic & Standardized State Management.
         """
 
-        # -----------------------------------
-        # Ephemeral supervisor
-        # -----------------------------------
         self._run_user_id = None
         self.ephemeral_supervisor_id = None
-
-        # --- [FIX 1] Scratchpad Variable Initialization ---
         self._scratch_pad_thread = None
 
-        redis = self.redis
-        stream_key = f"stream:{run_id}"
         stop_event = self.start_cancellation_monitor(run_id)
 
-        # --- [FIX] Capture original assistant_id BEFORE any identity swap ---
         _original_assistant_id = assistant_id
 
         # 1. State Initialization
@@ -186,7 +185,6 @@ class HermesDefaultBaseWorker(
 
             # ------------------------------------------------------------------
             # 3. ROLE FLAG EXTRACTION
-            # Read all role signals from the assistant's normalized config.
             # ------------------------------------------------------------------
             self.is_deep_research = self.assistant_config.get("deep_research", False)
             self.is_engineer = self.assistant_config.get("is_engineer", False)
@@ -194,13 +192,10 @@ class HermesDefaultBaseWorker(
             agent_mode_setting = self.assistant_config.get("agent_mode", False)
             decision_telemetry = self.assistant_config.get("decision_telemetry", False)
 
-            # Default web_access from config
             web_access_setting = self.assistant_config.get("web_access", False)
 
-            # Extract from meta_data for dynamic ephemeral flags
             raw_meta = self.assistant_config.get("meta_data", {})
 
-            # Worker role flags
             is_worker_val = raw_meta.get(
                 "is_research_worker", raw_meta.get("research_worker_calling", False)
             )
@@ -210,7 +205,6 @@ class HermesDefaultBaseWorker(
                 "is_research_worker", False
             )
 
-            # Check for "junior_engineer"
             is_junior_val = raw_meta.get(
                 "junior_engineer", raw_meta.get("junior_engineer_calling", False)
             )
@@ -218,25 +212,17 @@ class HermesDefaultBaseWorker(
 
             # ------------------------------------------------------------------
             # 4. ROLE CONFLICT RESOLUTION
-            # Exactly one role is active per invocation.
             # ------------------------------------------------------------------
             if self.is_engineer:
-                # SENIOR ENGINEER (SUPERVISOR)
                 web_access_setting = False
                 research_worker_setting = False
                 junior_engineer_setting = False
                 self.is_deep_research = False
 
             elif self.is_deep_research:
-                # RESEARCH SUPERVISOR
                 web_access_setting = False
                 research_worker_setting = False
                 junior_engineer_setting = False
-                # --------------------------------------------------------
-                # Pass the inference api key through the run
-                # Pass the delegated research model through the run
-                # object — trusted internally write, no ownership check.
-                # --------------------------------------------------------
                 delegation_model = get_delegated_model(requested_model=pre_mapped_model)
                 await self._native_exec.update_run_fields(
                     run_id,
@@ -244,12 +230,10 @@ class HermesDefaultBaseWorker(
                 )
 
             elif research_worker_setting:
-                # RESEARCH WORKER
                 web_access_setting = True
                 junior_engineer_setting = False
 
             elif junior_engineer_setting:
-                # JUNIOR NETWORK ENGINEER
                 web_access_setting = False
                 research_worker_setting = False
 
@@ -268,17 +252,9 @@ class HermesDefaultBaseWorker(
             )
 
             # ------------------------------------------------------------------
-            # CAPTURE REAL USER ID — before any identity swap mutates state.
-            # This is the user who owns the run, thread, and all snapshots.
-            # Must be set before _handle_role_based_identity_swap().
-            #
-            # CAPTURE REAL SCRATCHPAD THREAD ID — before any identity swap mutates state.
-            # Workers carry scratch_pad_thread in their run meta_data, stamped there
-            # by the supervisor at delegation time. We read it back here so the worker
-            # reads from the supervisor's shared pad rather than its own ephemeral thread.
+            # CAPTURE REAL USER ID
             # ------------------------------------------------------------------
             try:
-                # Upgraded to _native_exec to match bleeding-edge Qwen standard
                 run = await self._native_exec.retrieve_run(run_id)
                 self._run_user_id = run.user_id
 
@@ -290,8 +266,6 @@ class HermesDefaultBaseWorker(
                 if self._batfish_owner_user_id is None:
                     self._batfish_owner_user_id = meta_owner or run.user_id
 
-                # Only set from meta_data if present — guards against overwriting
-                # a value already resolved on a prior turn.
                 if self._scratch_pad_thread is None and meta_scratchpad:
                     self._scratch_pad_thread = meta_scratchpad
 
@@ -306,13 +280,12 @@ class HermesDefaultBaseWorker(
                 LOG.warning("STREAM ▸ Could not resolve run_user_id: %s", e)
 
             # ------------------------------------------------------------------
-            # 5. IDENTITY SWAP & RELOAD (Supervisor roles only)
+            # 5. IDENTITY SWAP & RELOAD
             # ------------------------------------------------------------------
             await self._handle_role_based_identity_swap(
                 requested_model=pre_mapped_model
             )
 
-            # --- CRITICAL FIX: Reload config if identity was swapped! ---
             if self.assistant_id != _original_assistant_id:
                 LOG.info(
                     f"Identity swapped from {_original_assistant_id} to {self.assistant_id}. Reloading config."
@@ -329,7 +302,9 @@ class HermesDefaultBaseWorker(
                 "STREAM ▸ Scratchpad thread pinned to: %s", self._scratch_pad_thread
             )
 
-            # 3. Context Setup
+            # ------------------------------------------------------------------
+            # 6. CONTEXT WINDOW CONSTRUCTION
+            # ------------------------------------------------------------------
             ctx = await self._set_up_context_window(
                 assistant_id=self.assistant_id,
                 thread_id=thread_id,
@@ -352,11 +327,41 @@ class HermesDefaultBaseWorker(
 
             client = self._get_client_instance(api_key=api_key)
 
+            # ------------------------------------------------------------------
+            # 7. MULTIMODAL NORMALISATION
+            # Hydrated image blocks arrive as {"type": "image", "image": "data:..."}
+            # (internal format from NativeExecutionService.hydrate_messages).
+            # All OpenAI-compatible providers require
+            # {"type": "image_url", "image_url": {"url": "data:..."}} instead.
+            # Plain text contexts pass through this block untouched.
+            # ------------------------------------------------------------------
+            if is_multimodal(ctx):
+                LOG.info(
+                    "HermesDefaultBaseWorker ▸ multimodal context detected — normalising to OpenAI "
+                    "image_url format (max_images=%s).",
+                    self.VISION_MAX_IMAGES,
+                )
+                ctx = normalise_for_chat(ctx, max_images=self.VISION_MAX_IMAGES)
+
+            LOG.info(
+                f"\nRAW_CTX_DUMP:\n{json.dumps(ctx, indent=2, ensure_ascii=False)}"
+            )
+
+            # ------------------------------------------------------------------
+            # 8. THE STREAM LOOP
+            # ------------------------------------------------------------------
             _max_tokens = self.assistant_config.get("max_tokens", None)
             _temperature = self.assistant_config.get(
                 "temperature", kwargs.get("temperature", 0.6)
             )
             _top_p = self.assistant_config.get("top_p", None)
+
+            LOG.info(
+                "INFERENCE PARAMS ▸ max_tokens=%s | temperature=%s | top_p=%s",
+                _max_tokens,
+                _temperature,
+                _top_p,
+            )
 
             raw_stream = client.stream_chat_completion(
                 messages=ctx,
@@ -367,12 +372,10 @@ class HermesDefaultBaseWorker(
                 stream=True,
             )
 
-            # 4. Stream Loop using Helper
             async for chunk in DeltaNormalizer.async_iter_deltas(raw_stream, run_id):
                 if stop_event.is_set():
                     break
 
-                # Delegate state management to the mixin helper
                 (
                     current_block,
                     accumulated,
@@ -392,13 +395,9 @@ class HermesDefaultBaseWorker(
             if current_block:
                 accumulated += f"</{current_block}>"
 
-            # =========================================================================
-            # [FIXED] POST-STREAM PROCESSING MOVED INSIDE TRY BLOCK
-            # This ensures we finalize/persist using the SUPERVISOR ID
-            # before the 'finally' block restores the Original ID.
-            # =========================================================================
-
-            # 5. Post-Processing (Decision Parsing)
+            # ------------------------------------------------------------------
+            # 9. POST-STREAM PROCESSING
+            # ------------------------------------------------------------------
             if decision_buffer:
                 try:
                     self._decision_payload = json.loads(decision_buffer.strip())
@@ -411,8 +410,6 @@ class HermesDefaultBaseWorker(
                 {"type": "status", "status": "processing", "run_id": run_id}
             )
 
-            # 6. Parse Tools & Sync IDs
-            # The parser ensures every tool in the list has a 'id' key.
             tool_calls_batch = self.parse_and_set_function_calls(
                 accumulated, assistant_reply
             )
@@ -421,11 +418,9 @@ class HermesDefaultBaseWorker(
             final_status = StatusEnum.completed.value
 
             if tool_calls_batch:
-                # Update the internal queue for the dispatcher
                 self._tool_queue = tool_calls_batch
                 final_status = StatusEnum.pending_action.value
 
-                # Build the Hermes/OpenAI Structured Envelope for the Dialogue
                 tool_calls_structure = []
                 for tool in tool_calls_batch:
                     tool_id = tool.get("id") or f"call_{uuid.uuid4().hex[:8]}"
@@ -445,16 +440,13 @@ class HermesDefaultBaseWorker(
                         }
                     )
 
-                # CRITICAL: We overwrite message_to_save with the standard tool structure
                 message_to_save = json.dumps(tool_calls_structure)
 
                 LOG.info(
                     f"\n🚀[L3 AGENT MANIFEST] Turn 1 Batch of {len(tool_calls_structure)}"
                 )
 
-            # Persistence: Assistant Plan/Actions saved to Thread
             if message_to_save:
-                # [FIX]: Use self.assistant_id to save under the supervisor's ID (if applicable)
                 await self.finalize_conversation(
                     message_to_save, thread_id, self.assistant_id, run_id
                 )
@@ -468,12 +460,11 @@ class HermesDefaultBaseWorker(
 
         except Exception as exc:
             LOG.error(f"DEBUG: Stream Exception: {exc}")
-            err = {"type": "error", "content": f"Stream error: {exc}", "run_id": run_id}
-            yield json.dumps(err)
-            await self._shunt_to_redis_stream(redis, stream_key, err)
+            yield json.dumps(
+                {"type": "error", "content": f"Stream error: {exc}", "run_id": run_id}
+            )
 
         finally:
-            # 1. Ensure cancellation monitor is stopped
             stop_event.set()
 
     def stream_sync(
@@ -576,7 +567,6 @@ class HermesDefaultBaseWorker(
         t = threading.Thread(target=_run_in_thread, daemon=True)
         t.start()
 
-        # Spin until the background thread has created and registered the queue
         while not queue_ref:
             time.sleep(0.001)
 
