@@ -24,6 +24,19 @@ GPU memory notes:
     DB column `gpu_memory_utilization` when present, with that value clamped to
     [0.10, 0.95] to guard against bad data.  Set VLLM_DEFAULT_GPU_MEM_UTIL in
     the environment to change the default for all deployments on this node.
+
+NODE_IP notes:
+    When NODE_IP is set, Ray advertises that IP address to the cluster instead
+    of auto-detecting the network interface. This is required for Tailscale
+    deployments where each node has a stable 100.x.x.x Tailscale IP that is
+    mutually reachable by all cluster members.
+
+    Set NODE_IP to the Tailscale IP on both HEAD and worker nodes:
+        HEAD   : NODE_IP=<head-tailscale-ip>  (in .env or docker-compose.yml)
+        WORKER : NODE_IP=<worker-tailscale-ip> (in RunPod template env vars)
+
+    When NODE_IP is set on the HEAD, set RAY_ADDRESS on the worker to:
+        RAY_ADDRESS=ray://<head-tailscale-ip>:10001
 """
 
 import logging
@@ -51,6 +64,11 @@ HF_CACHE_PATH = os.getenv("HF_CACHE_PATH", "/root/.cache/huggingface")
 SHARED_PATH = os.getenv("SHARED_PATH", "/mnt/training_data")
 NODE_ID = os.getenv("NODE_ID", f"node_{socket.gethostname()}")
 SERVE_HTTP_PORT = int(os.getenv("SERVE_HTTP_PORT", "8000"))
+
+# Tailscale / overlay network IP for this node.
+# When set, Ray advertises this IP instead of auto-detecting the interface.
+# Required for Tailscale-based multi-node clusters.
+NODE_IP = os.getenv("NODE_IP") or None
 
 # Retry config for worker node cluster join
 RAY_JOIN_MAX_RETRIES = int(os.getenv("RAY_JOIN_MAX_RETRIES", "20"))
@@ -484,17 +502,26 @@ def main():
     # ── Phase 1: Start Ray (HEAD or Worker) ──────────────────────────────
     #
     # RAY_ADDRESS unset → HEAD node.
-    #   node_ip_address passed so HEAD advertises the correct IP to workers.
-    #   Required for tunnel/NAT/Tailscale scenarios.
+    #   node_ip_address passed when NODE_IP is set so the HEAD advertises
+    #   its Tailscale IP to workers rather than the Docker bridge IP.
+    #   Required for Tailscale-based multi-node clusters.
     #
     # RAY_ADDRESS set → Worker node joining existing cluster.
-    #   Ray client builder path — does NOT accept node_ip_address or
-    #   dashboard kwargs. Passing them raises RuntimeError.
+    #   node_ip_address passed when NODE_IP is set so the worker registers
+    #   its Tailscale IP with the cluster, enabling bidirectional Ray
+    #   communication without an SSH tunnel for Ray traffic.
     #   Retries up to RAY_JOIN_MAX_RETRIES times with RAY_JOIN_RETRY_DELAY
     #   seconds between attempts — tolerates Tailscale connect delay and
     #   transient HEAD unavailability without crashing the container.
 
     ray_address = os.getenv("RAY_ADDRESS") or None
+
+    # Set RAY_NODE_IP_ADDRESS so Ray advertises the Tailscale IP
+    # instead of auto-detecting the Docker bridge interface.
+
+    if NODE_IP:
+        os.environ["RAY_NODE_IP_ADDRESS"] = NODE_IP
+        log.info("🌐 Node IP override: %s (Tailscale)", NODE_IP)
 
     if ray_address:
         # ── Worker node ───────────────────────────────────────────────────
@@ -527,7 +554,6 @@ def main():
                 time.sleep(RAY_JOIN_RETRY_DELAY)
     else:
         # ── HEAD node ─────────────────────────────────────────────────────
-
         ray.init(
             address=None,
             ignore_reinit_error=True,

@@ -19,6 +19,39 @@ from src.api.entities_api.services.native_execution_service import (
 router = APIRouter()
 logging_utility = LoggingUtility()
 
+# ── Rust SSE framer (Phase 2 hot-path) ───────────────────────────────────────
+# frame_sse_chunk handles type dispatch, run_id injection, JSON serialisation,
+# and SSE framing ("data: ...\n\n") entirely in Rust outside the GIL.
+# Falls back transparently to the pure-Python implementation if unavailable.
+try:
+    from delta_normalizer_rs import frame_sse_chunk as _rs_frame
+
+    def _frame_chunk(chunk, run_id: str) -> str:
+        return _rs_frame(chunk, run_id)
+
+    logging_utility.info(
+        "inference_router: Rust SSE framer active (delta_normalizer_rs)"
+    )
+
+except ImportError:
+    logging_utility.warning(
+        "inference_router: Rust SSE framer not available — using pure Python fallback. "
+        "Build with: cd rust/delta_normalizer && maturin develop --release"
+    )
+
+    def _frame_chunk(chunk, run_id: str) -> str:  # type: ignore[misc]
+        if isinstance(chunk, str):
+            final_str = chunk
+        elif isinstance(chunk, dict):
+            if "run_id" not in chunk:
+                chunk["run_id"] = run_id
+            final_str = json.dumps(chunk)
+        else:
+            final_str = json.dumps(
+                {"type": "content", "content": str(chunk), "run_id": run_id}
+            )
+        return f"data: {final_str}\n\n"
+
 
 @router.post(
     "/completions",
@@ -127,34 +160,21 @@ async def completions(
     # PATH A: STREAMING (default)
     #
     # Each chunk is forwarded to the client as it arrives via SSE.
+    # Rust handles type dispatch, run_id injection, JSON serialisation,
+    # and frame construction ("data: ...\n\n") outside the GIL.
     # ------------------------------------------------------------------
     if stream_request.stream:
 
         async def stream_generator():
             start_time = time.time()
             run_id = stream_request.run_id
-            prefix = "data: "
-            suffix = "\n\n"
             chunk_count = 0
             error_occurred = False
 
             try:
                 async for chunk in event_generator():
                     chunk_count += 1
-                    final_str = ""
-
-                    if isinstance(chunk, str):
-                        final_str = chunk
-                    elif isinstance(chunk, dict):
-                        if "run_id" not in chunk:
-                            chunk["run_id"] = run_id
-                        final_str = json.dumps(chunk)
-                    else:
-                        final_str = json.dumps(
-                            {"type": "content", "content": str(chunk), "run_id": run_id}
-                        )
-
-                    yield f"{prefix}{final_str}{suffix}"
+                    yield _frame_chunk(chunk, run_id)
 
                 if not error_occurred:
                     yield "data: [DONE]\n\n"
@@ -162,8 +182,9 @@ async def completions(
             except Exception as e:
                 error_occurred = True
                 logging_utility.error(f"Stream loop error: {e}", exc_info=True)
-                yield (
-                    f"data: {json.dumps({'type': 'error', 'run_id': run_id, 'message': str(e)})}\n\n"
+                yield _frame_chunk(
+                    {"type": "error", "run_id": run_id, "message": str(e)},
+                    run_id,
                 )
             finally:
                 elapsed = time.time() - start_time
@@ -206,7 +227,6 @@ async def completions(
 
     try:
         async for chunk in event_generator():
-            # Normalise to dict
             if isinstance(chunk, str):
                 try:
                     parsed = json.loads(chunk)
@@ -220,11 +240,9 @@ async def completions(
             chunk_type = parsed.get("type", "content")
 
             if chunk_type == "content":
-                # Assemble the actual response text
                 content_parts.append(parsed.get("content", ""))
 
             elif chunk_type == "error":
-                # Capture the first error and abort assembly
                 error_message = parsed.get("message") or parsed.get(
                     "error", "Unknown error"
                 )
@@ -234,11 +252,6 @@ async def completions(
                 break
 
             else:
-                # Side-effect events (tool_call_start, research_status, web_status,
-                # code_status, shell_status, hot_code, hot_code_output,
-                # computer_output, code_interpreter_file, computer_file,
-                # scratchpad_status, engineer_status, reasoning) —
-                # all execute normally, logged here for observability.
                 logging_utility.info(
                     f"[{run_id}] Buffered side-effect: type={chunk_type}"
                 )

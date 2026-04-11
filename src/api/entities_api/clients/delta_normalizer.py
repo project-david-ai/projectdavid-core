@@ -11,43 +11,42 @@ from projectdavid_common.utilities.logging_service import LoggingUtility
 load_dotenv()
 LOG = LoggingUtility()
 
-# ── C accelerator (optional) ──────────────────────────────────────────────────
-# If the extension is built and importable, the inner `while buffer:` loop is
-# replaced by a single C call that processes the entire buffer in one shot.
-# Falls back transparently to the pure-Python implementation if unavailable.
+# ── Rust accelerator ──────────────────────────────────────────────────────────
+# delta_normalizer_rs replaces the legacy delta_normalizer_core C extension.
+# Built with maturin: cd rust/delta_normalizer && maturin develop --release
+# Falls back transparently to pure Python if the extension is not built.
 try:
-    import delta_normalizer_core as _C
+    import delta_normalizer_rs as _RS
 
-    _C_AVAILABLE = True
-    LOG.info("DeltaNormalizer: C accelerator loaded (delta_normalizer_core)")
+    _RS_AVAILABLE = True
+    LOG.info("DeltaNormalizer: Rust accelerator loaded (delta_normalizer_rs)")
 
-    # Map Python state-string names → C int constants
     _PY_STATE_TO_INT: dict[str, int] = {
-        "content": _C.ST_CONTENT,
-        "think": _C.ST_THINK,
-        "plan": _C.ST_PLAN,
-        "decision": _C.ST_DECISION,
-        "fc": _C.ST_FC,
-        "tool_call_xml": _C.ST_TOOL_CALL_XML,
-        "tool_code_xml": _C.ST_TOOL_CODE_XML,
-        "md_json_block": _C.ST_MD_JSON_BLOCK,
-        "naked_json": _C.ST_NAKED_JSON,
-        "kimi_router": _C.ST_KIMI_ROUTER,
-        "kimi_args": _C.ST_KIMI_ARGS,
-        "unicode_tool_router": _C.ST_UNICODE_TOOL_ROUTER,
-        "unicode_tool_parsing": _C.ST_UNICODE_TOOL_PARSING,
-        "unicode_tool_args": _C.ST_UNICODE_TOOL_ARGS,
-        "channel_reasoning": _C.ST_CHANNEL_REASONING,
-        "channel_tool_meta": _C.ST_CHANNEL_TOOL_META,
-        "channel_tool_payload": _C.ST_CHANNEL_TOOL_PAYLOAD,
+        "content": _RS.ST_CONTENT,
+        "think": _RS.ST_THINK,
+        "plan": _RS.ST_PLAN,
+        "decision": _RS.ST_DECISION,
+        "fc": _RS.ST_FC,
+        "tool_call_xml": _RS.ST_TOOL_CALL_XML,
+        "tool_code_xml": _RS.ST_TOOL_CODE_XML,
+        "md_json_block": _RS.ST_MD_JSON_BLOCK,
+        "naked_json": _RS.ST_NAKED_JSON,
+        "kimi_router": _RS.ST_KIMI_ROUTER,
+        "kimi_args": _RS.ST_KIMI_ARGS,
+        "unicode_tool_router": _RS.ST_UNICODE_TOOL_ROUTER,
+        "unicode_tool_parsing": _RS.ST_UNICODE_TOOL_PARSING,
+        "unicode_tool_args": _RS.ST_UNICODE_TOOL_ARGS,
+        "channel_reasoning": _RS.ST_CHANNEL_REASONING,
+        "channel_tool_meta": _RS.ST_CHANNEL_TOOL_META,
+        "channel_tool_payload": _RS.ST_CHANNEL_TOOL_PAYLOAD,
     }
     _INT_TO_PY_STATE: dict[int, str] = {v: k for k, v in _PY_STATE_TO_INT.items()}
 
 except ImportError:
-    _C_AVAILABLE = False
+    _RS_AVAILABLE = False
     LOG.warning(
-        "DeltaNormalizer: C accelerator not found — running pure Python. "
-        "Build with:  cd c_extensions && python setup.py build_ext --inplace"
+        "DeltaNormalizer: Rust accelerator not found — running pure Python. "
+        "Build with:  cd rust/delta_normalizer && maturin develop --release"
     )
 
 
@@ -104,9 +103,9 @@ class DeltaNormalizer:
             start += 1
         return None
 
-    # ── C-accelerated buffer processor ───────────────────────────────────────
+    # ── Rust-accelerated buffer processor ────────────────────────────────────
     @classmethod
-    def _process_buffer_c(
+    def _process_buffer_rs(
         cls,
         buffer: str,
         state_str: str,
@@ -116,22 +115,20 @@ class DeltaNormalizer:
         run_id: str,
     ):
         """
-        Calls the C extension to process `buffer` through the state machine.
+        Calls the Rust extension to process `buffer` through the state machine.
 
-        Returns a generator of event dicts, plus updates the mutable state
-        variables via the returned tuple:
+        Returns:
             (events, new_buffer, new_state_str, new_json_depth,
              new_has_emitted_text, new_xml_tool_buffer)
 
-        NOTE: the C layer emits a special "tool_call_raw_xml" event when it
-        finishes an xml-tool block.  We intercept it here and convert it into
-        the proper "tool_call" event via _extract_json, keeping JSON parsing
-        in Python where it already lives.
+        The Rust layer emits "tool_call_raw_xml" events when it finishes an
+        xml-tool block.  We intercept those here and convert them to proper
+        "tool_call" events via _extract_json, keeping JSON parsing in Python.
         """
-        state_int = _PY_STATE_TO_INT.get(state_str, _C.ST_CONTENT)
+        state_int = _PY_STATE_TO_INT.get(state_str, _RS.ST_CONTENT)
 
         events_raw, new_buf, new_state_int, new_depth, new_het, new_xml = (
-            _C.process_buffer(
+            _RS.process_buffer(
                 buffer,
                 state_int,
                 json_depth,
@@ -141,7 +138,6 @@ class DeltaNormalizer:
             )
         )
 
-        # Post-process events: resolve tool_call_raw_xml → tool_call
         events_out = []
         for ev in events_raw:
             if ev["type"] == "tool_call_raw_xml":
@@ -160,7 +156,7 @@ class DeltaNormalizer:
                     )
                 else:
                     LOG.warning(
-                        "C: failed to extract JSON from xml buffer. payload: %s",
+                        "Rust: failed to extract JSON from xml buffer. payload: %s",
                         ev["content"],
                     )
             else:
@@ -285,10 +281,10 @@ class DeltaNormalizer:
 
             buffer += seg
 
-            # 2. Buffer → state machine
-            if _C_AVAILABLE:
+            # 2. Buffer → state machine (Rust accelerated when available)
+            if _RS_AVAILABLE:
                 events, buffer, state, json_depth, has_emitted_text, xml_tool_buffer = (
-                    cls._process_buffer_c(
+                    cls._process_buffer_rs(
                         buffer,
                         state,
                         json_depth,
@@ -298,11 +294,6 @@ class DeltaNormalizer:
                     )
                 )
                 for ev in events:
-                    LOG.warning(
-                        "C_EVENT: type=%s content=%s",
-                        ev.get("type"),
-                        str(ev.get("content", ""))[:80],
-                    )
                     yield ev
             else:
                 # ── Pure-Python fallback ───────────────────────────────────
