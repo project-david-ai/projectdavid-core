@@ -17,7 +17,9 @@ hf_logging.set_verbosity_error()
 def _load_tokenizer(model_name: str):
     """Load and cache tokenizer — one load per model name per process."""
     #  — model name is caller-controlled, revision pinning not applicable
-    return AutoTokenizer.from_pretrained(model_name)  # nosec B615
+    return AutoTokenizer.from_pretrained(
+        model_name, local_files_only=True
+    )  # nosec B615
 
 
 def _extract_text(content: Any) -> str:
@@ -84,6 +86,9 @@ class ConversationTruncator:
       - Token counting extracts only text blocks for estimation.
       - Merging concatenates block arrays rather than string-concatenating.
       - The original list structure is never replaced with a plain string.
+
+    If no tokenizer is available (offline, no cache), falls back to a
+    character-based estimate (len // 4) so inference is never blocked.
     """
 
     FALLBACK_MODEL = os.getenv("TRUNCATOR_MODEL", "gpt2")
@@ -106,13 +111,22 @@ class ConversationTruncator:
                 exc.__class__.__name__,
                 cls.FALLBACK_MODEL,
             )
+        try:
             return _load_tokenizer(cls.FALLBACK_MODEL)
+        except Exception as exc:
+            LOG.warning(
+                "Fallback tokenizer %s also unavailable (%s) — using char-based estimate (len // 4)",
+                cls.FALLBACK_MODEL,
+                exc.__class__.__name__,
+            )
+            return None
 
     def _count_tokens_batch(self, texts: List[str]) -> List[int]:
         if not texts:
             return []
-        # Guard: coerce any None that slipped through _extract_text to ""
         safe_texts = [t if isinstance(t, str) else "" for t in texts]
+        if self.tokenizer is None:
+            return [len(t) // 4 for t in safe_texts]
         encoded = self.tokenizer(
             safe_texts,
             add_special_tokens=False,
@@ -123,6 +137,8 @@ class ConversationTruncator:
 
     def count_tokens(self, text: str) -> int:
         """Return token count for a single string (special tokens excluded)."""
+        if self.tokenizer is None:
+            return len(text or "") // 4
         return len(self.tokenizer.encode(text or "", add_special_tokens=False))
 
     def truncate(self, conversation: List[dict]) -> List[dict]:
