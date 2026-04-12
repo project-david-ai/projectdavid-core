@@ -25,6 +25,11 @@ GPU memory notes:
     [0.10, 0.95] to guard against bad data.  Set VLLM_DEFAULT_GPU_MEM_UTIL in
     the environment to change the default for all deployments on this node.
 
+Hyperparam resolution priority (applies to all vLLM engine args):
+    1. InferenceDeployment DB column  — set at activation time via API
+    2. VLLM_DEFAULT_* env var         — node-level override in docker-compose.yml
+    3. Built-in safe default          — coded at module level below
+
 NODE_IP notes:
     When NODE_IP is set, Ray advertises that IP address to the cluster instead
     of auto-detecting the network interface. This is required for Tailscale
@@ -52,7 +57,12 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
-log = logging.getLogger(__name__)
+
+
+from projectdavid_common import LoggingUtility
+
+logging_utility = LoggingUtility()
+log = logging_utility
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -74,9 +84,20 @@ NODE_IP = os.getenv("NODE_IP") or None
 RAY_JOIN_MAX_RETRIES = int(os.getenv("RAY_JOIN_MAX_RETRIES", "20"))
 RAY_JOIN_RETRY_DELAY = int(os.getenv("RAY_JOIN_RETRY_DELAY", "15"))
 
+# ---------------------------------------------------------------------------
+# Node-level vLLM defaults
+# These are the fallback values when no DB column override is present.
+# Override via environment variables in docker-compose.yml.
+# ---------------------------------------------------------------------------
+
+# Fraction of GPU VRAM vLLM may allocate for weights + KV cache.
+# 0.50 is conservative — safe on 8 GiB cards without profiling.
 _DEFAULT_GPU_MEM_UTIL = float(os.getenv("VLLM_DEFAULT_GPU_MEM_UTIL", "0.50"))
 _GPU_MEM_UTIL_MIN = 0.10
 _GPU_MEM_UTIL_MAX = 0.95
+
+# Maximum sequence length (prompt + completion tokens).
+# Larger values consume more KV cache VRAM linearly.
 _DEFAULT_MAX_MODEL_LEN = int(os.getenv("VLLM_DEFAULT_MAX_MODEL_LEN", "4096"))
 
 
@@ -140,19 +161,24 @@ class VLLMDeployment:
     SSE chunks are returned in /v1/completions format (choices[0].text)
     so _http_stream in VLLMRawStream can consume them without adaptation.
 
-    gpu_memory_utilization defaults to 0.50 (safe for 8 GiB cards).
-    Pass a higher value only when you have profiled headroom on your
-    target hardware.  Values above 0.85 risk OOM during vLLM's
-    internal profile_run on small GPUs.
+    All vLLM engine hyperparams are passed in at deploy time from the
+    InferenceDeployment DB record. None values fall back to vLLM defaults.
     """
 
     def __init__(
         self,
         model_endpoint: str,
         tensor_parallel_size: int = 1,
-        max_model_len: int = 2048,
+        max_model_len: int = _DEFAULT_MAX_MODEL_LEN,
         gpu_memory_utilization: float = _DEFAULT_GPU_MEM_UTIL,
         lora_modules: dict = None,
+        # --- Per-deployment vLLM engine hyperparam overrides ---
+        # Read from InferenceDeployment DB columns at deploy time.
+        # None values defer to vLLM's own defaults except where noted.
+        quantization: str = None,  # "awq", "awq_marlin", "gptq", "bitsandbytes", None = full precision
+        dtype: str = None,  # "float16", "bfloat16", "auto", None → defaults to float16 below
+        enforce_eager: bool = False,  # True = disable CUDA graphs (slower but useful for OOM debugging)
+        limit_mm_per_prompt: dict = None,  # e.g. {"image": 2, "video": 0} — caps vision token counts per request
     ):
         from vllm import AsyncEngineArgs, AsyncLLMEngine
         from vllm.lora.request import LoRARequest
@@ -161,23 +187,45 @@ class VLLMDeployment:
         self.lora_modules = lora_modules or {}
 
         log.info(
-            "🚀 VLLMDeployment initialising — model=%s tp=%d gpu_mem_util=%.2f lora_modules=%s",
+            "🚀 VLLMDeployment initialising — model=%s tp=%d gpu_mem_util=%.2f "
+            "max_model_len=%d quantization=%s dtype=%s enforce_eager=%s lora_modules=%s",
             model_endpoint,
             tensor_parallel_size,
             gpu_memory_utilization,
+            max_model_len,
+            quantization,
+            dtype,
+            enforce_eager,
             list(self.lora_modules.keys()),
         )
 
-        engine_args = AsyncEngineArgs(
+        # Build engine kwargs — only pass optional params when explicitly set
+        # to avoid overriding vLLM's internal defaults with None values.
+        engine_kwargs = dict(
             model=model_endpoint,
-            dtype="float16",
             max_model_len=max_model_len,
             gpu_memory_utilization=gpu_memory_utilization,
             tensor_parallel_size=tensor_parallel_size,
             enable_lora=bool(self.lora_modules),
             max_loras=max(1, len(self.lora_modules)),
+            enforce_eager=enforce_eager,
+            # dtype: float16 is the safe explicit default for mixed-precision GPUs.
+            # None would let vLLM auto-select which can pick bfloat16 on some cards
+            # causing a cast warning — we prefer explicit control.
+            dtype=dtype if dtype is not None else "float16",
         )
 
+        # quantization: only pass when set — None means full precision and
+        # passing it explicitly would override model config auto-detection.
+        if quantization is not None:
+            engine_kwargs["quantization"] = quantization
+
+        # limit_mm_per_prompt: per-modality token cap for vision models.
+        # Prevents runaway token counts from high-res images on small GPUs.
+        if limit_mm_per_prompt is not None:
+            engine_kwargs["limit_mm_per_prompt"] = limit_mm_per_prompt
+
+        engine_args = AsyncEngineArgs(**engine_kwargs)
         self.engine = AsyncLLMEngine.from_engine_args(engine_args)
 
         self._lora_requests = {
@@ -403,21 +451,54 @@ class InferenceReconciler:
         return {dep.fine_tuned_model_id: adapter_path}
 
     def _deploy(self, db: Session, dep) -> None:
-        """Create a Ray Serve deployment on this HEAD node."""
+        """Create a Ray Serve deployment on this HEAD node.
+
+        All vLLM engine hyperparams are resolved from the InferenceDeployment
+        DB record first, falling back to env vars, then built-in safe defaults.
+        This means each model can have its own tuned configuration without
+        requiring a container rebuild or compose change.
+        """
         from projectdavid_common.schemas.enums import StatusEnum
 
         deployment_name = _deployment_name(dep.id)
         model_endpoint = self._resolve_model_endpoint(db, dep.base_model_id)
         lora_modules = self._build_lora_modules(dep)
+
+        # --- Resolve all hyperparams from DB columns → env vars → defaults ---
+
+        # Number of GPUs for tensor parallelism (1 = single GPU, no sharding)
         tp_size = getattr(dep, "tensor_parallel_size", 1) or 1
+
+        # GPU VRAM fraction — clamped to [0.10, 0.95] by _resolve helper
         gpu_mem_util = _resolve_gpu_memory_utilization(dep)
 
+        # Max sequence length: DB column → VLLM_DEFAULT_MAX_MODEL_LEN env → 4096
+        max_model_len = getattr(dep, "max_model_len", None) or _DEFAULT_MAX_MODEL_LEN
+
+        # Quantization: "awq", "awq_marlin", "gptq", "bitsandbytes", or None
+        quantization = getattr(dep, "quantization", None)
+
+        # Compute dtype: "float16", "bfloat16", "auto", or None → VLLMDeployment defaults to float16
+        dtype = getattr(dep, "dtype", None)
+
+        # Disable CUDA graphs — slower but useful when debugging OOM crashes
+        enforce_eager = bool(getattr(dep, "enforce_eager", False))
+
+        # Per-modality token cap — critical for vision models on constrained GPUs
+        # e.g. {"image": 2} prevents a single high-res image from consuming all KV cache
+        limit_mm_per_prompt = getattr(dep, "limit_mm_per_prompt", None)
+
         log.info(
-            "🚢 Deploying via Ray Serve: %s model=%s tp=%d gpu_mem_util=%.2f lora=%s",
+            "🚢 Deploying via Ray Serve: %s model=%s tp=%d gpu_mem_util=%.2f "
+            "max_model_len=%d quantization=%s dtype=%s enforce_eager=%s lora=%s",
             deployment_name,
             model_endpoint,
             tp_size,
             gpu_mem_util,
+            max_model_len,
+            quantization,
+            dtype,
+            enforce_eager,
             list(lora_modules.keys()),
         )
 
@@ -427,9 +508,13 @@ class InferenceReconciler:
         ).bind(
             model_endpoint=model_endpoint,
             tensor_parallel_size=tp_size,
-            max_model_len=_DEFAULT_MAX_MODEL_LEN,
+            max_model_len=max_model_len,
             gpu_memory_utilization=gpu_mem_util,
             lora_modules=lora_modules,
+            quantization=quantization,
+            dtype=dtype,
+            enforce_eager=enforce_eager,
+            limit_mm_per_prompt=limit_mm_per_prompt,
         )
 
         serve.run(
@@ -445,9 +530,10 @@ class InferenceReconciler:
 
         self._active[dep.id] = deployment_name
         log.info(
-            "✅ Ray Serve deployment active: %s (gpu_mem_util=%.2f)",
+            "✅ Ray Serve deployment active: %s (gpu_mem_util=%.2f max_model_len=%d)",
             deployment_name,
             gpu_mem_util,
+            max_model_len,
         )
 
     def _delete_deployment(self, deployment_name: str) -> None:
@@ -520,7 +606,6 @@ def main():
 
     # Set RAY_NODE_IP_ADDRESS so Ray advertises the Tailscale IP
     # instead of auto-detecting the Docker bridge interface.
-
     if NODE_IP:
         os.environ["RAY_NODE_IP_ADDRESS"] = NODE_IP
         log.info("🌐 Node IP override: %s (Tailscale)", NODE_IP)
