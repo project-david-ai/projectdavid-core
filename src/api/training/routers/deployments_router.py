@@ -8,12 +8,13 @@ Prefix:  /v1/deployments
 Tags:    deployments
 
 All activation and deactivation operations are admin-scoped.
-Listing deployments is available to any authenticated user.
+Listing and updating deployments require admin privileges.
 
 Endpoints:
   POST   /v1/deployments/base                     Activate a base model          [admin]
   POST   /v1/deployments/fine-tuned               Activate a fine-tuned model    [admin]
-  GET    /v1/deployments                          List all active deployments
+  PATCH  /v1/deployments/{deployment_id}          Update deployment hyperparams  [admin]
+  GET    /v1/deployments                          List all active deployments     [admin]
   DELETE /v1/deployments/base/{model_ref}         Deactivate a base model        [admin]
   DELETE /v1/deployments/fine-tuned/{model_id}    Deactivate a fine-tuned model  [admin]
   DELETE /v1/deployments                          Deactivate all deployments      [admin]
@@ -23,9 +24,13 @@ Architecture note:
   The InferenceReconciler (inference_worker.py) picks it up on its next poll
   cycle and deploys the corresponding Ray Serve application.
   These endpoints do NOT communicate with Ray Serve directly.
+
+  The PATCH endpoint uses exclude_unset=True — only explicitly provided fields
+  are written to the DB. Unset fields retain their current values. Changes are
+  picked up by the reconciler on its next poll cycle.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from projectdavid_common.schemas.deployment_schemas import (
     ActivateBaseModelRequest,
     ActivateFineTunedModelRequest,
@@ -33,6 +38,7 @@ from projectdavid_common.schemas.deployment_schemas import (
     DeploymentActivationResponse,
     DeploymentDeactivationResponse,
     DeploymentListResponse,
+    DeploymentUpdateRequest,
 )
 from projectdavid_common.utilities.check_admin_status import _is_admin
 from sqlalchemy.orm import Session
@@ -70,6 +76,7 @@ def _require_admin(current_user_id: str, db: Session) -> None:
         "Schedule a base model (no LoRA adapter) for inference deployment. "
         "Accepts either a `bm_...` prefixed ID or a raw HuggingFace model path. "
         "Clears all existing deployments before creating the new one. "
+        "All vLLM hyperparam fields are optional — omit to use node-level env var defaults. "
         "The InferenceReconciler deploys via Ray Serve on its next poll cycle. "
         "**Admin only.**"
     ),
@@ -86,6 +93,14 @@ def activate_base_model(
         base_model_id=payload.base_model_id,
         target_node_id=payload.target_node_id,
         tensor_parallel_size=payload.tensor_parallel_size,
+        # vLLM hyperparam overrides — None values fall back to env/defaults
+        gpu_memory_utilization=payload.gpu_memory_utilization,
+        max_model_len=payload.max_model_len,
+        max_num_seqs=payload.max_num_seqs,
+        quantization=payload.quantization,
+        dtype=payload.dtype,
+        enforce_eager=payload.enforce_eager,
+        limit_mm_per_prompt=payload.limit_mm_per_prompt,
     )
     return DeploymentActivationResponse(**result)
 
@@ -97,6 +112,7 @@ def activate_base_model(
     description=(
         "Schedule a fine-tuned model (base + LoRA adapter) for inference deployment. "
         "Deactivates all existing deployments for the model owner before creating the new one. "
+        "All vLLM hyperparam fields are optional — omit to use node-level env var defaults. "
         "The InferenceReconciler deploys via Ray Serve on its next poll cycle. "
         "**Admin only.**"
     ),
@@ -113,12 +129,48 @@ def activate_fine_tuned_model(
         model_id=payload.model_id,
         target_node_id=payload.target_node_id,
         tensor_parallel_size=payload.tensor_parallel_size,
+        # vLLM hyperparam overrides — None values fall back to env/defaults
+        gpu_memory_utilization=payload.gpu_memory_utilization,
+        max_model_len=payload.max_model_len,
+        max_num_seqs=payload.max_num_seqs,
+        quantization=payload.quantization,
+        dtype=payload.dtype,
+        enforce_eager=payload.enforce_eager,
+        limit_mm_per_prompt=payload.limit_mm_per_prompt,
     )
     return DeploymentActivationResponse(**result)
 
 
 # ---------------------------------------------------------------------------
-# Listing                                                        [any user]
+# Update (partial patch)                                         [admin only]
+# ---------------------------------------------------------------------------
+
+
+@router.patch(
+    "/{deployment_id}",
+    summary="Update deployment hyperparams",
+    description=(
+        "Partially update the vLLM engine hyperparams for a live deployment. "
+        "Only fields explicitly provided in the request body are written — "
+        "omitted fields retain their current DB values. "
+        "Changes are picked up by the InferenceReconciler on its next poll cycle, "
+        "which will redeploy the Ray Serve application with the new config. "
+        "**Admin only.**"
+    ),
+)
+def update_deployment(
+    deployment_id: str,
+    payload: DeploymentUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_id),
+) -> dict:
+    _require_admin(current_user_id, db)
+    service = DeploymentService(db)
+    return service.update_deployment(deployment_id, payload)
+
+
+# ---------------------------------------------------------------------------
+# Listing                                                        [admin only]
 # ---------------------------------------------------------------------------
 
 
@@ -128,13 +180,16 @@ def activate_fine_tuned_model(
     summary="List active deployments",
     description=(
         "Return all InferenceDeployment records currently tracked by the system. "
-        "Includes status, node assignment, base model, and serve route for each deployment."
+        "Includes status, node assignment, base model, hyperparam config, "
+        "and serve route for each deployment. "
+        "**Admin only.**"
     ),
 )
 def list_deployments(
     db: Session = Depends(get_db),
     current_user_id: str = Depends(get_current_user_id),
 ) -> DeploymentListResponse:
+    _require_admin(current_user_id, db)
     service = DeploymentService(db)
     deployments = service.list_deployments()
     return DeploymentListResponse(
