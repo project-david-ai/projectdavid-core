@@ -57,12 +57,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
-
-
-from projectdavid_common import LoggingUtility
-
-logging_utility = LoggingUtility()
-log = logging_utility
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Configuration
