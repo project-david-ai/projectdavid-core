@@ -2,3 +2,6 @@
 docker-compose.runtime.yml
 
 docker-compose.template.yml
+rust/delta_normalizer/rustup-init.exe
+rust/delta_normalizer/.ruff_cache
+rust/delta_normalizer/target
