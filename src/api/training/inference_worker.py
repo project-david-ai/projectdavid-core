@@ -131,6 +131,136 @@ def _resolve_gpu_memory_utilization(dep) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Vision model family registry
+#
+# Each entry defines the vLLM engine kwargs required to run that model family
+# correctly on constrained hardware.
+#
+# mm_processor_kwargs : processor-level image resolution caps (family-specific)
+# limit_mm_per_prompt : max images per request (vLLM default is 1)
+#
+# Populate entries as each family is baselined and tested.
+# Unknown families get no kwargs injected — safe neutral default.
+# Phase 2: these will move to per-deployment DB columns so operators can
+# override them at activation time without a code change.
+# ---------------------------------------------------------------------------
+
+_VISION_FAMILY_CONFIGS = {
+    # ── Qwen2.5-VL ────────────────────────────────────────────────────────
+    # Dynamic resolution model. Without pixel caps a single 128px image
+    # produces 5000+ tokens. Caps to ~256 tokens per image at 64*28*28.
+    # BASELINED ✅ — Qwen/Qwen2.5-VL-3B-Instruct-AWQ confirmed working.
+    "Qwen2.5-VL": {
+        "mm_processor_kwargs": {
+            "min_pixels": 28 * 28,  # 784
+            "max_pixels": 64 * 28 * 28,  # 50176
+        },
+        "limit_mm_per_prompt": {"image": 2},
+    },
+    # ── InternVL2 ─────────────────────────────────────────────────────────
+    # Requires trust_remote_code=True — uses custom tokenizer/model code.
+    # Non-quantized 2B = 4.13GB weights, exceeds 8GB KV cache budget at 0.50.
+    # Use AWQ quant: OpenGVLab/InternVL2-2B-AWQ (~1.2GB weights).
+    # Default image tokens = 6656 per image — needs pixel caps (TBD after baseline).
+    # BASELINING IN PROGRESS 🔜
+    "InternVL2": {
+        "mm_processor_kwargs": {},
+        "limit_mm_per_prompt": {"image": 2},
+        "trust_remote_code": True,
+    },
+    # ── Phi-3.5-Vision ────────────────────────────────────────────────────
+    # trust_remote_code=True required — community AWQ quant inherits this
+    # from the base microsoft/Phi-3.5-vision-instruct model config.
+    # max_model_len=1024 required at 0.50 gpu_util — tight KV cache budget.
+    # num_crops=4 caps image tokens — default is 16 which produces 206k+ tokens.
+    # Each crop = ~1600 tokens, so num_crops=4 → ~6400 tokens per image.
+    # BASELINING IN PROGRESS 🔜
+    "Phi-3.5-vision": {
+        "mm_processor_kwargs": {"num_crops": 4},
+        "limit_mm_per_prompt": {"image": 1},
+        "trust_remote_code": True,
+        "max_model_len": 1024,
+    },
+    # ── DeepSeek-VL2 ──────────────────────────────────────────────────────
+    # TBD — pending baseline with deepseek-ai/deepseek-vl2-small.
+    "deepseek-vl2": {
+        "mm_processor_kwargs": {},
+        "limit_mm_per_prompt": {"image": 2},
+    },
+    # ── Pixtral ───────────────────────────────────────────────────────────
+    # TBD — pending baseline with mistralai/Pixtral-12B quant.
+    # Mistral's native vision model — uses variable-size image encoding.
+    "Pixtral": {
+        "mm_processor_kwargs": {},
+        "limit_mm_per_prompt": {"image": 2},
+    },
+    # ── Llama-3.2-Vision ──────────────────────────────────────────────────
+    # TBD — pending baseline with meta-llama/Llama-3.2-11B-Vision quant.
+    "Llama-3.2": {
+        "mm_processor_kwargs": {},
+        "limit_mm_per_prompt": {"image": 1},
+    },
+    # ── LLaVA-Med ─────────────────────────────────────────────────────────
+    # Fine-tuned on biomedical image-text pairs — radiology, pathology,
+    # clinical imaging Q&A. Most medically deployed open vision model.
+    # Base: LLaVA-1.5 architecture. HF: microsoft/llava-med-v1.5-mistral-7b
+    # Needs 4bit quant to fit on 8GB. TBD after LLaVA-1.6 baseline.
+    # MEDICAL VERTICAL — HIGH PRIORITY 🏥
+    "llava-med": {
+        "mm_processor_kwargs": {},
+        "limit_mm_per_prompt": {"image": 1},
+        "trust_remote_code": False,
+    },
+    # ── LLaVA ─────────────────────────────────────────────────────────────
+    # LLaVA-1.6 (llava-next) — most widely deployed open vision model.
+    # Use: llava-hf/llava-v1.6-mistral-7b-hf with 4bit quant.
+    # TBD after InternVL2 baseline.
+    "llava": {
+        "mm_processor_kwargs": {},
+        "limit_mm_per_prompt": {"image": 1},
+        "trust_remote_code": False,
+    },
+    # ── Qwen2-VL (legacy, pre-2.5) ────────────────────────────────────────
+    # Same processor architecture as Qwen2.5-VL — use same pixel caps.
+    "Qwen2-VL": {
+        "mm_processor_kwargs": {
+            "min_pixels": 28 * 28,
+            "max_pixels": 64 * 28 * 28,
+        },
+        "limit_mm_per_prompt": {"image": 2},
+    },
+}
+
+
+def _get_vision_family_config(model_endpoint: str) -> dict:
+    """
+    Match a model endpoint string to a vision family config.
+
+    Performs case-insensitive substring matching against the registry keys.
+    Returns an empty dict for unknown families — no kwargs are injected,
+    which is the safe neutral default for text-only or unknown models.
+
+    Examples:
+        "Qwen/Qwen2.5-VL-3B-Instruct-AWQ"  → Qwen2.5-VL config
+        "OpenGVLab/InternVL2-2B"            → InternVL2 config
+        "Qwen/Qwen2.5-3B-Instruct"          → {} (text-only Qwen, no vision)
+    """
+    model_lower = model_endpoint.lower()
+    for family, config in _VISION_FAMILY_CONFIGS.items():
+        if family.lower() in model_lower:
+            log.info(
+                "🔭 Vision family detected: '%s' → applying %s config",
+                family,
+                family,
+            )
+            return config
+    log.debug(
+        "No vision family match for '%s' — no mm kwargs injected.", model_endpoint
+    )
+    return {}
+
+
+# ---------------------------------------------------------------------------
 # Ray Serve deployment — vLLM wrapped as a serve application
 # ---------------------------------------------------------------------------
 
@@ -174,12 +304,14 @@ class VLLMDeployment:
         dtype: str = None,  # "float16", "bfloat16", "auto", None → defaults to float16 below
         enforce_eager: bool = False,  # True = disable CUDA graphs (slower but useful for OOM debugging)
         limit_mm_per_prompt: dict = None,  # e.g. {"image": 2, "video": 0} — caps vision token counts per request
+        mm_processor_kwargs: dict = None,  # e.g. {"min_pixels": 784, "max_pixels": 50176} — overrides family registry
     ):
         from vllm import AsyncEngineArgs, AsyncLLMEngine
         from vllm.lora.request import LoRARequest
 
         self.model_endpoint = model_endpoint
         self.lora_modules = lora_modules or {}
+        self._mm_processor_kwargs_override = mm_processor_kwargs or {}
 
         log.info(
             "🚀 VLLMDeployment initialising — model=%s tp=%d gpu_mem_util=%.2f "
@@ -217,8 +349,55 @@ class VLLMDeployment:
 
         # limit_mm_per_prompt: per-modality token cap for vision models.
         # Prevents runaway token counts from high-res images on small GPUs.
+        # Per-deployment DB column takes priority over family registry.
         if limit_mm_per_prompt is not None:
             engine_kwargs["limit_mm_per_prompt"] = limit_mm_per_prompt
+
+        # Vision family registry — inject mm kwargs for known model families.
+        # Priority: DB column (set via API) > family registry > nothing.
+        # Per-deployment DB overrides for limit_mm_per_prompt are already
+        # applied above, so only inject registry values when not already set.
+        vision_config = _get_vision_family_config(model_endpoint)
+
+        # mm_processor_kwargs: DB column takes priority over family registry.
+        # Allows per-deployment overrides without code changes.
+        db_mm_kwargs = getattr(self, "_mm_processor_kwargs_override", None)
+        if db_mm_kwargs:
+            engine_kwargs["mm_processor_kwargs"] = db_mm_kwargs
+            log.info(
+                "🔭 mm_processor_kwargs from DB column: %s",
+                db_mm_kwargs,
+            )
+        elif vision_config.get("mm_processor_kwargs"):
+            engine_kwargs["mm_processor_kwargs"] = vision_config["mm_processor_kwargs"]
+            log.info(
+                "🔭 mm_processor_kwargs from family registry: %s",
+                vision_config["mm_processor_kwargs"],
+            )
+
+        if "limit_mm_per_prompt" not in engine_kwargs and vision_config.get(
+            "limit_mm_per_prompt"
+        ):
+            engine_kwargs["limit_mm_per_prompt"] = vision_config["limit_mm_per_prompt"]
+            log.info(
+                "🔭 limit_mm_per_prompt applied: %s",
+                vision_config["limit_mm_per_prompt"],
+            )
+
+        if vision_config.get("trust_remote_code"):
+            engine_kwargs["trust_remote_code"] = True
+            log.info("🔭 trust_remote_code=True applied for %s", model_endpoint)
+
+        if (
+            vision_config.get("max_model_len")
+            and engine_kwargs.get("max_model_len") == _DEFAULT_MAX_MODEL_LEN
+        ):
+            engine_kwargs["max_model_len"] = vision_config["max_model_len"]
+            log.info(
+                "🔭 max_model_len overridden to %d for %s",
+                vision_config["max_model_len"],
+                model_endpoint,
+            )
 
         engine_args = AsyncEngineArgs(**engine_kwargs)
         self.engine = AsyncLLMEngine.from_engine_args(engine_args)
@@ -264,7 +443,13 @@ class VLLMDeployment:
         top_p = body.get("top_p", 0.9)
         stream = body.get("stream", False)
 
-        prompt = body.get("prompt") or self._format_messages(messages)
+        # Build engine input — multimodal path extracts images into
+        # multi_modal_data so mm_processor_kwargs are actually applied.
+        # Plain text falls back to the legacy string prompt.
+        if body.get("prompt"):
+            engine_input = body["prompt"]
+        else:
+            engine_input = await self._build_engine_input(messages)
 
         sampling_params = SamplingParams(
             temperature=temperature,
@@ -289,7 +474,7 @@ class VLLMDeployment:
             async def _event_stream():
                 prev_text = ""
                 async for output in self.engine.generate(
-                    prompt,
+                    engine_input,
                     sampling_params,
                     request_id=request_id,
                     lora_request=lora_request,
@@ -317,7 +502,7 @@ class VLLMDeployment:
 
         output_text = ""
         async for output in self.engine.generate(
-            prompt,
+            engine_input,
             sampling_params,
             request_id=request_id,
             lora_request=lora_request,
@@ -337,11 +522,77 @@ class VLLMDeployment:
                 }
             ],
             "usage": {
-                "prompt_tokens": len(prompt.split()),
+                "prompt_tokens": -1,
                 "completion_tokens": len(output_text.split()),
-                "total_tokens": len(prompt.split()) + len(output_text.split()),
+                "total_tokens": -1,
             },
         }
+
+    async def _build_engine_input(self, messages: list):
+        """
+        Build vLLM engine input from ChatML messages.
+
+        For multimodal messages, extracts PIL images and uses the HuggingFace
+        tokenizer's apply_chat_template to produce a prompt string with the
+        correct model-specific image placeholder tokens (e.g. Qwen2.5-VL uses
+        <|vision_start|>...<|vision_end|>, NOT <image>).
+
+        Falls back to a plain prompt string for text-only conversations.
+        """
+        import base64 as _b64
+        import io as _io
+
+        try:
+            from PIL import Image as _Image
+
+            pil_available = True
+        except ImportError:
+            pil_available = False
+
+        images = []
+        hf_messages = []
+
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+
+            if isinstance(content, list):
+                hf_content = []
+                for block in content:
+                    btype = block.get("type", "")
+                    if btype == "text":
+                        hf_content.append(
+                            {"type": "text", "text": block.get("text", "")}
+                        )
+                    elif btype == "image" and pil_available:
+                        raw = block.get("image", "")
+                        if raw.startswith("data:image"):
+                            b64_data = raw.split(",", 1)[1]
+                            img_bytes = _b64.b64decode(b64_data)
+                            img = _Image.open(_io.BytesIO(img_bytes)).convert("RGB")
+                            images.append(img)
+                            # Use HF-native image placeholder — model tokenizer
+                            # will expand this into the correct vision tokens.
+                            hf_content.append({"type": "image"})
+                hf_messages.append({"role": role, "content": hf_content})
+            else:
+                hf_messages.append({"role": role, "content": content})
+
+        if images:
+            # Use the engine's own tokenizer to apply the chat template so the
+            # correct model-specific image tokens are inserted into the prompt.
+            tokenizer = await self.engine.get_tokenizer()
+            text = tokenizer.apply_chat_template(
+                hf_messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+            return {
+                "prompt": text,
+                "multi_modal_data": {"image": images},
+            }
+
+        return self._format_messages(hf_messages)
 
     def _format_messages(self, messages: list) -> str:
         """Format ChatML messages into a prompt string (fallback path)."""
@@ -483,6 +734,10 @@ class InferenceReconciler:
         # e.g. {"image": 2} prevents a single high-res image from consuming all KV cache
         limit_mm_per_prompt = getattr(dep, "limit_mm_per_prompt", None)
 
+        # Processor-level kwargs — overrides family registry defaults when set via API.
+        # e.g. {"min_pixels": 784, "max_pixels": 50176} for Qwen2.5-VL
+        mm_processor_kwargs = getattr(dep, "mm_processor_kwargs", None)
+
         log.info(
             "🚢 Deploying via Ray Serve: %s model=%s tp=%d gpu_mem_util=%.2f "
             "max_model_len=%d quantization=%s dtype=%s enforce_eager=%s lora=%s",
@@ -510,6 +765,7 @@ class InferenceReconciler:
             dtype=dtype,
             enforce_eager=enforce_eager,
             limit_mm_per_prompt=limit_mm_per_prompt,
+            mm_processor_kwargs=mm_processor_kwargs,
         )
 
         serve.run(
