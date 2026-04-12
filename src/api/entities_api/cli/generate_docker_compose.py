@@ -246,8 +246,6 @@ services:
       - RAY_IGNORE_VERSION_MISMATCH=1
       - HF_TOKEN=${HF_TOKEN:-}
       - HF_HUB_OFFLINE=0
-
-
     ports:
       - "8002:8000"
       - "8265:8265"
@@ -260,7 +258,6 @@ services:
       - my_custom_network
     depends_on:
       - redis
-
 
   api:
     build:
@@ -309,6 +306,36 @@ services:
         condition: service_started
       otel-collector:
         condition: service_started
+    networks:
+      - my_custom_network
+
+  # ---------------------------------------------------------------------------
+  # router — Rust request router (pd_router)
+  # Sits between nginx and FastAPI. Owns the connection pool for the
+  # /v1/completions SSE streaming hot path. Handles concurrent inference
+  # requests without Python GIL contention.
+  # Part of the base stack — starts by default with the platform.
+  # ---------------------------------------------------------------------------
+  router:
+    build:
+      context: .
+      dockerfile: docker/router/Dockerfile
+    container_name: pd_router
+    restart: always
+    environment:
+      - UPSTREAM_URL=http://api:9000
+      - LISTEN_PORT=9100
+      - LOG_LEVEL=pd_router=info
+    ports:
+      - "9100:9100"
+    depends_on:
+      - api
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9100/_router/health"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
     networks:
       - my_custom_network
 
@@ -366,6 +393,7 @@ services:
       - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       - api
+      - router
     networks:
       - my_custom_network
 

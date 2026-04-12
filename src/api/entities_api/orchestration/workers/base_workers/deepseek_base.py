@@ -50,8 +50,16 @@ class DeepSeekBaseWorker(
     Vision support:
         Multimodal messages (hydrated image blocks) are automatically detected
         and normalised to the OpenAI image_url format before dispatch.
-        Hyperbolic accepts base64 data URIs in this format.
+
+    Provider image limits:
+        VISION_MAX_IMAGES controls how many images are passed per request.
+        Default is None (unlimited). Subclasses override for providers with
+        per-request image caps.
     """
+
+    # Override in subclasses for providers with per-request image caps.
+    # None = unlimited.
+    VISION_MAX_IMAGES: Optional[int] = None
 
     def __init__(
         self,
@@ -65,6 +73,7 @@ class DeepSeekBaseWorker(
         assistant_cache_service: Optional[AssistantCache] = None,
         **extra,
     ) -> None:
+        super().__init__(**extra)
 
         self.api_key = api_key or extra.get("api_key")
         self.is_deep_research = None
@@ -116,7 +125,7 @@ class DeepSeekBaseWorker(
             self.set_function_call_state = lambda x: None
             self.set_tool_response_state = lambda x: None
 
-        LOG.debug("Hyperbolic-Ds1 provider ready (assistant=%s)", assistant_id)
+        LOG.debug("%s ready (assistant=%s)", self.__class__.__name__, assistant_id)
 
     @abstractmethod
     def _get_client_instance(self, api_key: str):
@@ -145,8 +154,6 @@ class DeepSeekBaseWorker(
         self.ephemeral_supervisor_id = None
         self._scratch_pad_thread = None
 
-        redis = self.redis
-        stream_key = f"stream:{run_id}"
         stop_event = self.start_cancellation_monitor(run_id)
 
         _original_assistant_id = assistant_id
@@ -310,22 +317,22 @@ class DeepSeekBaseWorker(
             yield json.dumps({"type": "status", "status": "started", "run_id": run_id})
 
             client = self._get_client_instance(api_key=api_key)
+
             # ------------------------------------------------------------------
             # 7. MULTIMODAL NORMALISATION
             # Hydrated image blocks arrive as {"type": "image", "image": "data:..."}
             # (internal format from NativeExecutionService.hydrate_messages).
-            # Hyperbolic and all OpenAI-compatible providers require
+            # All OpenAI-compatible providers require
             # {"type": "image_url", "image_url": {"url": "data:..."}} instead.
             # Plain text contexts pass through this block untouched.
-            #
-            # HYPERBOLIC LIMIT: max 1 image per request (documented constraint).
-            # Excess images are dropped with a warning rather than crashing.
             # ------------------------------------------------------------------
             if is_multimodal(ctx):
                 LOG.info(
-                    "DeepSeekBaseWorker ▸ multimodal context detected — normalising to OpenAI image_url format (max_images=1 for Hyperbolic)."
+                    "DeepSeekBaseWorker ▸ multimodal context detected — normalising to OpenAI "
+                    "image_url format (max_images=%s).",
+                    self.VISION_MAX_IMAGES,
                 )
-                ctx = normalise_for_chat(ctx, max_images=1)
+                ctx = normalise_for_chat(ctx, max_images=self.VISION_MAX_IMAGES)
 
             LOG.info(
                 f"\nRAW_CTX_DUMP:\n{json.dumps(ctx, indent=2, ensure_ascii=False)}"
@@ -417,9 +424,9 @@ class DeepSeekBaseWorker(
 
         except Exception as exc:
             LOG.error(f"DEBUG: Stream Exception: {exc}")
-            err = {"type": "error", "content": f"Stream error: {exc}", "run_id": run_id}
-            yield json.dumps(err)
-            await self._shunt_to_redis_stream(redis, stream_key, err)
+            yield json.dumps(
+                {"type": "error", "content": f"Stream error: {exc}", "run_id": run_id}
+            )
 
         finally:
             stop_event.set()

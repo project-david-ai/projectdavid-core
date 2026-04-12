@@ -150,6 +150,12 @@ class DeploymentService:
         """
         Raises 507 if the target node cannot accommodate another deployment.
 
+        Ray reports resources_available["GPU"] = 0 when the GPU is reserved
+        at the cluster level but no active deployment currently holds it.
+        When the DB has no active InferenceDeployment records we use
+        resources_total as the effective GPU count — the GPU is physically
+        free even if Ray's internal accounting shows 0 available.
+
         Fails open if Ray dashboard is unreachable — the InferenceReconciler
         will handle deployment failure gracefully on its next poll cycle.
         """
@@ -168,15 +174,37 @@ class DeploymentService:
                 continue
 
             resources_available = node.get("resources_available", {})
-            available_gpu = resources_available.get("GPU", 0.0)
+            resources_total = node.get("resources_total", {})
 
-            if available_gpu < tensor_parallel_size:
+            available_gpu = resources_available.get("GPU", 0.0)
+            total_gpu = resources_total.get("GPU", 0.0)
+
+            # When no deployments are active in the DB, Ray may still report
+            # resources_available["GPU"] = 0 due to internal cluster reservations.
+            # Fall back to resources_total which reflects actual hardware capacity.
+            # If active deployments exist, use resources_available which correctly
+            # accounts for live GPU allocations held by Ray Serve applications.
+            active_deployments = self.db.query(InferenceDeployment).count()
+            effective_gpu = available_gpu if active_deployments > 0 else total_gpu
+
+            logging_utility.info(
+                "GPU capacity check — node=%s available=%.1f total=%.1f "
+                "active_deployments=%d effective=%.1f required=%d",
+                node_id[:16],
+                available_gpu,
+                total_gpu,
+                active_deployments,
+                effective_gpu,
+                tensor_parallel_size,
+            )
+
+            if effective_gpu < tensor_parallel_size:
                 raise HTTPException(
                     status_code=507,
                     detail=(
                         f"Node {node_id[:16]}... has insufficient available GPUs. "
                         f"Required: {tensor_parallel_size}, "
-                        f"Available: {available_gpu:.0f}. "
+                        f"Available: {effective_gpu:.0f}. "
                         f"Active Ray Serve deployments may be holding GPU resources."
                     ),
                 )
@@ -328,7 +356,6 @@ class DeploymentService:
           5. Create InferenceDeployment record with status=pending
           6. InferenceReconciler picks up on next poll and deploys via Ray Serve
         """
-        # Delegate ALL BaseModel lookups to RegistryService
         base = self.registry.resolve(base_model_id)
 
         self._clear_all_deployments()
@@ -398,7 +425,6 @@ class DeploymentService:
 
         self.deactivate_all_for_user(model.user_id)
 
-        # Delegate ALL BaseModel lookups to RegistryService
         base = self.registry.resolve(model.base_model)
 
         node_id = target_node_id or self._find_available_node(
