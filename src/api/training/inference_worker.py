@@ -77,6 +77,7 @@ RAY_JOIN_RETRY_DELAY = int(os.getenv("RAY_JOIN_RETRY_DELAY", "15"))
 _DEFAULT_GPU_MEM_UTIL = float(os.getenv("VLLM_DEFAULT_GPU_MEM_UTIL", "0.50"))
 _GPU_MEM_UTIL_MIN = 0.10
 _GPU_MEM_UTIL_MAX = 0.95
+_DEFAULT_MAX_MODEL_LEN = int(os.getenv("VLLM_DEFAULT_MAX_MODEL_LEN", "4096"))
 
 
 def _resolve_gpu_memory_utilization(dep) -> float:
@@ -426,6 +427,7 @@ class InferenceReconciler:
         ).bind(
             model_endpoint=model_endpoint,
             tensor_parallel_size=tp_size,
+            max_model_len=_DEFAULT_MAX_MODEL_LEN,
             gpu_memory_utilization=gpu_mem_util,
             lora_modules=lora_modules,
         )
