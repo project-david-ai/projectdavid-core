@@ -472,3 +472,44 @@ class DeploymentService:
             "serve_route": serve_route,
             "next_step": "InferenceReconciler will deploy via Ray Serve on next poll.",
         }
+
+    def update_deployment(
+        self,
+        deployment_id: str,
+        update: "DeploymentUpdateRequest",
+    ) -> dict:
+        """
+        Patch a live InferenceDeployment record.
+
+        Only fields present in the update payload are written — unset fields
+        retain their current DB values. The InferenceReconciler will pick up
+        the changes on its next poll and redeploy if it detects drift.
+        """
+        dep = (
+            self.db.query(InferenceDeployment)
+            .filter(InferenceDeployment.id == deployment_id)
+            .first()
+        )
+        if not dep:
+            raise HTTPException(status_code=404, detail="Deployment not found.")
+
+        # exclude_unset=True — only touch fields the caller explicitly provided
+        data = update.model_dump(exclude_unset=True)
+
+        for field, value in data.items():
+            setattr(dep, field, value)
+
+        dep.last_seen = int(time.time())
+        self.db.commit()
+
+        logging_utility.info(
+            "DeploymentService: deployment %s updated — fields=%s",
+            deployment_id,
+            list(data.keys()),
+        )
+
+        return {
+            "status": "updated",
+            "deployment_id": deployment_id,
+            "updated_fields": list(data.keys()),
+        }
