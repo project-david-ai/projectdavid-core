@@ -438,7 +438,7 @@ class VLLMDeployment:
         body = await request.json()
         messages = body.get("messages", [])
         model_name = body.get("model", self.model_endpoint)
-        max_tokens = body.get("max_tokens", 512)
+        max_tokens = body.get("max_tokens", 2048)
         temperature = body.get("temperature", 0.7)
         top_p = body.get("top_p", 0.9)
         stream = body.get("stream", False)
