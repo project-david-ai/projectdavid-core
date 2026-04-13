@@ -15,6 +15,9 @@ the pipeline automatically upgrades to:
 For SOVEREIGN FORGE deployments (Ray Serve, URL contains /vllm_dep_):
     POST directly to the deployment URL — no path appended.
     The deployment URL IS the endpoint.
+    - Text-only: rendered prompt string (choices[0].text SSE)
+    - Multimodal: raw messages array so inference_worker._build_engine_input
+      can extract images and apply the correct chat template via tokenizer.
 
 Supported model families (CHAT_TEMPLATE_REGISTRY):
     Qwen, DeepSeek, Mistral, Llama, Phi, Gemma, GPT-OSS
@@ -170,7 +173,9 @@ class VLLMRawStream:
 
     Routing logic (in priority order):
         1. Sovereign Forge (URL contains /vllm_dep_) → POST directly to deployment URL
-        2. Multimodal      → /v1/chat/completions  (holding pattern — see WP-sovereign-multimodal)
+           - Multimodal: raw messages array → inference_worker._build_engine_input
+           - Text-only:  rendered prompt string → inference_worker.__call__ prompt path
+        2. Multimodal      → /v1/chat/completions  (holding pattern)
         3. Text-only       → /v1/completions
     """
 
@@ -246,26 +251,48 @@ class VLLMRawStream:
         Post directly to a Ray Serve deployment URL.
 
         The deployment URL IS the endpoint — no path appended.
-        Ray Serve routes the request to the VLLMDeployment.__call__ handler
-        which returns SSE deltas in completions format (choices[0].text).
+        Ray Serve routes the request to the VLLMDeployment.__call__ handler.
+
+        Multimodal requests: send raw messages array so inference_worker.
+        _build_engine_input can extract PIL images and apply the correct
+        chat template via the tokenizer (e.g. Qwen2.5-VL vision tokens).
+
+        Text-only requests: send rendered prompt string as before.
+        SSE deltas are returned in completions format (choices[0].text).
         """
-        prompt = render_prompt(model_id=model, messages=messages)
+        multimodal = _is_multimodal(messages)
 
-        payload: Dict[str, Any] = {
-            "model": model,
-            "prompt": prompt,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "stream": True,
-            "stream_options": {"include_usage": False},
-        }
-
-        LOG.info(
-            "VLLMRawStream ▸ Sovereign Forge POST %s | model=%s | max_tokens=%d",
-            base_url,
-            model,
-            max_tokens,
-        )
+        if multimodal:
+            payload: Dict[str, Any] = {
+                "model": model,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "stream": True,
+                "stream_options": {"include_usage": False},
+            }
+            LOG.info(
+                "VLLMRawStream ▸ Sovereign Forge MULTIMODAL POST %s | model=%s | max_tokens=%d",
+                base_url,
+                model,
+                max_tokens,
+            )
+        else:
+            prompt = render_prompt(model_id=model, messages=messages)
+            payload = {
+                "model": model,
+                "prompt": prompt,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "stream": True,
+                "stream_options": {"include_usage": False},
+            }
+            LOG.info(
+                "VLLMRawStream ▸ Sovereign Forge POST %s | model=%s | max_tokens=%d",
+                base_url,
+                model,
+                max_tokens,
+            )
 
         async for chunk in self._http_stream(base_url, payload):
             yield chunk
