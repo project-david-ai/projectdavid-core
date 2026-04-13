@@ -1,926 +1,474 @@
+# src/api/training/services/deployment_service.py
 """
-inference_worker.py
+deployment_service.py
 
-Sovereign Forge — Inference Worker (Ray HEAD Node or Worker Node)
+Service layer for inference deployment lifecycle management.
 
-This container is the Ray HEAD node by default. It owns the GPU, runs Ray Serve,
-and hosts the InferenceReconciler.
+Responsibilities:
+  - Activating base models and fine-tuned models for inference
+  - Deactivating deployments (single or all)
+  - Querying Ray cluster state for node selection and capacity checks
+  - Creating and managing InferenceDeployment records
 
-When RAY_ADDRESS is set, it joins an existing Ray cluster as a worker node,
-retrying until the HEAD is reachable (e.g. while Tailscale is connecting).
+Boundary rule:
+  This service NEVER queries the BaseModel table directly.
+  All BaseModel lookups are delegated to RegistryService.
+  This service owns: InferenceDeployment, FineTunedModel.
 
-Architecture:
-    - Starts Ray HEAD node (or joins existing cluster if RAY_ADDRESS is set)
-    - Polls inference_deployments DB table every poll_interval seconds
-    - Reconciles Ray Serve deployments with DB state
-
-GPU memory notes:
-    vLLM runs a full dummy forward pass (profile_run) during initialisation to
-    size the KV cache.  On small GPUs (≤ 8 GiB) a gpu_memory_utilization of
-    0.85 (the vLLM default) leaves insufficient headroom for the sampler's
-    top-k/top-p sort and causes an OOM before any real inference begins.
-
-    The safe default here is 0.50.  Per-deployment overrides are read from the
-    DB column `gpu_memory_utilization` when present, with that value clamped to
-    [0.10, 0.95] to guard against bad data.  Set VLLM_DEFAULT_GPU_MEM_UTIL in
-    the environment to change the default for all deployments on this node.
-
-Hyperparam resolution priority (applies to all vLLM engine args):
-    1. InferenceDeployment DB column  — set at activation time via API
-    2. VLLM_DEFAULT_* env var         — node-level override in docker-compose.yml
-    3. Built-in safe default          — coded at module level below
-
-NODE_IP notes:
-    When NODE_IP is set, Ray advertises that IP address to the cluster instead
-    of auto-detecting the network interface. This is required for Tailscale
-    deployments where each node has a stable 100.x.x.x Tailscale IP that is
-    mutually reachable by all cluster members.
-
-    Set NODE_IP to the Tailscale IP on both HEAD and worker nodes:
-        HEAD   : NODE_IP=<head-tailscale-ip>  (in .env or docker-compose.yml)
-        WORKER : NODE_IP=<worker-tailscale-ip> (in RunPod template env vars)
-
-    When NODE_IP is set on the HEAD, set RAY_ADDRESS on the worker to:
-        RAY_ADDRESS=ray://<head-tailscale-ip>:10001
+Ray integration:
+  Activation creates an InferenceDeployment record with status=pending.
+  The InferenceReconciler (inference_worker.py) picks it up on its next
+  poll cycle and deploys the corresponding Ray Serve application.
+  This service does NOT communicate with Ray Serve directly.
 """
 
-import logging
 import os
 import socket
 import time
+from typing import List, Optional
 
-import ray
-from ray import serve
+import httpx
+from fastapi import HTTPException
+from projectdavid_common.schemas.enums import StatusEnum
+from projectdavid_common.utilities.identifier_service import IdentifierService
+from projectdavid_common.utilities.logging_service import LoggingUtility
 from sqlalchemy.orm import Session
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-)
-log = logging.getLogger(__name__)
+from src.api.training.models.models import FineTunedModel, InferenceDeployment
+from src.api.training.services.registry_service import RegistryService
+
+logging_utility = LoggingUtility()
 
 # ---------------------------------------------------------------------------
-# Configuration
+# Constants
 # ---------------------------------------------------------------------------
 
-RAY_DASHBOARD_PORT = int(os.getenv("RAY_DASHBOARD_PORT", "8265"))
-POLL_INTERVAL = int(os.getenv("INFERENCE_POLL_INTERVAL", "20"))
-HF_CACHE_PATH = os.getenv("HF_CACHE_PATH", "/root/.cache/huggingface")
-SHARED_PATH = os.getenv("SHARED_PATH", "/mnt/training_data")
-NODE_ID = os.getenv("NODE_ID", f"node_{socket.gethostname()}")
-SERVE_HTTP_PORT = int(os.getenv("SERVE_HTTP_PORT", "8000"))
+RAY_DASHBOARD_URL = "http://inference_worker:8265"
+RAY_SERVE_URL = "http://inference_worker:8000"
 
-# Tailscale / overlay network IP for this node.
-# When set, Ray advertises this IP instead of auto-detecting the interface.
-# Required for Tailscale-based multi-node clusters.
-NODE_IP = os.getenv("NODE_IP") or None
-
-# Retry config for worker node cluster join
-RAY_JOIN_MAX_RETRIES = int(os.getenv("RAY_JOIN_MAX_RETRIES", "20"))
-RAY_JOIN_RETRY_DELAY = int(os.getenv("RAY_JOIN_RETRY_DELAY", "15"))
 
 # ---------------------------------------------------------------------------
-# Node-level vLLM defaults
-# These are the fallback values when no DB column override is present.
-# Override via environment variables in docker-compose.yml.
+# Service
 # ---------------------------------------------------------------------------
 
-# Fraction of GPU VRAM vLLM may allocate for weights + KV cache.
-# 0.50 is conservative — safe on 8 GiB cards without profiling.
-_DEFAULT_GPU_MEM_UTIL = float(os.getenv("VLLM_DEFAULT_GPU_MEM_UTIL", "0.50"))
-_GPU_MEM_UTIL_MIN = 0.10
-_GPU_MEM_UTIL_MAX = 0.95
 
-# Maximum sequence length (prompt + completion tokens).
-# Larger values consume more KV cache VRAM linearly.
-_DEFAULT_MAX_MODEL_LEN = int(os.getenv("VLLM_DEFAULT_MAX_MODEL_LEN", "4096"))
-
-
-def _resolve_gpu_memory_utilization(dep) -> float:
+class DeploymentService:
     """
-    Return the gpu_memory_utilization to use for this deployment.
+    Service layer for inference deployment lifecycle.
 
-    Priority:
-      1. dep.gpu_memory_utilization  (DB column, if present and valid)
-      2. VLLM_DEFAULT_GPU_MEM_UTIL   (node-level env override)
-      3. 0.50                        (built-in safe default)
-
-    The value is clamped to [0.10, 0.95] regardless of source.
+    All BaseModel lookups are delegated to RegistryService.
+    This service owns InferenceDeployment and FineTunedModel records only.
     """
-    raw = getattr(dep, "gpu_memory_utilization", None)
-    if raw is not None:
+
+    def __init__(self, db: Session) -> None:
+        self.db = db
+        self.registry = RegistryService(db)
+
+    # ------------------------------------------------------------------
+    # Ray cluster interface
+    # ------------------------------------------------------------------
+
+    def _get_ray_nodes(self) -> list:
+        """
+        Queries the Ray dashboard REST API for live node state.
+        Returns a list of ALIVE node dicts with resources_total.
+
+        Fails open — returns empty list if the dashboard is unreachable
+        so that activation always succeeds and the InferenceReconciler
+        handles scheduling.
+        """
         try:
-            value = float(raw)
-            clamped = max(_GPU_MEM_UTIL_MIN, min(_GPU_MEM_UTIL_MAX, value))
-            if clamped != value:
-                log.warning(
-                    "gpu_memory_utilization %.2f for deployment %s clamped to %.2f",
-                    value,
-                    dep.id,
-                    clamped,
-                )
-            return clamped
-        except (TypeError, ValueError):
-            log.warning(
-                "Invalid gpu_memory_utilization %r for deployment %s — using default %.2f",
-                raw,
-                dep.id,
-                _DEFAULT_GPU_MEM_UTIL,
+            resp = httpx.get(
+                f"{RAY_DASHBOARD_URL}/api/v0/nodes?detail=True",
+                timeout=5.0,
             )
-    return _DEFAULT_GPU_MEM_UTIL
-
-
-# ---------------------------------------------------------------------------
-# Vision model family registry
-#
-# Each entry defines the vLLM engine kwargs required to run that model family
-# correctly on constrained hardware.
-#
-# mm_processor_kwargs : processor-level image resolution caps (family-specific)
-# limit_mm_per_prompt : max images per request (vLLM default is 1)
-#
-# Populate entries as each family is baselined and tested.
-# Unknown families get no kwargs injected — safe neutral default.
-# Phase 2: these will move to per-deployment DB columns so operators can
-# override them at activation time without a code change.
-# ---------------------------------------------------------------------------
-
-_VISION_FAMILY_CONFIGS = {
-    # ── Qwen2.5-VL ────────────────────────────────────────────────────────
-    # Dynamic resolution model. Without pixel caps a single 128px image
-    # produces 5000+ tokens. Caps to ~256 tokens per image at 64*28*28.
-    # BASELINED ✅ — Qwen/Qwen2.5-VL-3B-Instruct-AWQ confirmed working.
-    "Qwen2.5-VL": {
-        "mm_processor_kwargs": {
-            "min_pixels": 28 * 28,  # 784
-            "max_pixels": 64 * 28 * 28,  # 50176
-        },
-        "limit_mm_per_prompt": {"image": 2},
-    },
-    # ── InternVL2 ─────────────────────────────────────────────────────────
-    # Requires trust_remote_code=True — uses custom tokenizer/model code.
-    # Non-quantized 2B = 4.13GB weights, exceeds 8GB KV cache budget at 0.50.
-    # Use AWQ quant: OpenGVLab/InternVL2-2B-AWQ (~1.2GB weights).
-    # Default image tokens = 6656 per image — needs pixel caps (TBD after baseline).
-    # BASELINING IN PROGRESS 🔜
-    "InternVL2": {
-        "mm_processor_kwargs": {},
-        "limit_mm_per_prompt": {"image": 2},
-        "trust_remote_code": True,
-    },
-    # ── Phi-3.5-Vision ────────────────────────────────────────────────────
-    # trust_remote_code=True required — community AWQ quant inherits this
-    # from the base microsoft/Phi-3.5-vision-instruct model config.
-    # max_model_len=1024 required at 0.50 gpu_util — tight KV cache budget.
-    # num_crops=4 caps image tokens — default is 16 which produces 206k+ tokens.
-    # Each crop = ~1600 tokens, so num_crops=4 → ~6400 tokens per image.
-    # BASELINING IN PROGRESS 🔜
-    "Phi-3.5-vision": {
-        "mm_processor_kwargs": {"num_crops": 4},
-        "limit_mm_per_prompt": {"image": 1},
-        "trust_remote_code": True,
-        "max_model_len": 1024,
-    },
-    # ── DeepSeek-VL2 ──────────────────────────────────────────────────────
-    # TBD — pending baseline with deepseek-ai/deepseek-vl2-small.
-    "deepseek-vl2": {
-        "mm_processor_kwargs": {},
-        "limit_mm_per_prompt": {"image": 2},
-    },
-    # ── Pixtral ───────────────────────────────────────────────────────────
-    # TBD — pending baseline with mistralai/Pixtral-12B quant.
-    # Mistral's native vision model — uses variable-size image encoding.
-    "Pixtral": {
-        "mm_processor_kwargs": {},
-        "limit_mm_per_prompt": {"image": 2},
-    },
-    # ── Llama-3.2-Vision ──────────────────────────────────────────────────
-    # TBD — pending baseline with meta-llama/Llama-3.2-11B-Vision quant.
-    "Llama-3.2": {
-        "mm_processor_kwargs": {},
-        "limit_mm_per_prompt": {"image": 1},
-    },
-    # ── LLaVA-Med ─────────────────────────────────────────────────────────
-    # Fine-tuned on biomedical image-text pairs — radiology, pathology,
-    # clinical imaging Q&A. Most medically deployed open vision model.
-    # Base: LLaVA-1.5 architecture. HF: microsoft/llava-med-v1.5-mistral-7b
-    # Needs 4bit quant to fit on 8GB. TBD after LLaVA-1.6 baseline.
-    # MEDICAL VERTICAL — HIGH PRIORITY 🏥
-    "llava-med": {
-        "mm_processor_kwargs": {},
-        "limit_mm_per_prompt": {"image": 1},
-        "trust_remote_code": False,
-    },
-    # ── LLaVA ─────────────────────────────────────────────────────────────
-    # LLaVA-1.6 (llava-next) — most widely deployed open vision model.
-    # Use: llava-hf/llava-v1.6-mistral-7b-hf with 4bit quant.
-    # TBD after InternVL2 baseline.
-    "llava": {
-        "mm_processor_kwargs": {},
-        "limit_mm_per_prompt": {"image": 1},
-        "trust_remote_code": False,
-    },
-    # ── Qwen2-VL (legacy, pre-2.5) ────────────────────────────────────────
-    # Same processor architecture as Qwen2.5-VL — use same pixel caps.
-    "Qwen2-VL": {
-        "mm_processor_kwargs": {
-            "min_pixels": 28 * 28,
-            "max_pixels": 64 * 28 * 28,
-        },
-        "limit_mm_per_prompt": {"image": 2},
-    },
-}
-
-
-def _get_vision_family_config(model_endpoint: str) -> dict:
-    """
-    Match a model endpoint string to a vision family config.
-
-    Performs case-insensitive substring matching against the registry keys.
-    Returns an empty dict for unknown families — no kwargs are injected,
-    which is the safe neutral default for text-only or unknown models.
-
-    Examples:
-        "Qwen/Qwen2.5-VL-3B-Instruct-AWQ"  → Qwen2.5-VL config
-        "OpenGVLab/InternVL2-2B"            → InternVL2 config
-        "Qwen/Qwen2.5-3B-Instruct"          → {} (text-only Qwen, no vision)
-    """
-    model_lower = model_endpoint.lower()
-    for family, config in _VISION_FAMILY_CONFIGS.items():
-        if family.lower() in model_lower:
-            log.info(
-                "🔭 Vision family detected: '%s' → applying %s config",
-                family,
-                family,
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as exc:
+            logging_utility.warning(
+                "Ray dashboard unreachable — skipping node check, "
+                "proceeding with activation. Error: %s",
+                exc,
             )
-            return config
-    log.debug(
-        "No vision family match for '%s' — no mm kwargs injected.", model_endpoint
-    )
-    return {}
+            return []
 
+        nodes = data.get("data", {}).get("result", {}).get("result", [])
+        return [n for n in nodes if isinstance(n, dict) and n.get("state") == "ALIVE"]
 
-# ---------------------------------------------------------------------------
-# Ray Serve deployment — vLLM wrapped as a serve application
-# ---------------------------------------------------------------------------
-
-
-@serve.deployment(
-    name="vllm_inference",
-    ray_actor_options={"num_gpus": 1},
-    health_check_period_s=30,
-    health_check_timeout_s=60,
-)
-class VLLMDeployment:
-    """
-    Ray Serve deployment wrapping a vLLM AsyncLLMEngine.
-
-    Runs on the inference_worker HEAD node where vLLM is installed.
-    Reserves 1 GPU via ray_actor_options.
-
-    Supports:
-      - Base model inference
-      - LoRA adapter inference (via enable_lora + lora_request)
-      - Sovereign Forge raw completions API
-
-    SSE chunks are returned in /v1/completions format (choices[0].text)
-    so _http_stream in VLLMRawStream can consume them without adaptation.
-
-    All vLLM engine hyperparams are passed in at deploy time from the
-    InferenceDeployment DB record. None values fall back to vLLM defaults.
-    """
-
-    def __init__(
+    def _find_available_node(
         self,
-        model_endpoint: str,
+        required_vram: float = 4.0,
         tensor_parallel_size: int = 1,
-        max_model_len: int = _DEFAULT_MAX_MODEL_LEN,
-        gpu_memory_utilization: float = _DEFAULT_GPU_MEM_UTIL,
-        lora_modules: dict = None,
-        # --- Per-deployment vLLM engine hyperparam overrides ---
-        # Read from InferenceDeployment DB columns at deploy time.
-        # None values defer to vLLM's own defaults except where noted.
-        quantization: str = None,  # "awq", "awq_marlin", "gptq", "bitsandbytes", None = full precision
-        dtype: str = None,  # "float16", "bfloat16", "auto", None → defaults to float16 below
-        enforce_eager: bool = False,  # True = disable CUDA graphs (slower but useful for OOM debugging)
-        limit_mm_per_prompt: dict = None,  # e.g. {"image": 2, "video": 0} — caps vision token counts per request
-        mm_processor_kwargs: dict = None,  # e.g. {"min_pixels": 784, "max_pixels": 50176} — overrides family registry
-    ):
-        from vllm import AsyncEngineArgs, AsyncLLMEngine
-        from vllm.lora.request import LoRARequest
+    ) -> str:
+        """
+        Selects the most resource-rich ALIVE node from the Ray cluster.
 
-        self.model_endpoint = model_endpoint
-        self.lora_modules = lora_modules or {}
-        self._mm_processor_kwargs_override = mm_processor_kwargs or {}
+        Falls back to a default node ID if the dashboard is unreachable —
+        the InferenceReconciler will handle actual placement.
 
-        log.info(
-            "🚀 VLLMDeployment initialising — model=%s tp=%d gpu_mem_util=%.2f "
-            "max_model_len=%d quantization=%s dtype=%s enforce_eager=%s lora_modules=%s",
-            model_endpoint,
-            tensor_parallel_size,
-            gpu_memory_utilization,
-            max_model_len,
-            quantization,
-            dtype,
-            enforce_eager,
-            list(self.lora_modules.keys()),
+        Returns the Ray node ID (hex string).
+        """
+        nodes = self._get_ray_nodes()
+
+        if not nodes:
+            default_node = os.getenv("DEFAULT_NODE_ID", f"node_{socket.gethostname()}")
+            logging_utility.warning(
+                "No Ray nodes visible — using default node ID: %s", default_node
+            )
+            return default_node
+
+        nodes_sorted = sorted(
+            nodes,
+            key=lambda n: n.get("resources_total", {}).get("memory", 0.0),
+            reverse=True,
         )
 
-        # Build engine kwargs — only pass optional params when explicitly set
-        # to avoid overriding vLLM's internal defaults with None values.
-        engine_kwargs = dict(
-            model=model_endpoint,
-            max_model_len=max_model_len,
-            gpu_memory_utilization=gpu_memory_utilization,
-            tensor_parallel_size=tensor_parallel_size,
-            enable_lora=bool(self.lora_modules),
-            max_loras=max(1, len(self.lora_modules)),
-            enforce_eager=enforce_eager,
-            # dtype: float16 is the safe explicit default for mixed-precision GPUs.
-            # None would let vLLM auto-select which can pick bfloat16 on some cards
-            # causing a cast warning — we prefer explicit control.
-            dtype=dtype if dtype is not None else "float16",
+        for node in nodes_sorted:
+            resources = node.get("resources_total", {})
+            available_gpu = resources.get("GPU", 0.0)
+            available_memory_gb = resources.get("memory", 0.0) / (1024**3)
+
+            if available_gpu < tensor_parallel_size:
+                continue
+            if available_memory_gb < required_vram:
+                continue
+
+            node_id = node.get("node_id", "")
+            if not node_id:
+                continue
+
+            return node_id
+
+        default_node = os.getenv("DEFAULT_NODE_ID", f"node_{socket.gethostname()}")
+        logging_utility.warning(
+            "No Ray node meets resource requirements — using default node ID: %s",
+            default_node,
         )
+        return default_node
 
-        # quantization: only pass when set — None means full precision and
-        # passing it explicitly would override model config auto-detection.
-        if quantization is not None:
-            engine_kwargs["quantization"] = quantization
-
-        # limit_mm_per_prompt: per-modality token cap for vision models.
-        # Prevents runaway token counts from high-res images on small GPUs.
-        # Per-deployment DB column takes priority over family registry.
-        if limit_mm_per_prompt is not None:
-            engine_kwargs["limit_mm_per_prompt"] = limit_mm_per_prompt
-
-        # Vision family registry — inject mm kwargs for known model families.
-        # Priority: DB column (set via API) > family registry > nothing.
-        # Per-deployment DB overrides for limit_mm_per_prompt are already
-        # applied above, so only inject registry values when not already set.
-        vision_config = _get_vision_family_config(model_endpoint)
-
-        # mm_processor_kwargs: DB column takes priority over family registry.
-        # Allows per-deployment overrides without code changes.
-        db_mm_kwargs = getattr(self, "_mm_processor_kwargs_override", None)
-        if db_mm_kwargs:
-            engine_kwargs["mm_processor_kwargs"] = db_mm_kwargs
-            log.info(
-                "🔭 mm_processor_kwargs from DB column: %s",
-                db_mm_kwargs,
-            )
-        elif vision_config.get("mm_processor_kwargs"):
-            engine_kwargs["mm_processor_kwargs"] = vision_config["mm_processor_kwargs"]
-            log.info(
-                "🔭 mm_processor_kwargs from family registry: %s",
-                vision_config["mm_processor_kwargs"],
-            )
-
-        if "limit_mm_per_prompt" not in engine_kwargs and vision_config.get(
-            "limit_mm_per_prompt"
-        ):
-            engine_kwargs["limit_mm_per_prompt"] = vision_config["limit_mm_per_prompt"]
-            log.info(
-                "🔭 limit_mm_per_prompt applied: %s",
-                vision_config["limit_mm_per_prompt"],
-            )
-
-        if vision_config.get("trust_remote_code"):
-            engine_kwargs["trust_remote_code"] = True
-            log.info("🔭 trust_remote_code=True applied for %s", model_endpoint)
-
-        if (
-            vision_config.get("max_model_len")
-            and engine_kwargs.get("max_model_len") == _DEFAULT_MAX_MODEL_LEN
-        ):
-            engine_kwargs["max_model_len"] = vision_config["max_model_len"]
-            log.info(
-                "🔭 max_model_len overridden to %d for %s",
-                vision_config["max_model_len"],
-                model_endpoint,
-            )
-
-        engine_args = AsyncEngineArgs(**engine_kwargs)
-        self.engine = AsyncLLMEngine.from_engine_args(engine_args)
-
-        self._lora_requests = {
-            name: LoRARequest(
-                lora_name=name,
-                lora_int_id=idx + 1,
-                lora_path=path,
-            )
-            for idx, (name, path) in enumerate(self.lora_modules.items())
-        }
-
-        log.info("✅ VLLMDeployment ready — model=%s", model_endpoint)
-
-    async def __call__(self, request):
+    def _check_node_capacity(self, node_id: str, tensor_parallel_size: int = 1) -> None:
         """
-        Handle raw completions requests from the Sovereign Forge path.
+        Raises 507 if the target node cannot accommodate another deployment.
 
-        Accepts either:
-          - "prompt"   : pre-rendered prompt string (from _stream_sovereign_forge)
-          - "messages" : ChatML messages array (fallback for direct callers)
+        Ray reports resources_available["GPU"] = 0 when the GPU is reserved
+        at the cluster level but no active deployment currently holds it.
+        When the DB has no active InferenceDeployment records we use
+        resources_total as the effective GPU count — the GPU is physically
+        free even if Ray's internal accounting shows 0 available.
 
-        SSE chunks are returned in /v1/completions format:
-            choices[0].text   ← delta text
-        This matches what _http_stream in VLLMRawStream expects.
-
-        LoRA lookup: the model field may be either the fine_tuned_model_id
-        (ftm_...) or the deployment ID (vllm_dep_...). If no matching LoRA
-        request is found by name and exactly one adapter is loaded, the
-        loaded adapter is used automatically.
+        Fails open if Ray dashboard is unreachable — the InferenceReconciler
+        will handle deployment failure gracefully on its next poll cycle.
         """
-        import json as _json
-
-        from starlette.responses import StreamingResponse
-        from vllm import SamplingParams
-
-        body = await request.json()
-        messages = body.get("messages", [])
-        model_name = body.get("model", self.model_endpoint)
-        max_tokens = body.get("max_tokens", 512)
-        temperature = body.get("temperature", 0.7)
-        top_p = body.get("top_p", 0.9)
-        stream = body.get("stream", False)
-
-        # Build engine input — multimodal path extracts images into
-        # multi_modal_data so mm_processor_kwargs are actually applied.
-        # Plain text falls back to the legacy string prompt.
-        if body.get("prompt"):
-            engine_input = body["prompt"]
-        else:
-            engine_input = await self._build_engine_input(messages)
-
-        sampling_params = SamplingParams(
-            temperature=temperature,
-            top_p=top_p,
-            max_tokens=max_tokens,
-        )
-
-        lora_request = self._lora_requests.get(model_name)
-        if lora_request is None and len(self._lora_requests) == 1:
-            lora_request = next(iter(self._lora_requests.values()))
-            log.debug(
-                "VLLMDeployment: model field '%s' did not match a LoRA key — "
-                "using sole loaded adapter '%s'.",
-                model_name,
-                next(iter(self._lora_requests.keys())),
-            )
-
-        request_id = f"req_{int(time.time() * 1000)}"
-
-        if stream:
-
-            async def _event_stream():
-                prev_text = ""
-                async for output in self.engine.generate(
-                    engine_input,
-                    sampling_params,
-                    request_id=request_id,
-                    lora_request=lora_request,
-                ):
-                    if output.outputs:
-                        full_text = output.outputs[0].text
-                        delta = full_text[len(prev_text) :]
-                        prev_text = full_text
-                        if delta:
-                            chunk = {
-                                "choices": [
-                                    {
-                                        "text": delta,
-                                        "finish_reason": None,
-                                    }
-                                ]
-                            }
-                            yield f"data: {_json.dumps(chunk)}\n\n"
-
-                final = {"choices": [{"text": "", "finish_reason": "stop"}]}
-                yield f"data: {_json.dumps(final)}\n\n"
-                yield "data: [DONE]\n\n"
-
-            return StreamingResponse(_event_stream(), media_type="text/event-stream")
-
-        output_text = ""
-        async for output in self.engine.generate(
-            engine_input,
-            sampling_params,
-            request_id=request_id,
-            lora_request=lora_request,
-        ):
-            if output.outputs:
-                output_text = output.outputs[0].text
-
-        return {
-            "id": request_id,
-            "object": "text_completion",
-            "model": model_name,
-            "choices": [
-                {
-                    "index": 0,
-                    "text": output_text,
-                    "finish_reason": "stop",
-                }
-            ],
-            "usage": {
-                "prompt_tokens": -1,
-                "completion_tokens": len(output_text.split()),
-                "total_tokens": -1,
-            },
-        }
-
-    async def _build_engine_input(self, messages: list):
-        """
-        Build vLLM engine input from ChatML messages.
-
-        For multimodal messages, extracts PIL images and uses the HuggingFace
-        tokenizer's apply_chat_template to produce a prompt string with the
-        correct model-specific image placeholder tokens (e.g. Qwen2.5-VL uses
-        <|vision_start|>...<|vision_end|>, NOT <image>).
-
-        Falls back to a plain prompt string for text-only conversations.
-        """
-        import base64 as _b64
-        import io as _io
-
         try:
-            from PIL import Image as _Image
-
-            pil_available = True
-        except ImportError:
-            pil_available = False
-
-        images = []
-        hf_messages = []
-
-        for msg in messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-
-            if isinstance(content, list):
-                hf_content = []
-                for block in content:
-                    btype = block.get("type", "")
-                    if btype == "text":
-                        hf_content.append(
-                            {"type": "text", "text": block.get("text", "")}
-                        )
-                    elif btype == "image" and pil_available:
-                        raw = block.get("image", "")
-                        if raw.startswith("data:image"):
-                            b64_data = raw.split(",", 1)[1]
-                            img_bytes = _b64.b64decode(b64_data)
-                            img = _Image.open(_io.BytesIO(img_bytes)).convert("RGB")
-                            images.append(img)
-                            # Use HF-native image placeholder — model tokenizer
-                            # will expand this into the correct vision tokens.
-                            hf_content.append({"type": "image"})
-                hf_messages.append({"role": role, "content": hf_content})
-            else:
-                hf_messages.append({"role": role, "content": content})
-
-        if images:
-            # Use the engine's own tokenizer to apply the chat template so the
-            # correct model-specific image tokens are inserted into the prompt.
-            tokenizer = await self.engine.get_tokenizer()
-            text = tokenizer.apply_chat_template(
-                hf_messages,
-                tokenize=False,
-                add_generation_prompt=True,
+            resp = httpx.get(
+                f"{RAY_DASHBOARD_URL}/api/v0/nodes?detail=True",
+                timeout=5.0,
             )
-            return {
-                "prompt": text,
-                "multi_modal_data": {"image": images},
-            }
+            resp.raise_for_status()
+            nodes = resp.json().get("data", {}).get("result", {}).get("result", [])
+        except Exception:
+            return  # Fail open
 
-        return self._format_messages(hf_messages)
+        for node in nodes:
+            if node.get("node_id") != node_id:
+                continue
 
-    def _format_messages(self, messages: list) -> str:
-        """Format ChatML messages into a prompt string (fallback path)."""
-        parts = []
-        for msg in messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            if role == "system":
-                parts.append(f"<|im_start|>system\n{content}<|im_end|>")
-            elif role == "user":
-                parts.append(f"<|im_start|>user\n{content}<|im_end|>")
-            elif role == "assistant":
-                parts.append(f"<|im_start|>assistant\n{content}<|im_end|>")
-        parts.append("<|im_start|>assistant\n")
-        return "\n".join(parts)
+            resources_available = node.get("resources_available", {})
+            resources_total = node.get("resources_total", {})
 
-    def check_health(self):
-        return True
+            available_gpu = resources_available.get("GPU", 0.0)
+            total_gpu = resources_total.get("GPU", 0.0)
 
+            # When no deployments are active in the DB, Ray may still report
+            # resources_available["GPU"] = 0 due to internal cluster reservations.
+            # Fall back to resources_total which reflects actual hardware capacity.
+            # If active deployments exist, use resources_available which correctly
+            # accounts for live GPU allocations held by Ray Serve applications.
+            active_deployments = self.db.query(InferenceDeployment).count()
+            effective_gpu = available_gpu if active_deployments > 0 else total_gpu
 
-# ---------------------------------------------------------------------------
-# Deployment name helper
-# ---------------------------------------------------------------------------
+            logging_utility.info(
+                "GPU capacity check — node=%s available=%.1f total=%.1f "
+                "active_deployments=%d effective=%.1f required=%d",
+                node_id[:16],
+                available_gpu,
+                total_gpu,
+                active_deployments,
+                effective_gpu,
+                tensor_parallel_size,
+            )
 
+            if effective_gpu < tensor_parallel_size:
+                raise HTTPException(
+                    status_code=507,
+                    detail=(
+                        f"Node {node_id[:16]}... has insufficient available GPUs. "
+                        f"Required: {tensor_parallel_size}, "
+                        f"Available: {effective_gpu:.0f}. "
+                        f"Active Ray Serve deployments may be holding GPU resources."
+                    ),
+                )
+            return
 
-def _deployment_name(deployment_id: str) -> str:
-    """Convert dep_... ID to a valid Ray Serve deployment name.
+    def _get_serve_route(self, deployment_id: str) -> str:
+        """Returns the Ray Serve HTTP route for a given deployment ID."""
+        name = f"vllm_{deployment_id.replace('-', '_')}"
+        return f"{RAY_SERVE_URL}/{name}"
 
-    Ray Serve names must be alphanumeric + underscore.
-    dep_DWtgOyY5iTpkV1gfslIUwJ → vllm_dep_DWtgOyY5iTpkV1gfslIUwJ
-    """
-    return f"vllm_{deployment_id.replace('-', '_')}"
+    # ------------------------------------------------------------------
+    # Fine-tuned model retrieval
+    # ------------------------------------------------------------------
 
+    def get_fine_tuned_model(
+        self, model_id: str, user_id: Optional[str] = None
+    ) -> FineTunedModel:
+        """
+        Fetch a fine-tuned model by ID.
 
-# ---------------------------------------------------------------------------
-# Reconciliation loop
-# ---------------------------------------------------------------------------
+        user_id is optional — when omitted (admin context) the user scope
+        filter is bypassed, allowing admins to activate any user's model.
+        """
+        query = self.db.query(FineTunedModel).filter(
+            FineTunedModel.id == model_id,
+            FineTunedModel.deleted_at.is_(None),
+        )
+        if user_id:
+            query = query.filter(FineTunedModel.user_id == user_id)
+        model = query.first()
+        if not model:
+            raise HTTPException(status_code=404, detail="Fine-tuned model not found.")
+        return model
 
-
-class InferenceReconciler:
-    """
-    Polls the inference_deployments DB table and reconciles Ray Serve state.
-
-    Pending deployments  → create Ray Serve deployment (GPU reserved)
-    Active deployments   → verify healthy
-    Orphaned deployments → delete Ray Serve deployment (GPU released)
-    """
-
-    def __init__(self):
-        from src.api.training.db.database import SessionLocal
-        from src.api.training.models.models import BaseModel, InferenceDeployment
-
-        self._SessionLocal = SessionLocal
-        self._InferenceDeployment = InferenceDeployment
-        self._BaseModel = BaseModel
-        self._active: dict[str, str] = {}
-
-    def _get_db(self) -> Session:
-        return self._SessionLocal()
-
-    def _get_pending_deployments(self, db: Session) -> list:
-        from projectdavid_common.schemas.enums import StatusEnum
-
+    def list_fine_tuned_models(
+        self, user_id: str, limit: int = 50, offset: int = 0
+    ) -> List[FineTunedModel]:
+        """Return paginated fine-tuned models for a user."""
         return (
-            db.query(self._InferenceDeployment)
+            self.db.query(FineTunedModel)
             .filter(
-                self._InferenceDeployment.node_id.is_not(None),
-                self._InferenceDeployment.status.in_(
-                    [StatusEnum.pending, StatusEnum.active]
-                ),
+                FineTunedModel.user_id == user_id,
+                FineTunedModel.deleted_at.is_(None),
             )
+            .order_by(FineTunedModel.created_at.desc())
+            .offset(offset)
+            .limit(limit)
             .all()
         )
 
-    def _resolve_model_endpoint(self, db: Session, base_model_id: str) -> str:
+    def soft_delete_model(self, model_id: str, user_id: Optional[str] = None) -> dict:
+        """Soft-delete a fine-tuned model."""
+        model = self.get_fine_tuned_model(model_id, user_id)
+        model.deleted_at = int(time.time())
+        model.is_active = False
+        self.db.commit()
+        return {"status": "deleted", "model_id": model_id}
+
+    # ------------------------------------------------------------------
+    # Deployment listing
+    # ------------------------------------------------------------------
+
+    def list_deployments(self) -> List[InferenceDeployment]:
+        """Return all active InferenceDeployment records."""
+        return (
+            self.db.query(InferenceDeployment)
+            .order_by(InferenceDeployment.last_seen.desc())
+            .all()
+        )
+
+    # ------------------------------------------------------------------
+    # Deactivation
+    # ------------------------------------------------------------------
+
+    def _clear_all_deployments(self) -> None:
         """
-        Resolve a base_model_id to its HuggingFace endpoint string.
+        Internal: remove all InferenceDeployment records.
 
-        Raises RuntimeError if the BaseModel record no longer exists.
-        A missing record means the deployment references a deregistered model
-        and should not proceed.
+        The InferenceReconciler detects the missing records on its next
+        poll and tears down the corresponding Ray Serve applications,
+        releasing GPU reservations back to the cluster.
         """
-        base = (
-            db.query(self._BaseModel)
-            .filter(self._BaseModel.id == base_model_id)
-            .first()
-        )
-        if not base:
-            raise RuntimeError(
-                f"BaseModel '{base_model_id}' not found in registry. "
-                f"The InferenceDeployment references a model that no longer exists. "
-                f"Deregister this deployment or re-register the base model."
-            )
-        return base.endpoint
+        self.db.query(InferenceDeployment).delete(synchronize_session=False)
+        self.db.commit()
 
-    def _build_lora_modules(self, dep) -> dict:
-        if not dep.fine_tuned_model_id:
-            return {}
-        if not dep.fine_tuned_model or not dep.fine_tuned_model.storage_path:
-            return {}
-        adapter_path = f"{SHARED_PATH}/{dep.fine_tuned_model.storage_path}"
-        return {dep.fine_tuned_model_id: adapter_path}
-
-    def _deploy(self, db: Session, dep) -> None:
-        """Create a Ray Serve deployment on this HEAD node.
-
-        All vLLM engine hyperparams are resolved from the InferenceDeployment
-        DB record first, falling back to env vars, then built-in safe defaults.
-        This means each model can have its own tuned configuration without
-        requiring a container rebuild or compose change.
+    def deactivate_all_for_user(self, user_id: str) -> dict:
         """
-        from projectdavid_common.schemas.enums import StatusEnum
+        Deactivate all active fine-tuned model deployments for a user.
+        Also clears all InferenceDeployment records (cluster clean slate).
+        """
+        self.db.query(FineTunedModel).filter(
+            FineTunedModel.user_id == user_id,
+            FineTunedModel.is_active,
+        ).update({"is_active": False}, synchronize_session=False)
 
-        deployment_name = _deployment_name(dep.id)
-        model_endpoint = self._resolve_model_endpoint(db, dep.base_model_id)
-        lora_modules = self._build_lora_modules(dep)
+        self._clear_all_deployments()
+        return {"status": "success", "message": "Cluster resources released."}
 
-        # --- Resolve all hyperparams from DB columns → env vars → defaults ---
+    def deactivate_model(self, model_id: str, user_id: Optional[str] = None) -> dict:
+        """Surgically deactivate a single fine-tuned model deployment."""
+        model = self.get_fine_tuned_model(model_id, user_id)
 
-        # Number of GPUs for tensor parallelism (1 = single GPU, no sharding)
-        tp_size = getattr(dep, "tensor_parallel_size", 1) or 1
+        self.db.query(InferenceDeployment).filter(
+            InferenceDeployment.fine_tuned_model_id == model.id
+        ).delete(synchronize_session=False)
 
-        # GPU VRAM fraction — clamped to [0.10, 0.95] by _resolve helper
-        gpu_mem_util = _resolve_gpu_memory_utilization(dep)
+        model.is_active = False
+        self.db.commit()
+        return {"status": "deactivated", "model_id": model.id}
 
-        # Max sequence length: DB column → VLLM_DEFAULT_MAX_MODEL_LEN env → 4096
-        max_model_len = getattr(dep, "max_model_len", None) or _DEFAULT_MAX_MODEL_LEN
+    def deactivate_base_model(self, base_model_id: str) -> dict:
+        """
+        Surgically deactivate a single base model deployment.
 
-        # Quantization: "awq", "awq_marlin", "gptq", "bitsandbytes", or None
-        quantization = getattr(dep, "quantization", None)
+        Accepts either a bm_... ID or an HF path — delegates resolution
+        to RegistryService.
+        """
+        base = self.registry.resolve(base_model_id)
 
-        # Compute dtype: "float16", "bfloat16", "auto", or None → VLLMDeployment defaults to float16
-        dtype = getattr(dep, "dtype", None)
+        self.db.query(InferenceDeployment).filter(
+            InferenceDeployment.base_model_id == base.id,
+            InferenceDeployment.fine_tuned_model_id.is_(None),
+        ).delete(synchronize_session=False)
 
-        # Disable CUDA graphs — slower but useful when debugging OOM crashes
-        enforce_eager = bool(getattr(dep, "enforce_eager", False))
+        self.db.commit()
+        return {"status": "deactivated", "base_model_id": base.id}
 
-        # Per-modality token cap — critical for vision models on constrained GPUs
-        # e.g. {"image": 2} prevents a single high-res image from consuming all KV cache
-        limit_mm_per_prompt = getattr(dep, "limit_mm_per_prompt", None)
+    # ------------------------------------------------------------------
+    # Activation
+    # ------------------------------------------------------------------
 
-        # Processor-level kwargs — overrides family registry defaults when set via API.
-        # e.g. {"min_pixels": 784, "max_pixels": 50176} for Qwen2.5-VL
-        mm_processor_kwargs = getattr(dep, "mm_processor_kwargs", None)
+    def activate_base_model(
+        self,
+        base_model_id: str,
+        target_node_id: Optional[str] = None,
+        tensor_parallel_size: int = 1,
+    ) -> dict:
+        """
+        Schedule a standard backbone model (no LoRA adapter) for deployment.
 
-        log.info(
-            "🚢 Deploying via Ray Serve: %s model=%s tp=%d gpu_mem_util=%.2f "
-            "max_model_len=%d quantization=%s dtype=%s enforce_eager=%s lora=%s",
-            deployment_name,
-            model_endpoint,
-            tp_size,
-            gpu_mem_util,
-            max_model_len,
-            quantization,
-            dtype,
-            enforce_eager,
-            list(lora_modules.keys()),
+        Accepts either a bm_... ID or an HF path — delegates resolution
+        to RegistryService.
+
+        Flow:
+          1. Resolve base_model_id → BaseModel record via RegistryService
+          2. Clear all existing deployments (cluster clean slate)
+          3. Select target node (fails open if dashboard unreachable)
+          4. Capacity guard (fails open if dashboard unreachable)
+          5. Create InferenceDeployment record with status=pending
+          6. InferenceReconciler picks up on next poll and deploys via Ray Serve
+        """
+        base = self.registry.resolve(base_model_id)
+
+        self._clear_all_deployments()
+
+        node_id = target_node_id or self._find_available_node(
+            required_vram=4.0,
+            tensor_parallel_size=tensor_parallel_size,
         )
 
-        bound = VLLMDeployment.options(
-            name=deployment_name,
-            ray_actor_options={"num_gpus": tp_size},
-        ).bind(
-            model_endpoint=model_endpoint,
-            tensor_parallel_size=tp_size,
-            max_model_len=max_model_len,
-            gpu_memory_utilization=gpu_mem_util,
-            lora_modules=lora_modules,
-            quantization=quantization,
-            dtype=dtype,
-            enforce_eager=enforce_eager,
-            limit_mm_per_prompt=limit_mm_per_prompt,
-            mm_processor_kwargs=mm_processor_kwargs,
+        self._check_node_capacity(node_id, tensor_parallel_size=tensor_parallel_size)
+
+        deployment_id = IdentifierService.generate_prefixed_id("dep")
+        serve_route = self._get_serve_route(deployment_id)
+
+        deployment = InferenceDeployment(
+            id=deployment_id,
+            node_id=node_id,
+            base_model_id=base.id,
+            fine_tuned_model_id=None,
+            port=8000,
+            status=StatusEnum.pending,
+            last_seen=int(time.time()),
+            tensor_parallel_size=tensor_parallel_size,
+            internal_hostname=serve_route,
         )
 
-        serve.run(
-            bound,
-            name=deployment_name,
-            route_prefix=f"/{deployment_name}",
-            blocking=False,
+        self.db.add(deployment)
+        self.db.commit()
+
+        logging_utility.info(
+            "DeploymentService: base model activation scheduled. "
+            "base_model_id=%s deployment_id=%s node=%s",
+            base.id,
+            deployment_id,
+            node_id,
         )
 
-        dep.status = StatusEnum.active
-        dep.internal_hostname = f"http://inference_worker:8000/{deployment_name}"
-        db.commit()
+        return {
+            "status": "deploying",
+            "model_id": base.id,
+            "hf_path": base.endpoint,
+            "node": node_id,
+            "tensor_parallel_size": tensor_parallel_size,
+            "serve_route": serve_route,
+            "next_step": "InferenceReconciler will deploy via Ray Serve on next poll.",
+        }
 
-        self._active[dep.id] = deployment_name
-        log.info(
-            "✅ Ray Serve deployment active: %s (gpu_mem_util=%.2f max_model_len=%d)",
-            deployment_name,
-            gpu_mem_util,
-            max_model_len,
+    def activate_fine_tuned_model(
+        self,
+        model_id: str,
+        target_node_id: Optional[str] = None,
+        tensor_parallel_size: int = 1,
+    ) -> dict:
+        """
+        Schedule a fine-tuned model (base + LoRA adapter) for deployment.
+
+        Flow:
+          1. Fetch FineTunedModel record (admin bypass — no user_id scope)
+          2. Deactivate all existing deployments for that user
+          3. Resolve base model via RegistryService
+          4. Select target node (fails open if dashboard unreachable)
+          5. Capacity guard (fails open if dashboard unreachable)
+          6. Create InferenceDeployment record with status=pending
+          7. InferenceReconciler picks up on next poll and deploys via Ray Serve
+        """
+        model = self.get_fine_tuned_model(model_id)
+
+        self.deactivate_all_for_user(model.user_id)
+
+        base = self.registry.resolve(model.base_model)
+
+        node_id = target_node_id or self._find_available_node(
+            required_vram=5.0,
+            tensor_parallel_size=tensor_parallel_size,
         )
 
-    def _delete_deployment(self, deployment_name: str) -> None:
-        try:
-            serve.delete(deployment_name)
-            log.info("🛑 Ray Serve deployment deleted: %s", deployment_name)
-        except Exception as e:
-            log.warning("Could not delete deployment %s: %s", deployment_name, e)
+        self._check_node_capacity(node_id, tensor_parallel_size=tensor_parallel_size)
 
-    def _get_active_serve_deployments(self) -> set:
-        try:
-            statuses = serve.status().applications
-            return set(statuses.keys())
-        except Exception:
-            return set()
+        deployment_id = IdentifierService.generate_prefixed_id("dep")
+        serve_route = self._get_serve_route(deployment_id)
 
-    def reconcile(self) -> None:
-        db = self._get_db()
-        try:
-            deployments = self._get_pending_deployments(db)
-            db_ids = {dep.id for dep in deployments}
-            expected_serve_names = {_deployment_name(dep_id) for dep_id in db_ids}
-            serve_names = self._get_active_serve_deployments()
-
-            for dep in deployments:
-                deployment_name = _deployment_name(dep.id)
-                if deployment_name not in serve_names:
-                    log.warning(
-                        "🚨 Deployment drift — %s not in Ray Serve. Redeploying.",
-                        deployment_name,
-                    )
-                    try:
-                        self._deploy(db, dep)
-                    except RuntimeError as e:
-                        log.error("Skipping deployment %s: %s", deployment_name, e)
-
-            for name in serve_names:
-                if name.startswith("vllm_") and name not in expected_serve_names:
-                    log.info("🧹 Orphaned Ray Serve deployment — deleting: %s", name)
-                    self._delete_deployment(name)
-
-        except Exception as e:
-            log.error("Reconciliation error: %s", e)
-        finally:
-            db.close()
-
-
-# ---------------------------------------------------------------------------
-# Main entrypoint
-# ---------------------------------------------------------------------------
-
-
-def main():
-    # ── Phase 1: Start Ray (HEAD or Worker) ──────────────────────────────
-    #
-    # RAY_ADDRESS unset → HEAD node.
-    #   node_ip_address passed when NODE_IP is set so the HEAD advertises
-    #   its Tailscale IP to workers rather than the Docker bridge IP.
-    #   Required for Tailscale-based multi-node clusters.
-    #
-    # RAY_ADDRESS set → Worker node joining existing cluster.
-    #   node_ip_address passed when NODE_IP is set so the worker registers
-    #   its Tailscale IP with the cluster, enabling bidirectional Ray
-    #   communication without an SSH tunnel for Ray traffic.
-    #   Retries up to RAY_JOIN_MAX_RETRIES times with RAY_JOIN_RETRY_DELAY
-    #   seconds between attempts — tolerates Tailscale connect delay and
-    #   transient HEAD unavailability without crashing the container.
-
-    ray_address = os.getenv("RAY_ADDRESS") or None
-
-    # Set RAY_NODE_IP_ADDRESS so Ray advertises the Tailscale IP
-    # instead of auto-detecting the Docker bridge interface.
-    if NODE_IP:
-        os.environ["RAY_NODE_IP_ADDRESS"] = NODE_IP
-        log.info("🌐 Node IP override: %s (Tailscale)", NODE_IP)
-
-    if ray_address:
-        # ── Worker node ───────────────────────────────────────────────────
-        log.info("🔗 Joining Ray cluster at %s", ray_address)
-        for attempt in range(1, RAY_JOIN_MAX_RETRIES + 1):
-            try:
-                ray.init(
-                    address=ray_address,
-                    ignore_reinit_error=True,
-                    logging_level="WARNING",
-                )
-                log.info(
-                    "✅ Joined Ray cluster — resources: %s", ray.cluster_resources()
-                )
-                break
-            except Exception as e:
-                log.warning(
-                    "⏳ Ray cluster not ready (attempt %d/%d): %s — retrying in %ds",
-                    attempt,
-                    RAY_JOIN_MAX_RETRIES,
-                    e,
-                    RAY_JOIN_RETRY_DELAY,
-                )
-                if attempt == RAY_JOIN_MAX_RETRIES:
-                    log.error(
-                        "❌ Could not join Ray cluster after %d attempts. Exiting.",
-                        RAY_JOIN_MAX_RETRIES,
-                    )
-                    raise
-                time.sleep(RAY_JOIN_RETRY_DELAY)
-    else:
-        # ── HEAD node ─────────────────────────────────────────────────────
-        ray.init(
-            address=None,
-            ignore_reinit_error=True,
-            include_dashboard=True,
-            dashboard_host="0.0.0.0",  # nosec B104
-            dashboard_port=RAY_DASHBOARD_PORT,
-            logging_level="WARNING",
+        deployment = InferenceDeployment(
+            id=deployment_id,
+            node_id=node_id,
+            base_model_id=base.id,
+            fine_tuned_model_id=model.id,
+            port=8000,
+            status=StatusEnum.pending,
+            last_seen=int(time.time()),
+            tensor_parallel_size=tensor_parallel_size,
+            internal_hostname=serve_route,
         )
 
-        log.info(
-            "🌐 Ray HEAD started — dashboard: http://localhost:%d", RAY_DASHBOARD_PORT
+        model.is_active = True
+        self.db.add(deployment)
+        self.db.commit()
+
+        logging_utility.info(
+            "DeploymentService: fine-tuned model activation scheduled. "
+            "model_id=%s base_model_id=%s deployment_id=%s node=%s",
+            model.id,
+            base.id,
+            deployment_id,
+            node_id,
         )
-        log.info("🔵 Ray resources: %s", ray.cluster_resources())
 
-    # ── Phase 2: Start Ray Serve ──────────────────────────────────────────
-    serve.start(
-        detached=True,
-        http_options={"host": "0.0.0.0", "port": SERVE_HTTP_PORT},  # nosec B104
-    )
-    log.info("🎯 Ray Serve started on port %d", SERVE_HTTP_PORT)
-
-    # ── Phase 3: Reconciliation loop ──────────────────────────────────────
-    reconciler = InferenceReconciler()
-    log.info("👀 InferenceReconciler active — polling every %ds", POLL_INTERVAL)
-
-    while True:
-        reconciler.reconcile()
-        time.sleep(POLL_INTERVAL)
-
-
-if __name__ == "__main__":
-    main()
+        return {
+            "status": "deploying",
+            "model_id": model.id,
+            "base_model_id": base.id,
+            "hf_path": base.endpoint,
+            "node": node_id,
+            "tensor_parallel_size": tensor_parallel_size,
+            "serve_route": serve_route,
+            "next_step": "InferenceReconciler will deploy via Ray Serve on next poll.",
+        }
