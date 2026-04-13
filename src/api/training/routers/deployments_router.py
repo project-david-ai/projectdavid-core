@@ -101,6 +101,7 @@ def activate_base_model(
         dtype=payload.dtype,
         enforce_eager=payload.enforce_eager,
         limit_mm_per_prompt=payload.limit_mm_per_prompt,
+        mm_processor_kwargs=payload.mm_processor_kwargs,
     )
     return DeploymentActivationResponse(**result)
 
@@ -137,6 +138,7 @@ def activate_fine_tuned_model(
         dtype=payload.dtype,
         enforce_eager=payload.enforce_eager,
         limit_mm_per_prompt=payload.limit_mm_per_prompt,
+        mm_processor_kwargs=payload.mm_processor_kwargs,
     )
     return DeploymentActivationResponse(**result)
 
