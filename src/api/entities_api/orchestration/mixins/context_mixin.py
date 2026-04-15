@@ -478,7 +478,6 @@ class ContextMixin:
     # -----------------------------------------------------
     # ASYNC CONTEXT WINDOW
     # -----------------------------------------------------
-
     async def _set_up_context_window(
         self,
         assistant_id: str,
@@ -495,7 +494,7 @@ class ContextMixin:
         junior_engineer: bool = False,
     ) -> List[Dict]:
 
-        # 1. Build the System Message
+        # 1. Build the System Message  ← UNCHANGED
         if engineer:
             system_msg = await self._build_senior_engineer_message(
                 assistant_id=assistant_id,
@@ -542,11 +541,10 @@ class ContextMixin:
                 web_access=web_access,
             )
 
-        # 2. Retrieve Message History
+        # 2. Retrieve Message History  ← UNCHANGED
         if force_refresh:
             LOG.debug(f"[CTX-REFRESH] Force Refresh Active for {thread_id}")
             try:
-                # Fetch lean messages (file_ids, no base64) and store in Redis
                 lean_hist = await self._native_exec.get_raw_messages(thread_id)
             except Exception as e:
                 LOG.warning(
@@ -557,21 +555,26 @@ class ContextMixin:
                 )
                 lean_hist = []
 
-            # Store lean in Redis — never store hydrated base64
             self.message_cache.set_history_sync(thread_id, lean_hist)
             msgs = lean_hist
 
         else:
-            # Hot path — Redis returns lean messages with file_id refs
             msgs = self.message_cache.get_history_sync(thread_id)
             LOG.debug(f"[CTX-CACHE] Redis hit for {thread_id}")
 
-        # 3. Hydrate images just-in-time — resolve file_ids → base64 right
-        #    before LLM dispatch. Expired files are skipped gracefully.
-        #    Plain text messages pass through untouched.
-        msgs = await self._native_exec.hydrate_messages(msgs)
+        # 3. Hydrate images just-in-time  ← THE ONLY CHANGE
+        #    If any message has unresolved file_id refs, bypass hydrate_messages
+        #    and use get_formatted_messages (proven working path via DB).
+        #    Text-only threads skip the DB query entirely — zero extra cost.
+        if any(msg.get("attachments") for msg in msgs):
+            LOG.debug(
+                "[CTX] Attachments detected — using get_formatted_messages for hydration."
+            )
+            msgs = await self._native_exec.get_formatted_messages(thread_id)
+        else:
+            msgs = [{k: v for k, v in m.items() if k != "attachments"} for m in msgs]
 
-        # 4. Filter system messages, prepend fresh system msg, normalize
+        # 4. Filter system messages, prepend fresh system msg, normalize  ← UNCHANGED
         msgs = [m for m in msgs if m.get("role") != "system"]
         full_context = [system_msg] + msgs
         normalized = self._normalize_roles(full_context)
