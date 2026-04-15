@@ -403,7 +403,6 @@ class QwenBaseWorker(
             yield json.dumps({"type": "status", "status": "started", "run_id": run_id})
 
             client = self._get_client_instance(api_key=api_key)
-
             # ------------------------------------------------------------------
             # 7. MULTIMODAL NORMALISATION
             # Hydrated image blocks arrive as {"type": "image", "image": "data:..."}

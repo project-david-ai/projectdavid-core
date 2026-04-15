@@ -1,0 +1,125 @@
+<svg width="100%" viewBox="0 0 680 1050" xmlns="http://www.w3.org/2000/svg" role="img">
+<title>Vision pipeline: upload, hydration fix, vLLM and remote provider paths</title>
+<desc>End-to-end diagram of the projectdavid SDK vision pipeline: image upload via MessagesClient, Samba/Redis/DB storage, shared context assembly with hydration fix, and parallel vLLM local vs remote provider dispatch.</desc>
+<defs><marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect width="680" height="1050" fill="white"/>
+<rect x="26" y="18" width="628" height="312" rx="10" fill="none" stroke="#D3D1C7" stroke-dasharray="4 3" stroke-width="0.5"/>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="9" font-weight="500" fill="#888780" letter-spacing="0.8" x="42" y="15">① UPLOAD PHASE — SDK MessagesClient · prepare_multimodal_payload()</text>
+<rect x="40" y="28" width="270" height="52" rx="8" fill="#E1F5EE" stroke="#1D9E75" stroke-width="0.5"/>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" font-weight="500" fill="#085041" text-anchor="middle" dominant-baseline="central" x="175" y="42.0">Local file</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#0F6E56" text-anchor="middle" dominant-baseline="central" x="175" y="58.0">encode_image() → base64 data URI</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#0F6E56" text-anchor="middle" dominant-baseline="central" x="175" y="72.0">resize ≤512px · JPEG q85</text>
+<rect x="370" y="28" width="270" height="52" rx="8" fill="#E1F5EE" stroke="#1D9E75" stroke-width="0.5"/>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" font-weight="500" fill="#085041" text-anchor="middle" dominant-baseline="central" x="505" y="42.0">URL image</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#0F6E56" text-anchor="middle" dominant-baseline="central" x="505" y="58.0">httpx.get(follow_redirects=True)</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#0F6E56" text-anchor="middle" dominant-baseline="central" x="505" y="72.0">response.content → bytes</text>
+<line x1="175" y1="80" x2="175" y2="93" stroke="#B4B2A9" stroke-width="0.5"/>
+<line x1="505" y1="80" x2="505" y2="93" stroke="#B4B2A9" stroke-width="0.5"/>
+<line x1="175" y1="93" x2="505" y2="93" stroke="#B4B2A9" stroke-width="0.5"/>
+<line x1="340" y1="93" x2="340" y2="108" stroke="#B4B2A9" stroke-width="0.5" marker-end="url(#arr)"/>
+<rect x="100" y="108" width="480" height="56" rx="8" fill="#E1F5EE" stroke="#1D9E75" stroke-width="0.5"/>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" font-weight="500" fill="#085041" text-anchor="middle" dominant-baseline="central" x="340" y="123.3">_process_and_upload_image()</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#0F6E56" text-anchor="middle" dominant-baseline="central" x="340" y="140.7">ThreadPoolExecutor · max_workers=10 · concurrent batch</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#0F6E56" text-anchor="middle" dominant-baseline="central" x="340" y="156.0">base64 decode or httpx → FileClient.upload_file_object() → Samba</text>
+<line x1="340" y1="164" x2="340" y2="180" stroke="#B4B2A9" stroke-width="0.5" marker-end="url(#arr)"/>
+<rect x="200" y="180" width="280" height="44" rx="8" fill="#EEEDFE" stroke="#7F77DD" stroke-width="0.5"/>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" font-weight="500" fill="#26215C" text-anchor="middle" dominant-baseline="central" x="340" y="197.0">Samba file storage</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#534AB7" text-anchor="middle" dominant-baseline="central" x="340" y="216.0">stores bytes · returns file_id</text>
+<line x1="340" y1="224" x2="340" y2="240" stroke="#B4B2A9" stroke-width="0.5"/>
+<line x1="175" y1="240" x2="505" y2="240" stroke="#B4B2A9" stroke-width="0.5"/>
+<line x1="175" y1="240" x2="175" y2="252" stroke="#B4B2A9" stroke-width="0.5" marker-end="url(#arr)"/>
+<line x1="505" y1="240" x2="505" y2="252" stroke="#B4B2A9" stroke-width="0.5" marker-end="url(#arr)"/>
+<rect x="40" y="252" width="270" height="68" rx="8" fill="#EEEDFE" stroke="#7F77DD" stroke-width="0.5"/>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" font-weight="500" fill="#26215C" text-anchor="middle" dominant-baseline="central" x="175" y="271.3">DB — message row</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#534AB7" text-anchor="middle" dominant-baseline="central" x="175" y="292.7">content: 'look at these'</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#534AB7" text-anchor="middle" dominant-baseline="central" x="175" y="312.0">attachments:[{type:image, file_id}]</text>
+<rect x="370" y="252" width="270" height="68" rx="8" fill="#EEEDFE" stroke="#7F77DD" stroke-width="0.5"/>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" font-weight="500" fill="#26215C" text-anchor="middle" dominant-baseline="central" x="505" y="271.3">Redis — lean cache</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#534AB7" text-anchor="middle" dominant-baseline="central" x="505" y="292.7">{role, content:str,</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#534AB7" text-anchor="middle" dominant-baseline="central" x="505" y="312.0">attachments:[{file_id}]}</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="9" font-weight="500" fill="#888780" letter-spacing="0.8" x="42" y="338">② INFERENCE TRIGGER</text>
+<line x1="175" y1="320" x2="175" y2="334" stroke="#B4B2A9" stroke-width="0.5"/>
+<line x1="505" y1="320" x2="505" y2="334" stroke="#B4B2A9" stroke-width="0.5"/>
+<line x1="175" y1="334" x2="505" y2="334" stroke="#B4B2A9" stroke-width="0.5"/>
+<line x1="340" y1="334" x2="340" y2="346" stroke="#B4B2A9" stroke-width="0.5" marker-end="url(#arr)"/>
+<rect x="190" y="346" width="300" height="44" rx="8" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" font-weight="500" fill="#2C2C2A" text-anchor="middle" dominant-baseline="central" x="340" y="363.0">POST /v1/completions</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#5F5E5A" text-anchor="middle" dominant-baseline="central" x="340" y="382.0">thread_id · run_id · model · meta_data</text>
+<line x1="340" y1="390" x2="340" y2="404" stroke="#B4B2A9" stroke-width="0.5"/>
+<line x1="175" y1="404" x2="505" y2="404" stroke="#B4B2A9" stroke-width="0.5"/>
+<line x1="175" y1="404" x2="175" y2="416" stroke="#B4B2A9" stroke-width="0.5" marker-end="url(#arr)"/>
+<line x1="505" y1="404" x2="505" y2="416" stroke="#B4B2A9" stroke-width="0.5" marker-end="url(#arr)"/>
+<rect x="40" y="416" width="270" height="52" rx="8" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" font-weight="500" fill="#2C2C2A" text-anchor="middle" dominant-baseline="central" x="175" y="437.0">VLLMDefaultBaseWorker</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#5F5E5A" text-anchor="middle" dominant-baseline="central" x="175" y="460.0">local vLLM · mesh URL resolution</text>
+<rect x="370" y="416" width="270" height="52" rx="8" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" font-weight="500" fill="#2C2C2A" text-anchor="middle" dominant-baseline="central" x="505" y="437.0">QwenBaseWorker</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#5F5E5A" text-anchor="middle" dominant-baseline="central" x="505" y="460.0">Together · Hyperbolic · remote API</text>
+<rect x="26" y="480" width="628" height="148" rx="10" fill="none" stroke="#D3D1C7" stroke-dasharray="4 3" stroke-width="0.5"/>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="9" font-weight="500" fill="#888780" letter-spacing="0.8" x="42" y="477">③ CONTEXT ASSEMBLY — shared by both workers</text>
+<line x1="175" y1="468" x2="175" y2="484" stroke="#B4B2A9" stroke-width="0.5"/>
+<line x1="505" y1="468" x2="505" y2="484" stroke="#B4B2A9" stroke-width="0.5"/>
+<line x1="175" y1="484" x2="505" y2="484" stroke="#B4B2A9" stroke-width="0.5"/>
+<line x1="340" y1="484" x2="340" y2="496" stroke="#B4B2A9" stroke-width="0.5" marker-end="url(#arr)"/>
+<rect x="100" y="496" width="480" height="52" rx="8" fill="#FAEEDA" stroke="#BA7517" stroke-width="0.5"/>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" font-weight="500" fill="#412402" text-anchor="middle" dominant-baseline="central" x="340" y="517.0">_set_up_context_window()</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#854F0B" text-anchor="middle" dominant-baseline="central" x="340" y="540.0">build system msg · fetch history · hydrate · normalize · truncate</text>
+<line x1="340" y1="548" x2="340" y2="564" stroke="#B4B2A9" stroke-width="0.5" marker-end="url(#arr)"/>
+<rect x="100" y="564" width="480" height="44" rx="8" fill="#FAEEDA" stroke="#BA7517" stroke-width="0.5"/>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" font-weight="500" fill="#412402" text-anchor="middle" dominant-baseline="central" x="340" y="581.0">message_cache.get_history_sync()</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#854F0B" text-anchor="middle" dominant-baseline="central" x="340" y="600.0">Redis hit → lean msgs · cold miss → DB load → write to Redis</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="9" font-weight="500" fill="#888780" letter-spacing="0.8" x="42" y="644">④ IMAGE HYDRATION — the fix</text>
+<line x1="340" y1="608" x2="340" y2="626" stroke="#B4B2A9" stroke-width="0.5"/>
+<line x1="175" y1="626" x2="505" y2="626" stroke="#B4B2A9" stroke-width="0.5"/>
+<line x1="175" y1="626" x2="175" y2="646" stroke="#B4B2A9" stroke-width="0.5" marker-end="url(#arr)"/>
+<line x1="505" y1="626" x2="505" y2="646" stroke="#B4B2A9" stroke-width="0.5" marker-end="url(#arr)"/>
+<rect x="40" y="646" width="270" height="84" rx="8" fill="#FAECE7" stroke="#D85A30" stroke-width="0.5"/>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" font-weight="500" fill="#4A1B0C" text-anchor="middle" dominant-baseline="central" x="175" y="664.5">hydrate_messages()  ❌</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#993C1D" text-anchor="middle" dominant-baseline="central" x="175" y="685.0">to_thread · new SessionLocal · None</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#993C1D" text-anchor="middle" dominant-baseline="central" x="175" y="703.5">FileService → None · str content</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#993C1D" text-anchor="middle" dominant-baseline="central" x="175" y="722.0">→ text-only endpoint ×</text>
+<rect x="370" y="646" width="270" height="84" rx="8" fill="#E1F5EE" stroke="#1D9E75" stroke-width="0.5"/>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" font-weight="500" fill="#085041" text-anchor="middle" dominant-baseline="central" x="505" y="664.5">get_formatted_messages()  ✓</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#0F6E56" text-anchor="middle" dominant-baseline="central" x="505" y="685.0">any(attachments) → live DB session</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#0F6E56" text-anchor="middle" dominant-baseline="central" x="505" y="703.5">→ base64 · content becomes list</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#0F6E56" text-anchor="middle" dominant-baseline="central" x="505" y="722.0">_is_multimodal=True → chat path ✓</text>
+<line x1="505" y1="730" x2="505" y2="752" stroke="#B4B2A9" stroke-width="0.5"/>
+<line x1="175" y1="752" x2="505" y2="752" stroke="#B4B2A9" stroke-width="0.5"/>
+<line x1="175" y1="752" x2="175" y2="768" stroke="#B4B2A9" stroke-width="0.5" marker-end="url(#arr)"/>
+<line x1="505" y1="752" x2="505" y2="768" stroke="#B4B2A9" stroke-width="0.5" marker-end="url(#arr)"/>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="9" font-weight="500" fill="#888780" letter-spacing="0.8" x="42" y="764">⑤ PROVIDER DISPATCH</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" font-weight="500" fill="#185FA5" text-anchor="middle" x="175" y="780">vLLM (local)</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="10" font-weight="500" fill="#993556" text-anchor="middle" x="505" y="780">remote provider</text>
+<rect x="40" y="788" width="270" height="44" rx="8" fill="#E6F1FB" stroke="#378ADD" stroke-width="0.5"/>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" font-weight="500" fill="#042C53" text-anchor="middle" dominant-baseline="central" x="175" y="805.0">_is_multimodal() = True</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#185FA5" text-anchor="middle" dominant-baseline="central" x="175" y="824.0">isinstance(m['content'], list)</text>
+<line x1="175" y1="832" x2="175" y2="848" stroke="#B4B2A9" stroke-width="0.5" marker-end="url(#arr)"/>
+<rect x="40" y="848" width="270" height="44" rx="8" fill="#E6F1FB" stroke="#378ADD" stroke-width="0.5"/>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" font-weight="500" fill="#042C53" text-anchor="middle" dominant-baseline="central" x="175" y="865.0">_stream_vllm_chat()</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#185FA5" text-anchor="middle" dominant-baseline="central" x="175" y="884.0">_normalise_for_chat → image_url format</text>
+<line x1="175" y1="892" x2="175" y2="908" stroke="#B4B2A9" stroke-width="0.5" marker-end="url(#arr)"/>
+<rect x="40" y="908" width="270" height="44" rx="8" fill="#E6F1FB" stroke="#378ADD" stroke-width="0.5"/>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" font-weight="500" fill="#042C53" text-anchor="middle" dominant-baseline="central" x="175" y="925.0">POST /v1/chat/completions</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#185FA5" text-anchor="middle" dominant-baseline="central" x="175" y="944.0">streaming SSE to local vLLM</text>
+<line x1="175" y1="952" x2="175" y2="968" stroke="#B4B2A9" stroke-width="0.5" marker-end="url(#arr)"/>
+<rect x="40" y="968" width="270" height="52" rx="8" fill="#E6F1FB" stroke="#378ADD" stroke-width="0.5"/>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" font-weight="500" fill="#042C53" text-anchor="middle" dominant-baseline="central" x="175" y="982.0">vLLM  Qwen2.5-VL</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#185FA5" text-anchor="middle" dominant-baseline="central" x="175" y="998.0">processes vision tokens</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#185FA5" text-anchor="middle" dominant-baseline="central" x="175" y="1012.0">streams via _http_stream_chat()</text>
+<rect x="370" y="788" width="270" height="44" rx="8" fill="#FBEAF0" stroke="#D4537E" stroke-width="0.5"/>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" font-weight="500" fill="#4B1528" text-anchor="middle" dominant-baseline="central" x="505" y="805.0">is_multimodal() = True</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#993556" text-anchor="middle" dominant-baseline="central" x="505" y="824.0">VISION_MAX_IMAGES: None or 1</text>
+<line x1="505" y1="832" x2="505" y2="848" stroke="#B4B2A9" stroke-width="0.5" marker-end="url(#arr)"/>
+<rect x="370" y="848" width="270" height="44" rx="8" fill="#FBEAF0" stroke="#D4537E" stroke-width="0.5"/>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" font-weight="500" fill="#4B1528" text-anchor="middle" dominant-baseline="central" x="505" y="865.0">normalise_for_chat()</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#993556" text-anchor="middle" dominant-baseline="central" x="505" y="884.0">max_images cap · OpenAI image_url</text>
+<line x1="505" y1="892" x2="505" y2="908" stroke="#B4B2A9" stroke-width="0.5" marker-end="url(#arr)"/>
+<rect x="370" y="908" width="270" height="44" rx="8" fill="#FBEAF0" stroke="#D4537E" stroke-width="0.5"/>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" font-weight="500" fill="#4B1528" text-anchor="middle" dominant-baseline="central" x="505" y="925.0">stream_chat_completion()</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#993556" text-anchor="middle" dominant-baseline="central" x="505" y="944.0">client.stream_chat_completion()</text>
+<line x1="505" y1="952" x2="505" y2="968" stroke="#B4B2A9" stroke-width="0.5" marker-end="url(#arr)"/>
+<rect x="370" y="968" width="270" height="52" rx="8" fill="#FBEAF0" stroke="#D4537E" stroke-width="0.5"/>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="13" font-weight="500" fill="#4B1528" text-anchor="middle" dominant-baseline="central" x="505" y="982.0">Together AI / Hyperbolic</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#993556" text-anchor="middle" dominant-baseline="central" x="505" y="998.0">remote hosted Qwen VL models</text>
+<text font-family="system-ui,-apple-system,Arial,sans-serif" font-size="11" fill="#993556" text-anchor="middle" dominant-baseline="central" x="505" y="1012.0">streams via DeltaNormalizer</text>
+</svg>
