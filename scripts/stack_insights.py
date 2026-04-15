@@ -1,4 +1,5 @@
 import json
+import re
 import subprocess
 from datetime import datetime, timezone
 
@@ -37,25 +38,21 @@ runs = json.loads(result.stdout)
 if isinstance(runs, dict) and "value" in runs:
     runs = runs["value"]
 
+
+def parse_dt(s):
+    return datetime.fromisoformat(s.replace("Z", "+00:00"))
+
+
 era1 = sum(
-    1
-    for r in runs
-    if r.get("updatedAt")
-    and datetime.fromisoformat(r["updatedAt"].replace("Z", "+00:00")) < ERA1_END
+    1 for r in runs if r.get("updatedAt") and parse_dt(r["updatedAt"]) < ERA1_END
 )
 era2 = sum(
     1
     for r in runs
-    if r.get("updatedAt")
-    and ERA1_END
-    <= datetime.fromisoformat(r["updatedAt"].replace("Z", "+00:00"))
-    < ERA2_END
+    if r.get("updatedAt") and ERA1_END <= parse_dt(r["updatedAt"]) < ERA2_END
 )
 era3 = sum(
-    1
-    for r in runs
-    if r.get("updatedAt")
-    and datetime.fromisoformat(r["updatedAt"].replace("Z", "+00:00")) >= ERA2_END
+    1 for r in runs if r.get("updatedAt") and parse_dt(r["updatedAt"]) >= ERA2_END
 )
 ci_noise = (era1 * 2 + era2 * 4 + era3 * 6) * PULLS_PER_IMAGE_PER_RUN
 
@@ -108,8 +105,6 @@ while url:
     all_tags += resp.get("results", [])
     url = resp.get("next")
 
-import re
-
 semver_tags = [t for t in all_tags if re.match(r"^\d+\.\d+\.\d+$", t["name"])]
 semver_tags.sort(key=lambda t: list(map(int, t["name"].split("."))), reverse=True)
 
@@ -123,33 +118,27 @@ active_tags = 0
 now = datetime.now(timezone.utc)
 
 for tag in semver_tags:
-    pulled = datetime.fromisoformat(tag["tag_last_pulled"].replace("Z", "+00:00"))
-    closest = (
-        min(
-            ci_runs,
-            key=lambda r: abs(
-                (
-                    datetime.fromisoformat(r["updatedAt"].replace("Z", "+00:00"))
-                    - pulled
-                ).total_seconds()
-            ),
-        )
-        if ci_runs
-        else None
+    pulled = parse_dt(tag["tag_last_pulled"])
+
+    # Only match CI runs that finished BEFORE this tag was pulled — eliminates negative gaps
+    prior_runs = [r for r in ci_runs if parse_dt(r["updatedAt"]) <= pulled]
+    closest = min(
+        prior_runs,
+        key=lambda r: (pulled - parse_dt(r["updatedAt"])).total_seconds(),
+        default=None,
     )
-    ci_finished = (
-        datetime.fromisoformat(closest["updatedAt"].replace("Z", "+00:00"))
-        if closest
-        else None
-    )
+
+    ci_finished = parse_dt(closest["updatedAt"]) if closest else None
     gap = (
         round((pulled - ci_finished).total_seconds() / 3600, 1) if ci_finished else None
     )
     likely = "REAL USER" if gap is not None and gap > 2 else "CI/YOU"
+
     if likely == "REAL USER":
         real_user_tags += 1
     if (now - pulled).days < 7:
         active_tags += 1
+
     ci_str = ci_finished.strftime("%m-%d %H:%M") if ci_finished else "n/a"
     print(
         f"{tag['name']:<10} {ci_str:<14} {pulled.strftime('%m-%d %H:%M'):<14} {str(gap):>10} {likely}"
