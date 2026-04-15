@@ -1,3 +1,10 @@
+# [1.38.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.37.0...v1.38.0) (2026-04-15)
+
+
+### Features
+
+* **telemetry:** add opt-in anonymous usage analytics via PostHog ([60ff7ba](https://github.com/project-david-ai/projectdavid-core/commit/60ff7ba18004cebb452d8c92bf84fbfc649dadb9))
+
 # [1.37.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.36.0...v1.37.0) (2026-04-15)
 
 
