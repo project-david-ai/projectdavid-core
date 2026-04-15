@@ -13,8 +13,15 @@ the pipeline automatically upgrades to:
     vLLM /v1/chat/completions  (messages array, vLLM handles the template)
 
 For SOVEREIGN FORGE deployments (Ray Serve, URL contains /vllm_dep_):
-    POST directly to the deployment URL — no path appended.
-    The deployment URL IS the endpoint.
+    Text-only:   POST prompt string directly to the deployment URL.
+    Multimodal:  POST raw hydrated messages directly to the deployment URL.
+                 _normalise_for_chat is intentionally bypassed —
+                 inference_worker._build_engine_input expects the internal
+                 {type:image, image:data:...} format and handles PIL extraction
+                 and HF tokenizer chat template application itself.
+                 _http_stream is used (not _http_stream_chat) because
+                 inference_worker.__call__ always returns SSE in completions
+                 format (choices[0].text) regardless of input format.
 
 Supported model families (CHAT_TEMPLATE_REGISTRY):
     Qwen, DeepSeek, Mistral, Llama, Phi, Gemma, GPT-OSS
@@ -118,6 +125,12 @@ def _normalise_for_chat(messages: List[Dict]) -> List[Dict]:
     """
     Convert hydrated messages into the OpenAI multimodal chat format that
     vLLM's /v1/chat/completions endpoint expects.
+
+    NOTE: Do NOT use this for Sovereign Forge dispatch. inference_worker.py's
+    _build_engine_input expects the internal {type:image, image:data:...}
+    format and handles PIL extraction and HF tokenizer template application
+    itself. Normalising to image_url format before Sovereign Forge dispatch
+    causes _build_engine_input to silently skip all image blocks.
     """
     normalised = []
     for m in messages:
@@ -169,9 +182,16 @@ class VLLMRawStream:
     Mixin / base class that provides _stream_vllm_raw().
 
     Routing logic (in priority order):
-        1. Sovereign Forge (URL contains /vllm_dep_) → POST directly to deployment URL
-        2. Multimodal      → /v1/chat/completions  (holding pattern — see WP-sovereign-multimodal)
-        3. Text-only       → /v1/completions
+        1. Sovereign Forge (URL contains /vllm_dep_):
+               text-only  → render_prompt → POST prompt string to deployment URL
+               multimodal → POST raw hydrated messages to deployment URL
+                            _build_engine_input in inference_worker handles
+                            PIL extraction and HF tokenizer template application.
+                            _http_stream is used (not _http_stream_chat) because
+                            inference_worker.__call__ always returns SSE in
+                            completions format (choices[0].text).
+        2. Multimodal      → _normalise_for_chat → /v1/chat/completions
+        3. Text-only       → render_prompt → /v1/completions
     """
 
     VLLM_DEFAULT_BASE_URL: str = os.getenv("VLLM_BASE_URL", "http://localhost:8000")
@@ -246,29 +266,55 @@ class VLLMRawStream:
         Post directly to a Ray Serve deployment URL.
 
         The deployment URL IS the endpoint — no path appended.
-        Ray Serve routes the request to the VLLMDeployment.__call__ handler
-        which returns SSE deltas in completions format (choices[0].text).
+        Ray Serve routes the request to the VLLMDeployment.__call__ handler.
+
+        Text-only:
+            render_prompt → flat prompt string → choices[0].text SSE deltas.
+
+        Multimodal:
+            Raw hydrated messages posted directly — _normalise_for_chat is
+            intentionally NOT called. inference_worker._build_engine_input
+            expects the internal {type:image, image:data:...} format and handles
+            PIL extraction and HF tokenizer chat template application itself.
+            _http_stream is used (not _http_stream_chat) because
+            inference_worker.__call__ always returns SSE in completions format
+            (choices[0].text) regardless of whether input was prompt or messages.
         """
-        prompt = render_prompt(model_id=model, messages=messages)
-
-        payload: Dict[str, Any] = {
-            "model": model,
-            "prompt": prompt,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "stream": True,
-            "stream_options": {"include_usage": False},
-        }
-
-        LOG.info(
-            "VLLMRawStream ▸ Sovereign Forge POST %s | model=%s | max_tokens=%d",
-            base_url,
-            model,
-            max_tokens,
-        )
-
-        async for chunk in self._http_stream(base_url, payload):
-            yield chunk
+        if _is_multimodal(messages):
+            payload: Dict[str, Any] = {
+                "model": model,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "stream": True,
+                "stream_options": {"include_usage": False},
+            }
+            LOG.info(
+                "VLLMRawStream ▸ Sovereign Forge MULTIMODAL POST %s | model=%s | max_tokens=%d",
+                base_url,
+                model,
+                max_tokens,
+            )
+            async for chunk in self._http_stream(base_url, payload):
+                yield chunk
+        else:
+            prompt = render_prompt(model_id=model, messages=messages)
+            payload = {
+                "model": model,
+                "prompt": prompt,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "stream": True,
+                "stream_options": {"include_usage": False},
+            }
+            LOG.info(
+                "VLLMRawStream ▸ Sovereign Forge POST %s | model=%s | max_tokens=%d",
+                base_url,
+                model,
+                max_tokens,
+            )
+            async for chunk in self._http_stream(base_url, payload):
+                yield chunk
 
     # ── TEXT-ONLY path: /v1/completions ──────────────────────────────────────
 
@@ -462,7 +508,8 @@ class VLLMRawStream:
         POST `payload` to `endpoint`, stream SSE lines.
         /v1/chat/completions already returns choices[0].delta.content —
         pass through unchanged so DeltaNormalizer sees the same shape.
-        Holding pattern — see WP-sovereign-multimodal-pipeline.md
+        Used by the standard multimodal path (_stream_vllm_chat) only.
+        Sovereign Forge always uses _http_stream regardless of modality.
         """
         try:
             async with httpx.AsyncClient(timeout=self.VLLM_REQUEST_TIMEOUT) as client:
