@@ -1,3 +1,83 @@
+# [1.38.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.37.0...v1.38.0) (2026-04-15)
+
+
+### Features
+
+* **telemetry:** add opt-in anonymous usage analytics via PostHog ([60ff7ba](https://github.com/project-david-ai/projectdavid-core/commit/60ff7ba18004cebb452d8c92bf84fbfc649dadb9))
+
+# [1.37.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.36.0...v1.37.0) (2026-04-15)
+
+
+### Bug Fixes
+
+* **context:** bypass hydrate_messages for file_id-backed image attachments ([2fe6f0c](https://github.com/project-david-ai/projectdavid-core/commit/2fe6f0c9a43694d9964fd6beb1abbbcbbae4fd86))
+* **inference:** read VLLM_DEFAULT_MAX_MODEL_LEN and VLLM_DEFAULT_GPU_MEM_UTIL from env ([33a5c48](https://github.com/project-david-ai/projectdavid-core/commit/33a5c48e2108b0b2d6174eda29b2ebc0f5bdc19c))
+* **inference:** read VLLM_DEFAULT_MAX_MODEL_LEN and VLLM_DEFAULT_GPU_MEM_UTIL from env ([cb34d1b](https://github.com/project-david-ai/projectdavid-core/commit/cb34d1b7a169359ddac70b0f21cd2835187ca05c))
+* restore deployment_service.py (accidentally overwritten with inference_worker) ([2d6c9df](https://github.com/project-david-ai/projectdavid-core/commit/2d6c9df54a3a3a18e226ed44928d22c51cd56118))
+* restore deployment_service.py (accidentally overwritten with inference_worker) ([ac7463b](https://github.com/project-david-ai/projectdavid-core/commit/ac7463b4a8247e982c94e2bd0cebc041157bb0b3))
+* **sovereign-forge:** bypass render_prompt and use _http_stream for multimodal dispatch ([49ab1d9](https://github.com/project-david-ai/projectdavid-core/commit/49ab1d942c8ba8b4ae646cd0c47eeecb680b84a6))
+* **sovereign-forge:** bypass render_prompt for multimodal messages in Sovereign Forge path ([3d53f88](https://github.com/project-david-ai/projectdavid-core/commit/3d53f88641aa5bb9f406d073af4f6a073fcc22c8))
+* **vision:** multimodal sovereign forge routing and resize test helper ([18529c1](https://github.com/project-david-ai/projectdavid-core/commit/18529c175c861b1dc20fc2af068f81eec2f5ad76))
+* **vision:** multimodal sovereign forge routing and resize test helper ([946dcd2](https://github.com/project-david-ai/projectdavid-core/commit/946dcd212be22ff8ab2d6af80eaf98b0ac57854b))
+* **vision:** send raw messages to sovereign forge for multimodal requests; bump max_tokens default to 2048 ([eeabb44](https://github.com/project-david-ai/projectdavid-core/commit/eeabb4481af267c1d291ae661b05db4ac55676da))
+* **vision:** send raw messages to sovereign forge for multimodal requests; bump max_tokens default to 2048 ([a65a04f](https://github.com/project-david-ai/projectdavid-core/commit/a65a04f1a4401a238522d620039764e6aff31780))
+
+
+### Features
+
+* **analytics:** add stack insights script with CI noise subtraction and real user pull estimation ([c3e3f38](https://github.com/project-david-ai/projectdavid-core/commit/c3e3f38181fe78ebcf11fee7de7efb450921219d))
+* **deployment:** add update_deployment method with partial patch support ([6f489af](https://github.com/project-david-ai/projectdavid-core/commit/6f489af4a2568a12f66fc00e2426795f5d7d9e6b))
+* **deployment:** add update_deployment method with partial patch support ([19768e8](https://github.com/project-david-ai/projectdavid-core/commit/19768e856f766a411bbdd13ee226595915154e8a))
+* **inference:** wire all vLLM hyperparam DB columns through _deploy and VLLMDeployment.__init__ ([28f9d98](https://github.com/project-david-ai/projectdavid-core/commit/28f9d98c0b57c182ed9430c76c57bc482782c345))
+* **inference:** wire all vLLM hyperparam DB columns through _deploy and VLLMDeployment.__init__ ([126740a](https://github.com/project-david-ai/projectdavid-core/commit/126740a3d518dbda648ccd4af48d113c15cb9c02))
+* **inference:** wire all vLLM hyperparam DB columns through _deploy and VLLMDeployment.__init__ ([8d6246c](https://github.com/project-david-ai/projectdavid-core/commit/8d6246cdf4bdc1f05d87400c4bff545a31f627d6))
+* **inference:** wire all vLLM hyperparam DB columns through _deploy and VLLMDeployment.__init__ ([ff68cb7](https://github.com/project-david-ai/projectdavid-core/commit/ff68cb7fff55628996859f4a2d1ffccde5f0bce5))
+* **perf:** replace C delta_normalizer with Rust via PyO3 ([5d9f9a8](https://github.com/project-david-ai/projectdavid-core/commit/5d9f9a879a3c7b4103eb6bccf3fa56f761cd7c37))
+* **router:** wire hyperparam kwargs into activation endpoints, add PATCH update endpoint ([67ba8b0](https://github.com/project-david-ai/projectdavid-core/commit/67ba8b0d70bcec8ff53d6db59e6b22f68747eb2f))
+* **router:** wire hyperparam kwargs into activation endpoints, add PATCH update endpoint ([9e76b90](https://github.com/project-david-ai/projectdavid-core/commit/9e76b90aa6615da01363ea0410ffc6f24a061915))
+* **vision:** Force rebuild ([fa131f3](https://github.com/project-david-ai/projectdavid-core/commit/fa131f3d33017962b1574c6c7c2ea075435c5eac))
+* **vision:** Force rebuild ([c5cad79](https://github.com/project-david-ai/projectdavid-core/commit/c5cad79ae03f5b7a5c395d9a2208fd744a044e75))
+* **vision:** sovereign multimodal pipeline — inference_worker, vllm_raw_stream, deployments_router fully integrated ([5a1ba33](https://github.com/project-david-ai/projectdavid-core/commit/5a1ba333776e40676724a79f37e1afa28d890416))
+* **vision:** sovereign multimodal pipeline — inference_worker, vllm_raw_stream, deployments_router fully integrated ([813ecb8](https://github.com/project-david-ai/projectdavid-core/commit/813ecb8c38694d137f35445089296b87b1af641c))
+* **vision:** sovereign multimodal pipeline + API-driven hyperparam overrides ([50a3eb6](https://github.com/project-david-ai/projectdavid-core/commit/50a3eb6765a51b935c5164fd7d49374dd3446d1a))
+* **vision:** sovereign multimodal pipeline + API-driven hyperparam overrides ([6c82849](https://github.com/project-david-ai/projectdavid-core/commit/6c82849b2dd2f08a658117fb922bc6163c61434c))
+
+# [1.37.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.36.0...v1.37.0) (2026-04-15)
+
+
+### Bug Fixes
+
+* **context:** bypass hydrate_messages for file_id-backed image attachments ([2fe6f0c](https://github.com/project-david-ai/projectdavid-core/commit/2fe6f0c9a43694d9964fd6beb1abbbcbbae4fd86))
+* **inference:** read VLLM_DEFAULT_MAX_MODEL_LEN and VLLM_DEFAULT_GPU_MEM_UTIL from env ([33a5c48](https://github.com/project-david-ai/projectdavid-core/commit/33a5c48e2108b0b2d6174eda29b2ebc0f5bdc19c))
+* **inference:** read VLLM_DEFAULT_MAX_MODEL_LEN and VLLM_DEFAULT_GPU_MEM_UTIL from env ([cb34d1b](https://github.com/project-david-ai/projectdavid-core/commit/cb34d1b7a169359ddac70b0f21cd2835187ca05c))
+* restore deployment_service.py (accidentally overwritten with inference_worker) ([2d6c9df](https://github.com/project-david-ai/projectdavid-core/commit/2d6c9df54a3a3a18e226ed44928d22c51cd56118))
+* restore deployment_service.py (accidentally overwritten with inference_worker) ([ac7463b](https://github.com/project-david-ai/projectdavid-core/commit/ac7463b4a8247e982c94e2bd0cebc041157bb0b3))
+* **sovereign-forge:** bypass render_prompt and use _http_stream for multimodal dispatch ([49ab1d9](https://github.com/project-david-ai/projectdavid-core/commit/49ab1d942c8ba8b4ae646cd0c47eeecb680b84a6))
+* **sovereign-forge:** bypass render_prompt for multimodal messages in Sovereign Forge path ([3d53f88](https://github.com/project-david-ai/projectdavid-core/commit/3d53f88641aa5bb9f406d073af4f6a073fcc22c8))
+* **vision:** multimodal sovereign forge routing and resize test helper ([18529c1](https://github.com/project-david-ai/projectdavid-core/commit/18529c175c861b1dc20fc2af068f81eec2f5ad76))
+* **vision:** multimodal sovereign forge routing and resize test helper ([946dcd2](https://github.com/project-david-ai/projectdavid-core/commit/946dcd212be22ff8ab2d6af80eaf98b0ac57854b))
+* **vision:** send raw messages to sovereign forge for multimodal requests; bump max_tokens default to 2048 ([eeabb44](https://github.com/project-david-ai/projectdavid-core/commit/eeabb4481af267c1d291ae661b05db4ac55676da))
+* **vision:** send raw messages to sovereign forge for multimodal requests; bump max_tokens default to 2048 ([a65a04f](https://github.com/project-david-ai/projectdavid-core/commit/a65a04f1a4401a238522d620039764e6aff31780))
+
+
+### Features
+
+* **deployment:** add update_deployment method with partial patch support ([6f489af](https://github.com/project-david-ai/projectdavid-core/commit/6f489af4a2568a12f66fc00e2426795f5d7d9e6b))
+* **deployment:** add update_deployment method with partial patch support ([19768e8](https://github.com/project-david-ai/projectdavid-core/commit/19768e856f766a411bbdd13ee226595915154e8a))
+* **inference:** wire all vLLM hyperparam DB columns through _deploy and VLLMDeployment.__init__ ([28f9d98](https://github.com/project-david-ai/projectdavid-core/commit/28f9d98c0b57c182ed9430c76c57bc482782c345))
+* **inference:** wire all vLLM hyperparam DB columns through _deploy and VLLMDeployment.__init__ ([126740a](https://github.com/project-david-ai/projectdavid-core/commit/126740a3d518dbda648ccd4af48d113c15cb9c02))
+* **inference:** wire all vLLM hyperparam DB columns through _deploy and VLLMDeployment.__init__ ([8d6246c](https://github.com/project-david-ai/projectdavid-core/commit/8d6246cdf4bdc1f05d87400c4bff545a31f627d6))
+* **inference:** wire all vLLM hyperparam DB columns through _deploy and VLLMDeployment.__init__ ([ff68cb7](https://github.com/project-david-ai/projectdavid-core/commit/ff68cb7fff55628996859f4a2d1ffccde5f0bce5))
+* **perf:** replace C delta_normalizer with Rust via PyO3 ([5d9f9a8](https://github.com/project-david-ai/projectdavid-core/commit/5d9f9a879a3c7b4103eb6bccf3fa56f761cd7c37))
+* **router:** wire hyperparam kwargs into activation endpoints, add PATCH update endpoint ([67ba8b0](https://github.com/project-david-ai/projectdavid-core/commit/67ba8b0d70bcec8ff53d6db59e6b22f68747eb2f))
+* **router:** wire hyperparam kwargs into activation endpoints, add PATCH update endpoint ([9e76b90](https://github.com/project-david-ai/projectdavid-core/commit/9e76b90aa6615da01363ea0410ffc6f24a061915))
+* **vision:** Force rebuild ([fa131f3](https://github.com/project-david-ai/projectdavid-core/commit/fa131f3d33017962b1574c6c7c2ea075435c5eac))
+* **vision:** Force rebuild ([c5cad79](https://github.com/project-david-ai/projectdavid-core/commit/c5cad79ae03f5b7a5c395d9a2208fd744a044e75))
+* **vision:** sovereign multimodal pipeline — inference_worker, vllm_raw_stream, deployments_router fully integrated ([5a1ba33](https://github.com/project-david-ai/projectdavid-core/commit/5a1ba333776e40676724a79f37e1afa28d890416))
+* **vision:** sovereign multimodal pipeline — inference_worker, vllm_raw_stream, deployments_router fully integrated ([813ecb8](https://github.com/project-david-ai/projectdavid-core/commit/813ecb8c38694d137f35445089296b87b1af641c))
+* **vision:** sovereign multimodal pipeline + API-driven hyperparam overrides ([50a3eb6](https://github.com/project-david-ai/projectdavid-core/commit/50a3eb6765a51b935c5164fd7d49374dd3446d1a))
+* **vision:** sovereign multimodal pipeline + API-driven hyperparam overrides ([6c82849](https://github.com/project-david-ai/projectdavid-core/commit/6c82849b2dd2f08a658117fb922bc6163c61434c))
+
 # [1.36.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.35.0...v1.36.0) (2026-04-11)
 
 
