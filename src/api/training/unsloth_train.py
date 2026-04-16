@@ -5,7 +5,7 @@ import os
 # HF_HUB_OFFLINE = "1" enforces cache-only mode — no downloads permitted.
 # Set to "0" only if you explicitly want to allow HuggingFace hub downloads.
 # For production sovereign deployments this should be "1".
-os.environ["HF_HUB_OFFLINE"] = "0"
+os.environ["HF_HUB_OFFLINE"] = "1"
 # ──────────────────────────────────────────────────────────────────────────────
 
 # isort: split
