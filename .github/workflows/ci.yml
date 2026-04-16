@@ -140,7 +140,8 @@ jobs:
       - name: "🦀 Build fc_parser Rust extension"
         run: |
           pip install maturin
-          cd rust/fc_parser && maturin develop --release
+          cd rust/fc_parser && maturin build --release
+          pip install target/wheels/*.whl
 
       - name: "✅ Run Pytest with Coverage"
         run: pytest tests/ --cov=src --cov-report=term-missing
