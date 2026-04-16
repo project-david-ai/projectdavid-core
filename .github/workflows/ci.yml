@@ -123,6 +123,25 @@ jobs:
           pip install --require-hashes -r sandbox_reqs_hashed.txt
           pip install pytest pytest-cov
 
+      - name: "🦀 Install Rust toolchain"
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: "📦 Cache Rust build artifacts"
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/fc_parser/target
+          key: ${{ runner.os }}-rust-fc-parser-${{ matrix.python-version }}-${{ hashFiles('rust/fc_parser/Cargo.toml', 'rust/fc_parser/src/**') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-fc-parser-${{ matrix.python-version }}-
+
+      - name: "🦀 Build fc_parser Rust extension"
+        run: |
+          pip install maturin
+          cd rust/fc_parser && maturin develop --release
+
       - name: "✅ Run Pytest with Coverage"
         run: pytest tests/ --cov=src --cov-report=term-missing
 
@@ -193,12 +212,6 @@ jobs:
 
   # ──────────────────────────────────────────────────────────────────────────
   #  🧪  Build & Publish Staging Images (DEV BRANCH ONLY)
-  #
-  #  Pushes images tagged :dev-<sha> to Docker Hub.
-  #  These are never tagged :latest and never affect production deployments.
-  #  After a successful build, automatically updates docker-compose.yml in
-  #  projectdavid-platform-staging so the staging environment always tracks
-  #  the latest dev images without manual intervention.
   # ──────────────────────────────────────────────────────────────────────────
   build_staging:
     name: "🧪 Build & Publish Staging Images"
@@ -524,11 +537,6 @@ jobs:
           echo "| inference-worker | \`${{ steps.get_version.outputs.VERSION }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| router | \`${{ steps.get_version.outputs.VERSION }}\` |" >> $GITHUB_STEP_SUMMARY
 
-      # ── Update projectdavid-platform with new production image tags ─────────
-      # Updates ALL docker-compose yml files in both the root and
-      # projectdavid_platform/ directory — two instances of each file.
-      # Requires PLATFORM_REPO_PAT secret with write access to
-      # project-david-ai/projectdavid-platform.
       - name: "📦 Update projectdavid-platform with production image tags"
         env:
           PLATFORM_REPO_PAT: ${{ secrets.PLATFORM_REPO_PAT }}
@@ -540,7 +548,6 @@ jobs:
           git config user.email "ci@projectdavid.ai"
           git config user.name "Project David CI"
 
-          # All yml files carrying image tags — root level and package level.
           YML_FILES=(
             "docker-compose.yml"
             "docker-compose.gpu.yml"
@@ -559,14 +566,11 @@ jobs:
               echo "Skipping missing file: $FILE"
               continue
             fi
-            # Replace pinned semver tags:  thanosprime/projectdavid-core-*:X.Y.Z
             sed -i "s|thanosprime/projectdavid-core-\([^:]*\):[0-9]*\.[0-9]*\.[0-9]*|thanosprime/projectdavid-core-\1:${VERSION}|g" "$FILE"
-            # Replace :latest tags if present
             sed -i "s|thanosprime/projectdavid-core-\([^:]*\):latest|thanosprime/projectdavid-core-\1:${VERSION}|g" "$FILE"
             echo "Updated: $FILE"
           done
 
-          # Update PINNED_IMAGES.md if it exists
           if [ -f "PINNED_IMAGES.md" ]; then
             sed -i "s|:[0-9]*\.[0-9]*\.[0-9]*|:${VERSION}|g" PINNED_IMAGES.md
             sed -i "s|:latest|:${VERSION}|g" PINNED_IMAGES.md

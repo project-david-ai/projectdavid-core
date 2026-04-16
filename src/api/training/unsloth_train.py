@@ -1,10 +1,10 @@
+import json
 import os
 
 # ─── SOVEREIGNTY GUARD ────────────────────────────────────────────────────────
-# Prevent any HuggingFace hub download attempts at runtime.
-# Only models already present in the local HF cache are permitted.
-# If the requested model is not cached, this will raise a clear error
-# rather than attempting a download — enforcing airgap compliance.
+# HF_HUB_OFFLINE = "1" enforces cache-only mode — no downloads permitted.
+# Set to "0" only if you explicitly want to allow HuggingFace hub downloads.
+# For production sovereign deployments this should be "1".
 os.environ["HF_HUB_OFFLINE"] = "0"
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -15,6 +15,7 @@ import argparse
 
 import unsloth  # noqa: F401 — must precede trl/transformers/peft
 from datasets import load_dataset
+from transformers import TrainerCallback
 from trl import SFTConfig, SFTTrainer
 from unsloth import FastLanguageModel, is_bfloat16_supported
 
@@ -35,6 +36,33 @@ PROFILES = {
         "optim": "adamw_8bit",
     },
 }
+
+
+# ─── PROGRESS EMITTER ─────────────────────────────────────────────────────────
+class ProgressEmitter(TrainerCallback):
+    """
+    Emits structured PROGRESS: lines to stdout on every logging step.
+    The training worker parses these lines and writes them to job.metrics
+    so users get live feedback during training instead of a black hole.
+
+    Output format (one line per logging step):
+        PROGRESS:{"step": 5, "total_steps": 20, "epoch": 0.25, "loss": 1.423, "learning_rate": 0.0002}
+    """
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if not logs:
+            return
+        progress = {
+            "step": state.global_step,
+            "total_steps": state.max_steps,
+            "epoch": round(state.epoch or 0, 3),
+            "loss": round(logs.get("loss", 0), 4),
+            "learning_rate": logs.get("learning_rate"),
+        }
+        print(f"PROGRESS:{json.dumps(progress)}", flush=True)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 
 
 def main():
@@ -138,6 +166,7 @@ def main():
         model=model,
         train_dataset=dataset,
         processing_class=tokenizer,
+        callbacks=[ProgressEmitter()],
         args=SFTConfig(
             dataset_text_field="text",
             per_device_train_batch_size=p["per_device_train_batch_size"],
