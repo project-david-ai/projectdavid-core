@@ -51,6 +51,8 @@ const UNICODE_CALL_BEGIN: &str = "<｜tool▁call▁begin｜>";
 const UNICODE_CALL_END: &str = "<｜tool▁call▁end｜>";
 const UNICODE_SEP: &str = "<｜tool▁sep｜>";
 
+// Ordered tag table for the content state.
+// Longest/most-specific tags MUST come before shorter ones that share a prefix.
 const CONTENT_TAG_TABLE: &[(&str, Option<u8>)] = &[
     (CH_ANALYSIS, Some(ST_CHANNEL_REASONING)),
     (CH_COMMENTARY, Some(ST_CHANNEL_TOOL_META)),
@@ -79,8 +81,8 @@ struct Ctx {
     buf: String,
     state: u8,
     json_depth: i32,
-    het: bool,
-    xtb: String,
+    het: bool,   // has_emitted_text
+    xtb: String, // xml_tool_buffer
     run_id: String,
     events: Vec<Event>,
 }
@@ -103,11 +105,14 @@ impl Ctx {
         self.push("content", s);
     }
 
+    /// Consume `tag.len()` bytes from the front of the buffer.
+    /// Safe because all tags are valid UTF-8 and always at char boundaries.
     #[inline]
     fn consume_tag(&mut self, tag: &str) {
         self.buf = self.buf[tag.len()..].to_string();
     }
 
+    /// Pop and return the first character (by Unicode scalar) from the buffer.
     #[inline]
     fn pop_char(&mut self) -> String {
         let n = self.buf.chars().next().map(|c| c.len_utf8()).unwrap_or(0);
@@ -119,6 +124,8 @@ impl Ctx {
         ch
     }
 
+    /// Return true if the current buffer could be the start (prefix) of any tag.
+    /// Used to avoid emitting incomplete tag bytes as content.
     #[inline]
     fn could_be_partial(&self, tags: &[&str]) -> bool {
         let buf = self.buf.as_str();
@@ -128,6 +135,7 @@ impl Ctx {
                 .any(|t| t.starts_with(buf) && buf.len() < t.len())
     }
 
+    /// Flush the xml_tool_buffer as a raw tool call event for Python to resolve.
     fn flush_xml_tool(&mut self) {
         if !self.xtb.is_empty() {
             let xml = std::mem::take(&mut self.xtb);
@@ -136,6 +144,9 @@ impl Ctx {
     }
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Find the minimum byte index of `<`, `` ` ``, and optionally `{` in `s`.
 #[inline]
 fn find_first_special(s: &str, include_brace: bool) -> Option<usize> {
     let lt = s.find('<');
@@ -144,9 +155,13 @@ fn find_first_special(s: &str, include_brace: bool) -> Option<usize> {
     [lt, bt, cu].iter().filter_map(|x| *x).min()
 }
 
+// ── State handlers ────────────────────────────────────────────────────────────
+// Each returns `true` to continue the outer loop, `false` to break.
+
 fn handle_content(ctx: &mut Ctx) -> bool {
     let include_brace = !ctx.het;
 
+    // Fast path: no special chars in buffer at all.
     if !ctx.buf.contains('<')
         && !ctx.buf.contains('`')
         && (!include_brace || !ctx.buf.contains('{'))
@@ -164,6 +179,7 @@ fn handle_content(ctx: &mut Ctx) -> bool {
         }
         Some(0) => handle_content_dispatch(ctx),
         Some(cutoff) => {
+            // Emit plain text up to the first special char.
             let text = ctx.buf[..cutoff].to_string();
             ctx.buf = ctx.buf[cutoff..].to_string();
             ctx.emit_content(text);
@@ -173,6 +189,7 @@ fn handle_content(ctx: &mut Ctx) -> bool {
 }
 
 fn handle_content_dispatch(ctx: &mut Ctx) -> bool {
+    // Naked JSON: only when no text has been emitted yet.
     if !ctx.het && ctx.buf.starts_with('{') {
         ctx.buf = ctx.buf[1..].to_string();
         ctx.state = ST_NAKED_JSON;
@@ -182,6 +199,7 @@ fn handle_content_dispatch(ctx: &mut Ctx) -> bool {
         return true;
     }
 
+    // Try each tag in the ordered table.
     for (tag, new_state) in CONTENT_TAG_TABLE {
         if ctx.buf.starts_with(tag) {
             if let Some(ns) = new_state {
@@ -198,12 +216,14 @@ fn handle_content_dispatch(ctx: &mut Ctx) -> bool {
         }
     }
 
+    // Check whether the buffer is a partial prefix of any known tag.
+    // If so, wait for more data rather than emitting garbage.
     let tag_strs: Vec<&str> = CONTENT_TAG_TABLE.iter().map(|(t, _)| *t).collect();
-    let buf_str = ctx.buf.as_str();
-    if tag_strs.iter().any(|t| t.starts_with(buf_str) && buf_str.len() < t.len()) {
+    if ctx.could_be_partial(&tag_strs) {
         return false;
     }
 
+    // Not a tag, not a partial — emit the first character and move on.
     let ch = ctx.pop_char();
     if !ch.is_empty() {
         ctx.emit_content(ch);
@@ -218,12 +238,14 @@ fn handle_think_plan_decision(ctx: &mut Ctx) -> bool {
         _ => (DEC_END, "decision"),
     };
 
+    // Fast path: no potential tag boundary.
     if !ctx.buf.contains('<') {
         let s = std::mem::take(&mut ctx.buf);
         ctx.push(ev_type, s);
         return false;
     }
 
+    // Emit content up to the first `<`.
     let lt_idx = ctx.buf.find('<').unwrap_or(0);
     if lt_idx > 0 {
         let s = ctx.buf[..lt_idx].to_string();
@@ -237,10 +259,12 @@ fn handle_think_plan_decision(ctx: &mut Ctx) -> bool {
         return true;
     }
 
+    // Partial end-tag in buffer — wait.
     if end_tag.starts_with(ctx.buf.as_str()) && ctx.buf.len() < end_tag.len() {
         return false;
     }
 
+    // Not a match, not partial — emit one character.
     let ch = ctx.pop_char();
     if !ch.is_empty() {
         ctx.push(ev_type, ch);
@@ -263,10 +287,13 @@ fn handle_xml_tool(ctx: &mut Ctx) -> bool {
         return true;
     }
 
+    // Partial end-tag — wait.
     if end_tag.starts_with(ctx.buf.as_str()) && ctx.buf.len() < end_tag.len() {
         return false;
     }
 
+    // Scan to the first character that COULD be the start of the end-tag,
+    // then emit everything before it into the tool buffer.
     let first_end_char = end_tag.chars().next().unwrap();
     match ctx.buf.find(first_end_char) {
         None => {
@@ -454,7 +481,7 @@ fn handle_channel_tool_meta(ctx: &mut Ctx) -> bool {
         ctx.buf = String::new();
         true
     } else {
-        false
+        false // wait for more data
     }
 }
 
@@ -480,6 +507,8 @@ fn handle_channel_tool_payload(ctx: &mut Ctx) -> bool {
     true
 }
 
+// ── Main dispatch loop ────────────────────────────────────────────────────────
+
 fn process(ctx: &mut Ctx) {
     loop {
         if ctx.buf.is_empty() {
@@ -502,6 +531,7 @@ fn process(ctx: &mut Ctx) {
             ST_CHANNEL_TOOL_META => handle_channel_tool_meta(ctx),
             ST_CHANNEL_TOOL_PAYLOAD => handle_channel_tool_payload(ctx),
             _ => {
+                // Unknown state: flush as content and stop.
                 let s = std::mem::take(&mut ctx.buf);
                 ctx.emit_content(s);
                 false
@@ -514,8 +544,12 @@ fn process(ctx: &mut Ctx) {
     }
 }
 
-// ── PyO3 bindings — DeltaNormalizer ──────────────────────────────────────────
+// ── PyO3 bindings ─────────────────────────────────────────────────────────────
 
+/// Drop-in replacement for the C extension `process_buffer` function.
+///
+/// Signature is identical to `delta_normalizer_core.process_buffer` so the
+/// Python wrapper (`delta_normalizer.py`) requires minimal changes.
 #[pyfunction]
 fn process_buffer(
     py: Python<'_>,
@@ -557,71 +591,11 @@ fn process_buffer(
     ))
 }
 
-// ── PyO3 bindings — SSE framer (Phase 2) ─────────────────────────────────────
-
-/// Frame a single inference chunk as a complete SSE event string.
-///
-/// Handles all three chunk shapes produced by the inference pipeline:
-///   - str  → forwarded directly, no JSON encoding
-///   - dict → run_id injected if absent, JSON-serialised via serde_json
-///   - other → wrapped as {"type":"content","content":"...","run_id":"..."}
-///
-/// Returns "data: <payload>\n\n" ready for the StreamingResponse.
-///
-/// Python usage:
-///   from delta_normalizer_rs import frame_sse_chunk
-///   yield frame_sse_chunk(chunk, run_id)
-#[pyfunction]
-fn frame_sse_chunk(py: Python<'_>, chunk: PyObject, run_id: &str) -> PyResult<String> {
-    let chunk_ref = chunk.as_ref(py);
-
-    let json_str: String = if let Ok(s) = chunk_ref.extract::<&str>() {
-        // Already a JSON string from DeltaNormalizer — forward as-is.
-        s.to_string()
-    } else if chunk_ref.is_instance_of::<PyDict>() {
-        let dict = chunk_ref.downcast::<PyDict>()?;
-
-        // Inject run_id if the dict doesn't already carry it.
-        if dict.get_item("run_id")?.is_none() {
-            dict.set_item("run_id", run_id)?;
-        }
-
-        // Convert to a serde_json Value and serialise — avoids calling
-        // Python's json.dumps and releases the per-field allocation overhead.
-        let value: serde_json::Value = pythonize::depythonize(dict.as_ref())?;
-        serde_json::to_string(&value).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("JSON serialisation failed: {e}"))
-        })?
-    } else {
-        // Unknown type — wrap as a plain content chunk.
-        let content = chunk_ref.str()?.to_str()?.to_string();
-        // Build JSON manually to avoid a Python round-trip.
-        let value = serde_json::json!({
-            "type": "content",
-            "content": content,
-            "run_id": run_id,
-        });
-        serde_json::to_string(&value).map_err(|e| {
-            pyo3::exceptions::PyValueError::new_err(format!("JSON serialisation failed: {e}"))
-        })?
-    };
-
-    // Pre-allocate the full SSE frame in one shot.
-    let mut frame = String::with_capacity(7 + json_str.len() + 2);
-    frame.push_str("data: ");
-    frame.push_str(&json_str);
-    frame.push_str("\n\n");
-    Ok(frame)
-}
-
-// ── Module ────────────────────────────────────────────────────────────────────
-
 #[pymodule]
 fn delta_normalizer_rs(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(process_buffer, m)?)?;
-    m.add_function(wrap_pyfunction!(frame_sse_chunk, m)?)?;
 
-    // State constants — same values as C extension for drop-in compat.
+    // Export state constants — same values as C extension for drop-in compat.
     m.add("ST_CONTENT", ST_CONTENT)?;
     m.add("ST_THINK", ST_THINK)?;
     m.add("ST_PLAN", ST_PLAN)?;
