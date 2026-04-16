@@ -1,6 +1,8 @@
+# src/api/training/services/training_service.py
 import json
 import os
 import time
+from pathlib import Path
 from typing import List, Optional
 
 import redis
@@ -20,6 +22,35 @@ def get_redis_client() -> redis.Redis:
     """Connect to Redis with response decoding enabled for cluster strings."""
     redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
     return redis.from_url(redis_url, decode_responses=True)
+
+
+def _is_model_in_hf_cache(model_id: str) -> bool:
+    """
+    Check whether a HuggingFace model is present in the local cache.
+
+    Looks for a snapshot directory under:
+        $HF_CACHE_PATH/hub/models--<org>--<model>/snapshots/
+
+    A model is considered cached if at least one snapshot directory exists
+    and is non-empty. This mirrors how HuggingFace stores downloaded models
+    and is cache-format stable across transformers versions.
+
+    Returns True if cached, False otherwise.
+    """
+    hf_cache = os.getenv("HF_CACHE_PATH", "/root/.cache/huggingface")
+    # Convert 'org/model-name' → 'models--org--model-name'
+    safe_name = "models--" + model_id.replace("/", "--")
+    snapshots_path = Path(hf_cache) / "hub" / safe_name / "snapshots"
+
+    if not snapshots_path.exists():
+        return False
+
+    # At least one non-empty snapshot directory must exist
+    for snapshot_dir in snapshots_path.iterdir():
+        if snapshot_dir.is_dir() and any(snapshot_dir.iterdir()):
+            return True
+
+    return False
 
 
 class TrainingService:
@@ -63,7 +94,26 @@ class TrainingService:
                 detail=f"Dataset {dataset_id} is not ready. Current status: {current_status}",
             )
 
-        # 2. Create job record — node binding deferred to activation
+        # 2. HF cache guard — reject immediately if model is not cached locally.
+        #    This prevents the training worker from attempting a download mid-job,
+        #    which would fail silently after claiming the GPU and consuming queue time.
+        #    Users must pre-cache models via the model registry before fine-tuning.
+        if not _is_model_in_hf_cache(base_model):
+            logging_utility.warning(
+                "Training job rejected — model '%s' not found in HF cache for user %s",
+                base_model,
+                user_id,
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Model '{base_model}' is not available in the local HuggingFace cache. "
+                    f"Register and activate the base model via the model registry before "
+                    f"submitting a fine-tuning job."
+                ),
+            )
+
+        # 3. Create job record — node binding deferred to activation
         job_id = IdentifierService.generate_prefixed_id("job")
         now = int(time.time())
 
@@ -95,7 +145,7 @@ class TrainingService:
                 status_code=500, detail="Failed to save training job to database."
             )
 
-        # 3. Enqueue to Redis
+        # 4. Enqueue to Redis
         self._enqueue(job)
 
         return job
