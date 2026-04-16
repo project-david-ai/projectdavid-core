@@ -6,6 +6,8 @@ Sovereign Forge — Training Worker
 Responsibilities:
   - Listen to the Redis training job queue
   - Dispatch training jobs as direct subprocesses (GPU claimed for duration)
+  - Parse PROGRESS: lines from unsloth_train.py and write live metrics
+    to job.metrics so users get feedback during training
 
 Ray is NOT used here. inference_worker owns the Ray cluster (HEAD node)
 and manages all inference GPU reservations via Ray Serve.
@@ -53,6 +55,12 @@ def get_redis():
 def process_job(job_id: str, user_id: str):
     """
     Core training job logic — runs as a direct subprocess.
+
+    Progress feedback:
+        unsloth_train.py emits PROGRESS:{...} lines on every logging step.
+        This loop parses those lines and writes them to job.metrics so users
+        polling client.training.retrieve(job_id) get live loss and step count
+        rather than a black hole between dispatch and completion.
 
     All imports are local to keep the module lightweight and avoid
     import-time side effects from SQLAlchemy / ORM modules.
@@ -130,8 +138,26 @@ def process_job(job_id: str, user_id: str):
             cmd, stdout=_subprocess.PIPE, stderr=_subprocess.STDOUT, text=True
         )
 
+        # ─── STDOUT LOOP WITH PROGRESS PARSING ───────────────────────────────
+        # unsloth_train.py emits PROGRESS:{...} lines on every logging step.
+        # We parse these and write them to job.metrics so polling clients
+        # get live feedback. Non-PROGRESS lines are logged normally.
         for line in process.stdout:
-            logging_utility.info(f"[{job_id}] {line.strip()}")
+            line = line.strip()
+            logging_utility.info(f"[{job_id}] {line}")
+
+            if line.startswith("PROGRESS:"):
+                try:
+                    metrics = json.loads(line[9:])
+                    job.metrics = metrics
+                    job.updated_at = int(_time.time())
+                    db.commit()
+                except Exception as parse_err:
+                    logging_utility.warning(
+                        f"[{job_id}] Failed to parse PROGRESS line: {parse_err}"
+                    )
+        # ─────────────────────────────────────────────────────────────────────
+
         process.wait()
 
         if process.returncode == 0:
@@ -142,7 +168,6 @@ def process_job(job_id: str, user_id: str):
                 name=f"FT: {job.base_model}",
                 base_model=job.base_model,
                 storage_path=model_rel_path,
-                # node_id removed — FK references compute_nodes (legacy, Phase 5 drop)
                 status=_StatusEnum.active,
                 created_at=int(_time.time()),
                 updated_at=int(_time.time()),
