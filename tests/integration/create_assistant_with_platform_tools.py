@@ -11,7 +11,6 @@ from projectdavid import Entity
 load_dotenv()
 
 client = Entity(
-    base_url=os.getenv("BASE_URL", "http://localhost:9000"),
     api_key=os.getenv("ENTITIES_API_KEY"),
 )
 

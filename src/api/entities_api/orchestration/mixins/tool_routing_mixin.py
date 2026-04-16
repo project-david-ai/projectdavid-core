@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import re
-import uuid
 from typing import AsyncGenerator, Dict, List, Optional, Union
 
 from src.api.entities_api.services.logging_service import LoggingUtility
@@ -15,23 +12,18 @@ LOG = LoggingUtility()
 class ToolRoutingMixin:
     """
     High-level routing and dispatch of tool call batches.
-    Level 3 refactor: batch extraction, plan isolation, ID propagation.
 
     Owns:
         _tool_response           — bool flag, True when tool calls are pending
         _function_calls          — List[Dict] of parsed tool calls for current turn
         _tools_called            — List[str] of tool names dispatched this turn
-        FC_REGEX                 — compiled <fc>...</fc> tag parser
         set/get_tool_response_state()
         set/get_function_call_state()
         reset/get_tools_called()
-        parse_and_set_function_calls() — L3 parser, primary + loose fallback
+        parse_and_set_function_calls() — Rust-accelerated fc_parser, primary + loose fallback
         process_tool_calls()     — async generator, batch dispatcher
 
     Requires on self:
-        self.ensure_valid_json()              — JsonUtilsMixin (explicit
-                                               isinstance guard enforced)
-        self.extract_function_calls_within_body_of_text() — JsonUtilsMixin
         self._batfish_owner_user_id           — set in DelegationMixin.__init__
                                                or QwenBaseWorker.stream()
         self.handle_code_interpreter_action() — CodeInterpreterMixin
@@ -56,17 +48,22 @@ class ToolRoutingMixin:
         composition. Turn state (_tool_response, _function_calls, _tools_called)
         must be reset at the start of each orchestration turn via
         OrchestratorCore.process_conversation() — do not reset inside this mixin.
-    """
 
-    FC_REGEX = re.compile(r"<fc>\s*(?P<payload>\{.*?\})\s*</fc>", re.DOTALL | re.I)
+    Parser:
+        parse_and_set_function_calls() delegates to the fc_parser Rust extension
+        (rust/fc_parser). Regex compilation, JSON repair, argument normalisation,
+        plan-block stripping, and ID generation all execute in compiled Rust with
+        no GIL contention. Build with: cd rust/fc_parser && maturin develop --release
+    """
 
     _tool_response: bool = False
     _function_calls: List[Dict] = []
     _tools_called: List[str] = []
 
-    # -----------------------------------------------------
+    # ------------------------------------------------------------------
     # State Management
-    # -----------------------------------------------------
+    # ------------------------------------------------------------------
+
     def set_tool_response_state(self, value: bool) -> None:
         LOG.debug("TOOL-ROUTER ▸ set_tool_response_state(%s)", value)
         self._tool_response = value
@@ -93,24 +90,10 @@ class ToolRoutingMixin:
     def get_tools_called(self) -> List[str]:
         return list(self._tools_called)
 
-    # -----------------------------------------------------
-    # Helper Methods
-    # -----------------------------------------------------
-    def _normalize_arguments(self, payload: Dict) -> Dict:
-        args = payload.get("arguments")
-        if isinstance(args, str):
-            try:
-                clean_args = args.strip()
-                if clean_args.startswith("```"):
-                    clean_args = clean_args.strip("`").replace("json", "").strip()
-                payload["arguments"] = json.loads(clean_args)
-            except Exception:
-                LOG.warning("TOOL-ROUTER ▸ failed to parse string arguments")
-        return payload
+    # ------------------------------------------------------------------
+    # Parser — Rust-accelerated
+    # ------------------------------------------------------------------
 
-    # -----------------------------------------------------
-    # The Pedantic L3 Parser
-    # -----------------------------------------------------
     def parse_and_set_function_calls(
         self, accumulated_content: str, assistant_reply: str
     ) -> List[Dict]:
@@ -121,46 +104,23 @@ class ToolRoutingMixin:
         if not isinstance(self, JsonUtilsMixin):
             raise TypeError("ToolRoutingMixin must be mixed with JsonUtilsMixin")
 
-        body_to_scan = re.sub(
-            r"<plan>.*?</plan>", "", accumulated_content, flags=re.DOTALL
-        )
+        from fc_parser import parse_function_calls as _rust_parse
 
-        matches = self.FC_REGEX.finditer(body_to_scan)
-        results = []
-
-        for m in matches:
-            raw_payload = m.group("payload")
-            parsed = self.ensure_valid_json(raw_payload)
-            if parsed:
-                if not parsed.get("id"):
-                    parsed["id"] = f"call_{uuid.uuid4().hex[:8]}"
-                normalized = self._normalize_arguments(parsed)
-                results.append(normalized)
+        results = _rust_parse(accumulated_content, assistant_reply)
 
         if results:
-            LOG.info(f"L3-PARSER ▸ Detected batch of {len(results)} tool(s).")
+            LOG.info("L3-PARSER (Rust) ▸ Detected batch of %d tool(s).", len(results))
             self.set_tool_response_state(True)
             self.set_function_call_state(results)
             return results
 
-        loose = self.extract_function_calls_within_body_of_text(assistant_reply)
-        if loose:
-            normalized_list = []
-            for item in loose:
-                if not item.get("id"):
-                    item["id"] = f"call_{uuid.uuid4().hex[:8]}"
-                normalized_list.append(self._normalize_arguments(item))
-
-            self.set_tool_response_state(True)
-            self.set_function_call_state(normalized_list)
-            return normalized_list
-
-        LOG.debug("L3-PARSER ✗ nothing found")
+        LOG.debug("L3-PARSER (Rust) ✗ nothing found")
         return []
 
-    # -----------------------------------------------------
+    # ------------------------------------------------------------------
     # Tool Processing & Dispatching (Level 3 Batch Enabled)
-    # -----------------------------------------------------
+    # ------------------------------------------------------------------
+
     async def process_tool_calls(
         self,
         thread_id: str,
@@ -178,9 +138,7 @@ class ToolRoutingMixin:
         Level 3: Iterates through the batch, propagating IDs for history linking.
         """
         LOG.info("TOOL-ROUTER ▸ The scratchpad id: %s", scratch_pad_thread)
-
-        owner_id = self._batfish_owner_user_id
-        LOG.info("TOOL-ROUTER ▸ The Real OwnerID: %s", owner_id)
+        LOG.info("TOOL-ROUTER ▸ The Real OwnerID: %s", self._batfish_owner_user_id)
 
         batch = self.get_function_call_state()
         if not batch:
@@ -191,19 +149,16 @@ class ToolRoutingMixin:
         for fc in batch:
             name = fc.get("name")
             args = fc.get("arguments")
-
             current_call_id = tool_call_id or fc.get("id")
 
             if not name and decision:
-                inferred_name = (
+                name = (
                     decision.get("tool")
                     or decision.get("function")
                     or decision.get("name")
                 )
-                if inferred_name:
-                    name = inferred_name
-                    if args is None:
-                        args = fc
+                if name and args is None:
+                    args = fc
 
             if not name:
                 LOG.error(
@@ -211,13 +166,13 @@ class ToolRoutingMixin:
                 )
                 continue
 
-            LOG.info(f"TOOL-ROUTER ▸ scratchpad thread id: {scratch_pad_thread}")
+            LOG.info("TOOL-ROUTER ▸ scratchpad thread id: %s", scratch_pad_thread)
             LOG.info("TOOL-ROUTER ▶ dispatching: %s (ID: %s)", name, current_call_id)
             self._tools_called.append(name)
 
-            # ---------------------------------------------------------
-            # 1. PLATFORM TOOLS (Explicit Routing)
-            # ---------------------------------------------------------
+            # ----------------------------------------------------------
+            # Platform tools — explicit routing
+            # ----------------------------------------------------------
             if name == "code_interpreter":
                 async for chunk in self.handle_code_interpreter_action(
                     thread_id=thread_id,
@@ -230,7 +185,6 @@ class ToolRoutingMixin:
                     yield chunk
 
             elif name == "computer":
-                # handle_shell_action is an async generator — iterate, don't await.
                 async for chunk in self.handle_shell_action(
                     thread_id=thread_id,
                     run_id=run_id,
@@ -295,9 +249,9 @@ class ToolRoutingMixin:
                 ):
                     yield chunk
 
-            # ---------------------------------------------------------
-            # DELEGATION / DEEP RESEARCH / MEMORY TOOLS
-            # ---------------------------------------------------------
+            # ----------------------------------------------------------
+            # Delegation / deep research / memory tools
+            # ----------------------------------------------------------
             elif name == "delegate_research_task":
                 async for chunk in self.handle_delegate_research_task(
                     thread_id=thread_id,
@@ -355,9 +309,9 @@ class ToolRoutingMixin:
                 ):
                     yield chunk
 
-            # ---------------------------------------------------------
-            # 3. CONSUMER TOOLS (Handover to SDK)
-            # ---------------------------------------------------------
+            # ----------------------------------------------------------
+            # Consumer tools — handover to SDK
+            # ----------------------------------------------------------
             else:
                 async for chunk in self._handover_to_consumer(
                     thread_id=thread_id,
