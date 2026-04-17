@@ -2,7 +2,7 @@
 # MULTI-STAGE DOCKERFILE
 # -------------------------
 
-#  GLOBAL DEFAULT → CPU TORCH
+# ⭐ GLOBAL DEFAULT → CPU TORCH
 ARG TORCH_CHANNEL=cpu
 
 
@@ -55,6 +55,8 @@ RUN apt-get update && \
         curl \
         gcc \
         libc6-dev \
+        pkg-config \
+        libssl-dev \
         && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
