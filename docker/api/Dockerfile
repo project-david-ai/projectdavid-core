@@ -67,7 +67,7 @@ RUN curl https://sh.rustup.rs -sSf | sh -s -- -y \
 
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-RUN pip install --no-cache-dir maturin
+RUN pip install --no-cache-dir "maturin[patchelf]"
 
 COPY rust/delta_normalizer /build/delta_normalizer
 COPY rust/request_router   /build/request_router
