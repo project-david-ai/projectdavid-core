@@ -2,7 +2,7 @@
 # MULTI-STAGE DOCKERFILE
 # -------------------------
 
-# ⭐ GLOBAL DEFAULT → CPU TORCH
+#  GLOBAL DEFAULT → CPU TORCH
 ARG TORCH_CHANNEL=cpu
 
 
@@ -47,7 +47,7 @@ RUN pip install \
     -r api_reqs_hashed.txt
 
 
-# === Stage R: build Rust extension (delta_normalizer_rs) ===============================
+# === Stage R: build Rust extensions ====================================================
 FROM python:3.11-slim-bookworm AS rust_builder
 
 RUN apt-get update && \
@@ -68,8 +68,16 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 RUN pip install --no-cache-dir maturin
 
 COPY rust/delta_normalizer /build/delta_normalizer
-WORKDIR /build/delta_normalizer
+COPY rust/request_router   /build/request_router
+COPY rust/fc_parser        /build/fc_parser
 
+WORKDIR /build/delta_normalizer
+RUN maturin build --release --strip
+
+WORKDIR /build/request_router
+RUN maturin build --release --strip
+
+WORKDIR /build/fc_parser
 RUN maturin build --release --strip
 
 
@@ -108,20 +116,19 @@ RUN pip install --force-reinstall --no-cache-dir charset-normalizer
 RUN pip install --no-cache-dir html2text playwright && \
     playwright install --with-deps chromium
 
-# Install the Rust-compiled delta_normalizer_rs extension
+# Install all Rust-compiled extensions
 COPY --from=rust_builder /build/delta_normalizer/target/wheels/ /tmp/rs_wheels/
-RUN pip install --no-cache-dir /tmp/rs_wheels/delta_normalizer_rs*.whl && \
+COPY --from=rust_builder /build/request_router/target/wheels/   /tmp/rs_wheels/
+COPY --from=rust_builder /build/fc_parser/target/wheels/        /tmp/rs_wheels/
+RUN pip install --no-cache-dir /tmp/rs_wheels/*.whl && \
     rm -rf /tmp/rs_wheels
 
 COPY src /app/src
 COPY docker/api/init_and_run_api.sh /app/init_and_run_api.sh
 COPY docker/api/supervisord.conf    /etc/supervisor/conf.d/supervisord.conf
 
-COPY src /app/src
-COPY alembic.ini /app/alembic.ini
-COPY migrations /app/migrations
-COPY docker/api/init_and_run_api.sh /app/init_and_run_api.sh
-COPY docker/api/supervisord.conf    /etc/supervisor/conf.d/supervisord.conf
+COPY alembic.ini   /app/alembic.ini
+COPY migrations    /app/migrations
 
 RUN dos2unix /app/init_and_run_api.sh && chmod +x /app/init_and_run_api.sh
 
