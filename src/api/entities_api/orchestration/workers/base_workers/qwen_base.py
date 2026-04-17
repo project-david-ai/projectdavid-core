@@ -57,12 +57,26 @@ class QwenBaseWorker(
 
             class HyperbolicQwenWorker(QwenBaseWorker):
                 VISION_MAX_IMAGES = 1  # Hyperbolic hard limit per request
+
+    Native tool passing:
+        prepare_native_tool_context() extracts tool definitions from the system
+        message and passes them natively to the provider via the tools= parameter.
+        This is required for providers that no longer parse text-embedded tool
+        definitions from the system prompt (e.g. Hyperbolic post-April 2026).
+        Providers that do not support native tools receive tools=None and fall
+        back to text-embedded definitions in the system prompt.
     """
 
     # Override in subclasses for providers with per-request image caps.
     # None = unlimited (TogetherAI, vLLM).
     # 1    = Hyperbolic (documented hard limit).
     VISION_MAX_IMAGES: Optional[int] = None
+
+    # Override in subclasses to disable native tool passing for providers
+    # that do not support the tools= parameter.
+    # True  = extract tools from system message and pass natively (default).
+    # False = leave tools embedded in system prompt text.
+    USE_NATIVE_TOOLS: bool = True
 
     def __init__(
         self,
@@ -252,25 +266,15 @@ class QwenBaseWorker(
             # Priority: Senior Engineer > Research Supervisor > Research Worker > Junior Engineer > Standard
             # ------------------------------------------------------------------
             if self.is_engineer:
-                # SENIOR ENGINEER (SUPERVISOR)
-                # Plans the incident, delegates tasks, authors the Change Request.
-                # Must NOT browse the web or SSH to devices.
                 web_access_setting = False
                 research_worker_setting = False
                 junior_engineer_setting = False
                 self.is_deep_research = False
 
             elif self.is_deep_research:
-                # RESEARCH SUPERVISOR
-                # Plans research, delegates tasks.
                 web_access_setting = False
                 research_worker_setting = False
                 junior_engineer_setting = False
-                # --------------------------------------------------------
-                # Pass the inference api key through the run
-                # Pass the delegated research model through the run
-                # object — trusted internally write, no ownership check.
-                # --------------------------------------------------------
                 delegation_model = get_delegated_model(requested_model=pre_mapped_model)
                 await self._native_exec.update_run_fields(
                     run_id,
@@ -278,18 +282,12 @@ class QwenBaseWorker(
                 )
 
             elif research_worker_setting:
-                # RESEARCH WORKER
-                # Browses the web on behalf of the research supervisor.
                 web_access_setting = True
                 junior_engineer_setting = False
 
             elif junior_engineer_setting:
-                # JUNIOR NETWORK ENGINEER
-                # SSHs to devices, runs diagnostic commands, appends evidence to scratchpad.
                 web_access_setting = False
                 research_worker_setting = False
-
-            # else: STANDARD ASSISTANT — all flags remain at config defaults.
 
             LOG.critical(
                 "██████[ROLE CONFIG] "
@@ -306,14 +304,7 @@ class QwenBaseWorker(
             )
 
             # ------------------------------------------------------------------
-            # CAPTURE REAL USER ID — before any identity swap mutates state.
-            # This is the user who owns the run, thread, and all snapshots.
-            # Must be set before _handle_role_based_identity_swap().
-            #
-            # CAPTURE REAL SCRATCHPAD THREAD ID — before any identity swap mutates state.
-            # Workers carry scratch_pad_thread in their run meta_data, stamped there
-            # by the supervisor at delegation time. We read it back here so the worker
-            # reads from the supervisor's shared pad rather than its own ephemeral thread.
+            # CAPTURE REAL USER ID
             # ------------------------------------------------------------------
             try:
                 run = await self._native_exec.retrieve_run(run_id)
@@ -327,8 +318,6 @@ class QwenBaseWorker(
                 if self._batfish_owner_user_id is None:
                     self._batfish_owner_user_id = meta_owner or run.user_id
 
-                # Only set from meta_data if present — guards against overwriting
-                # a value already resolved on a prior turn.
                 if self._scratch_pad_thread is None and meta_scratchpad:
                     self._scratch_pad_thread = meta_scratchpad
 
@@ -344,13 +333,11 @@ class QwenBaseWorker(
 
             # ------------------------------------------------------------------
             # 5. IDENTITY SWAP (Supervisor roles only)
-            # Delegates to parent class Orchestrator method. A no-op for workers.
             # ------------------------------------------------------------------
             await self._handle_role_based_identity_swap(
                 requested_model=pre_mapped_model
             )
 
-            # --- CRITICAL FIX: Reload config if identity was swapped! ---
             if self.assistant_id != _original_assistant_id:
                 LOG.info(
                     f"Identity swapped from {_original_assistant_id} to {self.assistant_id}. Reloading config."
@@ -359,15 +346,6 @@ class QwenBaseWorker(
 
             # ------------------------------------------------------------------
             # SCRATCHPAD THREAD PINNING
-            #
-            # Priority:
-            #   1. meta_scratchpad from run.meta_data (set above) — used by workers
-            #      so they read/write the supervisor's shared pad, not their own thread.
-            #   2. Falls back to thread_id — used by supervisors and standard assistants
-            #      who own their own scratchpad.
-            #
-            # The guard here is critical — do NOT unconditionally assign thread_id or
-            # workers will lose the supervisor thread resolved from meta_data above.
             # ------------------------------------------------------------------
             if not self._scratch_pad_thread:
                 self._scratch_pad_thread = thread_id
@@ -378,9 +356,6 @@ class QwenBaseWorker(
 
             # ------------------------------------------------------------------
             # 6. CONTEXT WINDOW CONSTRUCTION
-            # Passes all resolved role flags into the context builder.
-            # The builder injects the correct system prompt and tool definitions
-            # based on which flag is active.
             # ------------------------------------------------------------------
             ctx = await self._set_up_context_window(
                 assistant_id=self.assistant_id,
@@ -403,13 +378,9 @@ class QwenBaseWorker(
             yield json.dumps({"type": "status", "status": "started", "run_id": run_id})
 
             client = self._get_client_instance(api_key=api_key)
+
             # ------------------------------------------------------------------
             # 7. MULTIMODAL NORMALISATION
-            # Hydrated image blocks arrive as {"type": "image", "image": "data:..."}
-            # (internal format from NativeExecutionService.hydrate_messages).
-            # TogetherAI, Hyperbolic, and all OpenAI-compatible providers require
-            # {"type": "image_url", "image_url": {"url": "data:..."}} instead.
-            # Plain text contexts pass through this block untouched.
             # ------------------------------------------------------------------
             if is_multimodal(ctx):
                 LOG.info(
@@ -424,9 +395,30 @@ class QwenBaseWorker(
             )
 
             # ------------------------------------------------------------------
+            # 7b. NATIVE TOOL EXTRACTION
+            # Extract tool definitions from the system message and pass them
+            # natively to the provider via tools=. Required for providers that
+            # no longer parse text-embedded tool definitions from the system prompt.
+            # Falls back gracefully — if extraction yields nothing, tools=None
+            # and the text-embedded definitions remain in the system prompt.
+            # ------------------------------------------------------------------
+            native_tools = None
+            if self.USE_NATIVE_TOOLS:
+                ctx, native_tools = self.prepare_native_tool_context(ctx)
+                if native_tools:
+                    LOG.info(
+                        "NATIVE TOOLS ▸ Extracted %d tool(s) for native dispatch: %s",
+                        len(native_tools),
+                        [t.get("function", {}).get("name") for t in native_tools],
+                    )
+                else:
+                    LOG.warning(
+                        "NATIVE TOOLS ▸ USE_NATIVE_TOOLS=True but no tools extracted "
+                        "from system message — falling back to text-embedded definitions."
+                    )
+
+            # ------------------------------------------------------------------
             # 8. THE STREAM LOOP
-            # DeltaNormalizer handles Qwen/Kimi-specific tag parsing and yields
-            # normalized chunks. Accumulation is handled by _handle_chunk_accumulation.
             # ------------------------------------------------------------------
             _max_tokens = self.assistant_config.get("max_tokens", None)
             _temperature = self.assistant_config.get(
@@ -444,6 +436,7 @@ class QwenBaseWorker(
             raw_stream = client.stream_chat_completion(
                 messages=ctx,
                 model=model,
+                **({"tools": native_tools} if native_tools else {}),
                 **({"max_tokens": _max_tokens} if _max_tokens is not None else {}),
                 **({"top_p": _top_p} if _top_p is not None else {}),
                 temperature=_temperature,
@@ -483,11 +476,7 @@ class QwenBaseWorker(
 
             # ------------------------------------------------------------------
             # 9. POST-STREAM PROCESSING
-            # Kept inside the try block to ensure we finalize and persist using
-            # the correct (possibly swapped) assistant_id before the finally
-            # block has any opportunity to restore state.
             # ------------------------------------------------------------------
-            # 9a. Extract Decision Payload from buffered XML block (if any)
             if decision_buffer:
                 try:
                     self._decision_payload = json.loads(decision_buffer.strip())
@@ -496,7 +485,6 @@ class QwenBaseWorker(
                         f"Failed to parse decision buffer: {decision_buffer[:50]}..."
                     )
 
-            # 9b. Extract Tool Calls from accumulated stream output
             tool_calls_batch = self.parse_and_set_function_calls(
                 accumulated, assistant_reply
             )
@@ -506,8 +494,6 @@ class QwenBaseWorker(
 
             # ------------------------------------------------------------------
             # 10. TOOL CALL ENVELOPE CONSTRUCTION
-            # If the assistant emitted tool calls, build the standardised envelope
-            # and flag the run as pending_action so the orchestrator picks it up.
             # ------------------------------------------------------------------
             if tool_calls_batch:
                 self._tool_queue = tool_calls_batch
@@ -527,7 +513,6 @@ class QwenBaseWorker(
                         }
                     )
 
-                # Persist the structural representation, not the raw text
                 message_to_save = json.dumps(tool_calls_structure)
 
             yield json.dumps(
@@ -536,8 +521,6 @@ class QwenBaseWorker(
 
             # ------------------------------------------------------------------
             # 11. FINALIZE & PERSIST
-            # self.assistant_id is the correct ID at this point —
-            # either the original assistant or the swapped supervisor ID.
             # ------------------------------------------------------------------
             if message_to_save:
                 await self.finalize_conversation(
@@ -556,7 +539,6 @@ class QwenBaseWorker(
             yield json.dumps({"type": "error", "content": str(exc), "run_id": run_id})
 
         finally:
-            # Always stop the cancellation monitor, regardless of outcome.
             stop_event.set()
 
     def stream_sync(
