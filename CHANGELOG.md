@@ -1,3 +1,27 @@
+# [1.39.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.38.0...v1.39.0) (2026-04-18)
+
+
+### Bug Fixes
+
+* **cache:** push assistant and tool messages to Redis on save ([9aae64d](https://github.com/project-david-ai/projectdavid-core/commit/9aae64da4788ee79e28d6cfecc2a5610e228f236))
+* **ci:** use maturin build + pip install instead of maturin develop ([9e46e7b](https://github.com/project-david-ai/projectdavid-core/commit/9e46e7b0b741cd0c161edd67292ea2d412e4aea3))
+* **deepseek:** rewrite tool messages to user role + split-save chatty turns ([dc92eb9](https://github.com/project-david-ai/projectdavid-core/commit/dc92eb975f64c654fae4040e87e09bc2ad98b79d))
+* **docker:** add fc_parser and request_router to API image Rust build stage ([d85d3f3](https://github.com/project-david-ai/projectdavid-core/commit/d85d3f3c398a9b8237f0e57ad73ac7adb7fb9cb5))
+* **docker:** add pkg-config and libssl-dev for request_router OpenSSL build dependency ([9840916](https://github.com/project-david-ai/projectdavid-core/commit/98409168cc2375cb5e8f7b397e1378cac219d97f))
+* **docker:** install maturin with patchelf for request_router OpenSSL wheel bundling ([6b4c271](https://github.com/project-david-ai/projectdavid-core/commit/6b4c271ab26553a85c2399401f63daa335474377))
+* **inference:** pass tools natively to provider API in QwenBaseWorker stream ([39850d6](https://github.com/project-david-ai/projectdavid-core/commit/39850d6b403c999767fb00cff1a3709b0165eb51))
+* **monitor:** remove pending_action from terminal_statuses set ([eb09206](https://github.com/project-david-ai/projectdavid-core/commit/eb0920669ca412fe64e15a46096694b4b629c374))
+* **tools:** gate platform tools on assistant opt-in across three layers ([5ab88df](https://github.com/project-david-ai/projectdavid-core/commit/5ab88df539b03cb30a6a624491f566a0f5357b82))
+
+
+### Features
+
+* **analytics:** add stack insights script with CI noise subtraction and real user pull estimation ([61903bd](https://github.com/project-david-ai/projectdavid-core/commit/61903bdd1555cba1cffbf1e63a8d07b588f2ccd7))
+* **analytics:** add stack insights script with CI noise subtraction and real user pull estimation ([29a17cd](https://github.com/project-david-ai/projectdavid-core/commit/29a17cd0ef5a614e879c6bece4884d0f78a5f8b0))
+* **rust:** port fc_parser to Rust extension via PyO3 ([682dcf2](https://github.com/project-david-ai/projectdavid-core/commit/682dcf27ba06f11fcbfb749a23fd748ad4e69b45))
+* **training:** add live progress feedback to fine-tuning pipeline ([bb19cea](https://github.com/project-david-ai/projectdavid-core/commit/bb19cea216d65e69bf3b0d5a855efa4ee328e19f))
+* **training:** enforce HF cache guard at job dispatch ([4c23b23](https://github.com/project-david-ai/projectdavid-core/commit/4c23b238b7452fb5aa9e79d3900633b0a1477330))
+
 # [1.38.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.37.0...v1.38.0) (2026-04-15)
 
 
