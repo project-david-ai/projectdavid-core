@@ -19,6 +19,10 @@ logging_utility = LoggingUtility()
 RAY_DASHBOARD_URL = "http://inference_worker:8265"
 RAY_SERVE_URL = "http://inference_worker:8000"
 
+# Reconciler poll cadence — used to describe unload latency in deactivate responses.
+# Must match INFERENCE_POLL_INTERVAL in inference_worker.py for accurate messaging.
+_POLL_INTERVAL = int(os.getenv("INFERENCE_POLL_INTERVAL", "20"))
+
 
 class DeploymentService:
     def __init__(self, db: Session) -> None:
@@ -146,17 +150,20 @@ class DeploymentService:
         self.db.query(InferenceDeployment).delete(synchronize_session=False)
         self.db.commit()
 
-    def deactivate_all_for_user(self, user_id):
+    def deactivate_all_for_user(self, user_id: str) -> dict:
         self.db.query(FineTunedModel).filter(
             FineTunedModel.user_id == user_id, FineTunedModel.is_active
         ).update({"is_active": False}, synchronize_session=False)
         self._clear_all_deployments()
         return {
             "status": "deactivating",
-            "message": f"Cluster resources scheduled for release. Unload completes on next reconciler poll (≤{POLL_INTERVAL}s).",
+            "message": (
+                f"Cluster resources scheduled for release. "
+                f"Unload completes on next reconciler poll (≤{_POLL_INTERVAL}s)."
+            ),
         }
 
-    def deactivate_model(self, model_id, user_id=None):
+    def deactivate_model(self, model_id: str, user_id: Optional[str] = None) -> dict:
         model = self.get_fine_tuned_model(model_id, user_id)
         self.db.query(InferenceDeployment).filter(
             InferenceDeployment.fine_tuned_model_id == model.id
@@ -166,10 +173,13 @@ class DeploymentService:
         return {
             "status": "deactivating",
             "model_id": model.id,
-            "next_step": f"InferenceReconciler will unload from Ray Serve on next poll (≤{POLL_INTERVAL}s).",
+            "next_step": (
+                f"InferenceReconciler will unload from Ray Serve on next poll "
+                f"(≤{_POLL_INTERVAL}s)."
+            ),
         }
 
-    def deactivate_base_model(self, base_model_id):
+    def deactivate_base_model(self, base_model_id: str) -> dict:
         base = self.registry.resolve(base_model_id)
         self.db.query(InferenceDeployment).filter(
             InferenceDeployment.base_model_id == base.id,
@@ -179,7 +189,10 @@ class DeploymentService:
         return {
             "status": "deactivating",
             "base_model_id": base.id,
-            "next_step": f"InferenceReconciler will unload from Ray Serve on next poll (≤{POLL_INTERVAL}s).",
+            "next_step": (
+                f"InferenceReconciler will unload from Ray Serve on next poll "
+                f"(≤{_POLL_INTERVAL}s)."
+            ),
         }
 
     def activate_base_model(
