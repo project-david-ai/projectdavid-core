@@ -476,9 +476,24 @@ class NativeExecutionService:
             tool_call_id=tool_call_id,
             meta_data={"action_id": action_id, "is_error": is_error},
         )
-        return await asyncio.to_thread(
+        result = await asyncio.to_thread(
             self.message_svc.submit_tool_output_internal, msg_req
         )
+
+        # Push to Redis so next turn's context build sees this tool message.
+        try:
+            from src.api.entities_api.cache.message_cache import get_sync_message_cache
+
+            cache = get_sync_message_cache()
+            await asyncio.to_thread(
+                cache.append_message_sync,
+                thread_id,
+                {"role": "tool", "content": content, "tool_call_id": tool_call_id},
+            )
+        except Exception as exc:
+            LOG.warning("Failed to append tool message to cache: %s", exc)
+
+        return result
 
     async def submit_failed_tool_execution(
         self,
