@@ -171,6 +171,34 @@ class ContextMixin:
 
         return deduped_platform_tools + resolved_user_tools
 
+    @staticmethod
+    def _tool_specific_instruction_keys(
+        raw_tools_list: List[Dict[str, Any]],
+    ) -> List[str]:
+        """
+        Derive instruction keys from the assistant's opted-in platform tools.
+        Only tools present in the assistant's tools array get their instruction
+        bundle included in the system prompt.
+        """
+        from src.api.entities_api.orchestration.instructions.include_lists import (
+            TOOL_INSTRUCTION_MAP,
+        )
+
+        keys: List[str] = []
+        seen_types: set = set()
+        for tool in raw_tools_list:
+            if not isinstance(tool, dict):
+                continue
+            t_type = tool.get("type")
+            if t_type in TOOL_INSTRUCTION_MAP and t_type not in seen_types:
+                seen_types.add(t_type)
+                keys.extend(TOOL_INSTRUCTION_MAP[t_type])
+        return keys
+
+    # -----------------------------------------------------
+    # SYSTEM MESSAGE BUILDERS
+    # -----------------------------------------------------
+
     async def _build_system_message(
         self,
         assistant_id: str,
@@ -182,17 +210,6 @@ class ContextMixin:
         cfg = await cache.retrieve(assistant_id)
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
-        instruction_keys = list(
-            dict.fromkeys(
-                [
-                    *(["TOOL_DECISION_PROTOCOL"] if decision_telemetry else []),
-                    *(L3_INSTRUCTIONS if agent_mode else L2_INSTRUCTIONS),
-                    *(L3_WEB_USE_INSTRUCTIONS if web_access else []),
-                ]
-            )
-        )
-
-        platform_instructions = assemble_instructions(include_keys=instruction_keys)
         raw_tools_list = list(cfg.get("tools") or [])
 
         if web_access:
@@ -202,6 +219,21 @@ class ContextMixin:
             )
             if not has_web_tool:
                 raw_tools_list.append({"type": "web_search"})
+
+        tool_specific_keys = self._tool_specific_instruction_keys(raw_tools_list)
+
+        instruction_keys = list(
+            dict.fromkeys(
+                [
+                    *(["TOOL_DECISION_PROTOCOL"] if decision_telemetry else []),
+                    *(L3_INSTRUCTIONS if agent_mode else L2_INSTRUCTIONS),
+                    *(L3_WEB_USE_INSTRUCTIONS if web_access else []),
+                    *tool_specific_keys,
+                ]
+            )
+        )
+
+        platform_instructions = assemble_instructions(include_keys=instruction_keys)
 
         final_tools = self._resolve_and_prioritize_platform_tools(
             tools=raw_tools_list,
@@ -235,16 +267,6 @@ class ContextMixin:
         cfg = await cache.retrieve(assistant_id)
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
-        instruction_keys = list(
-            dict.fromkeys(
-                [
-                    *(["TOOL_DECISION_PROTOCOL"] if decision_telemetry else []),
-                    *LEVEL_4_SUPERVISOR_INSTRUCTIONS,
-                ]
-            )
-        )
-
-        platform_instructions = assemble_instructions(include_keys=instruction_keys)
         raw_tools_list = list(cfg.get("tools") or [])
 
         if web_access:
@@ -254,6 +276,20 @@ class ContextMixin:
             )
             if not has_web_tool:
                 raw_tools_list.append({"type": "web_search"})
+
+        tool_specific_keys = self._tool_specific_instruction_keys(raw_tools_list)
+
+        instruction_keys = list(
+            dict.fromkeys(
+                [
+                    *(["TOOL_DECISION_PROTOCOL"] if decision_telemetry else []),
+                    *LEVEL_4_SUPERVISOR_INSTRUCTIONS,
+                    *tool_specific_keys,
+                ]
+            )
+        )
+
+        platform_instructions = assemble_instructions(include_keys=instruction_keys)
 
         final_tools = self._resolve_and_prioritize_platform_tools(
             tools=raw_tools_list,
@@ -287,16 +323,6 @@ class ContextMixin:
         cfg = await cache.retrieve(assistant_id)
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
-        instruction_keys = list(
-            dict.fromkeys(
-                [
-                    *(["TOOL_DECISION_PROTOCOL"] if decision_telemetry else []),
-                    *L4_RESEARCH_INSTRUCTIONS,
-                ]
-            )
-        )
-
-        platform_instructions = assemble_instructions(include_keys=instruction_keys)
         raw_tools_list = list(cfg.get("tools") or [])
 
         if web_access:
@@ -306,6 +332,20 @@ class ContextMixin:
             )
             if not has_web_tool:
                 raw_tools_list.append({"type": "web_search"})
+
+        tool_specific_keys = self._tool_specific_instruction_keys(raw_tools_list)
+
+        instruction_keys = list(
+            dict.fromkeys(
+                [
+                    *(["TOOL_DECISION_PROTOCOL"] if decision_telemetry else []),
+                    *L4_RESEARCH_INSTRUCTIONS,
+                    *tool_specific_keys,
+                ]
+            )
+        )
+
+        platform_instructions = assemble_instructions(include_keys=instruction_keys)
 
         final_tools = self._resolve_and_prioritize_platform_tools(
             tools=raw_tools_list,
@@ -339,16 +379,6 @@ class ContextMixin:
         cfg = await cache.retrieve(assistant_id)
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
-        instruction_keys = list(
-            dict.fromkeys(
-                [
-                    *(["TOOL_DECISION_PROTOCOL"] if decision_telemetry else []),
-                    *L4_SENIOR_ENGINEER_INSTRUCTIONS,
-                ]
-            )
-        )
-
-        platform_instructions = assemble_instructions(include_keys=instruction_keys)
         raw_tools_list = list(cfg.get("tools") or [])
 
         if web_access:
@@ -358,6 +388,20 @@ class ContextMixin:
             )
             if not has_web_tool:
                 raw_tools_list.append({"type": "web_search"})
+
+        tool_specific_keys = self._tool_specific_instruction_keys(raw_tools_list)
+
+        instruction_keys = list(
+            dict.fromkeys(
+                [
+                    *(["TOOL_DECISION_PROTOCOL"] if decision_telemetry else []),
+                    *L4_SENIOR_ENGINEER_INSTRUCTIONS,
+                    *tool_specific_keys,
+                ]
+            )
+        )
+
+        platform_instructions = assemble_instructions(include_keys=instruction_keys)
 
         final_tools = self._resolve_and_prioritize_platform_tools(
             tools=raw_tools_list,
@@ -391,17 +435,23 @@ class ContextMixin:
         cfg = await cache.retrieve(assistant_id)
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
+        raw_tools_list = list(cfg.get("tools") or [])
+
+        # Junior engineers do NOT get auto-injected web_search.
+
+        tool_specific_keys = self._tool_specific_instruction_keys(raw_tools_list)
+
         instruction_keys = list(
             dict.fromkeys(
                 [
                     *(["TOOL_DECISION_PROTOCOL"] if decision_telemetry else []),
                     *L4_JUNIOR_ENGINEER_INSTRUCTIONS,
+                    *tool_specific_keys,
                 ]
             )
         )
 
         platform_instructions = assemble_instructions(include_keys=instruction_keys)
-        raw_tools_list = list(cfg.get("tools") or [])
 
         final_tools = self._resolve_and_prioritize_platform_tools(
             tools=raw_tools_list,
@@ -434,17 +484,6 @@ class ContextMixin:
         cfg = await cache.retrieve(assistant_id)
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
-        instruction_keys = list(
-            dict.fromkeys(
-                [
-                    *(["TOOL_DECISION_PROTOCOL"] if decision_telemetry else []),
-                    *(L3_INSTRUCTIONS if agent_mode else NO_CORE_INSTRUCTIONS),
-                    *(L3_WEB_USE_INSTRUCTIONS if web_access else []),
-                ]
-            )
-        )
-
-        platform_instructions = assemble_instructions(include_keys=instruction_keys)
         raw_tools_list = list(cfg.get("tools") or [])
 
         if web_access:
@@ -454,6 +493,21 @@ class ContextMixin:
             )
             if not has_web_tool:
                 raw_tools_list.append({"type": "web_search"})
+
+        tool_specific_keys = self._tool_specific_instruction_keys(raw_tools_list)
+
+        instruction_keys = list(
+            dict.fromkeys(
+                [
+                    *(["TOOL_DECISION_PROTOCOL"] if decision_telemetry else []),
+                    *(L3_INSTRUCTIONS if agent_mode else NO_CORE_INSTRUCTIONS),
+                    *(L3_WEB_USE_INSTRUCTIONS if web_access else []),
+                    *tool_specific_keys,
+                ]
+            )
+        )
+
+        platform_instructions = assemble_instructions(include_keys=instruction_keys)
 
         final_tools = self._resolve_and_prioritize_platform_tools(
             tools=raw_tools_list,

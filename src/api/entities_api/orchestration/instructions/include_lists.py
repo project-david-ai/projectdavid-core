@@ -2,12 +2,15 @@ from entities_api.orchestration.instructions.definitions import (
     LEVEL_3_WEB_USE_INSTRUCTIONS,
 )
 
+# ---------------------------------------------------------------------------
+# Base protocol keys — apply to EVERY assistant regardless of opted-in tools.
+# Tool-specific instruction bundles live in TOOL_INSTRUCTION_MAP and are
+# appended at build time based on the assistant's declared tools array.
+# ---------------------------------------------------------------------------
 L2_INSTRUCTIONS = [
     "TOOL_USAGE_PROTOCOL",
     "FUNCTION_CALL_FORMATTING",
     "FUNCTION_CALL_WRAPPING",
-    "CODE_INTERPRETER",  # code interpreter
-    "CODE_FILE_HANDLING",
 ]
 
 L3_INSTRUCTIONS = [
@@ -15,8 +18,6 @@ L3_INSTRUCTIONS = [
     "L3_PLANNING_PROTOCOL",
     "TOOL_DECISION_PROTOCOL",
     "L3_PARALLEL_EXECUTION",
-    "CODE_INTERPRETER"  # code interprete
-    "CODE_FILE_HANDLING",  # code interpreter
     "CITATION_PROTOCOL",
     "TOOL_USAGE_PROTOCOL",
     "FUNCTION_CALL_FORMATTING",
@@ -24,41 +25,53 @@ L3_INSTRUCTIONS = [
     "L3_SYNTAX_ENFORCEMENT",
 ]
 
+# ---------------------------------------------------------------------------
+# Per-tool instruction bundles.
+# Keys correspond to canonical platform tool `type` strings in PLATFORM_TOOL_MAP.
+# Only appended to instruction_keys when the assistant has opted in by including
+# {"type": "<key>"} in its tools array at creation/update time.
+# ---------------------------------------------------------------------------
+TOOL_INSTRUCTION_MAP = {
+    "code_interpreter": ["CODE_INTERPRETER", "CODE_FILE_HANDLING"],
+    "file_search": ["VECTOR_SEARCH_EXAMPLES"],
+    "web_search": ["WEB_SEARCH_RULES"],
+    "computer": [],  # no instruction bundle yet
+}
+
 
 LEVEL_4_SUPERVISOR_INSTRUCTIONS = [
-    "L4_SUPERVISOR_IDENTITY",  # 1. Identity: Architect & Editor-in-Chief
-    "L4_TRIAGE_PROTOCOL",  # 2. Decision Logic: Research vs Chat
-    "L4_PLANNING_PROTOCOL",  # 3. The Brain: Mental Models
-    "L4_TOOL_ORCHESTRATION_PROTOCOL",  # 4. The How: Tool roles & standard chain
-    "L4_DELEGATION_PROTOCOL",  # 5. The Instruction: Prescriptive prompting
-    "L4_SCRATCHPAD_MANAGEMENT_PROTOCOL",  # 6. The Whiteboard: Governor role, worker-written state
-    "L4_EXECUTION_LOOP",  # 7. The Pulse: Initialize -> Delegate -> Evaluate
-    "L4_CITATION_INTEGRITY",  # 8. Zero-Tolerance: VERIFIED entry required per claim
-    "L4_ANTI_STALL",  # 9. The Guardrails: No stale URLs, promote ⚠️ to ☠️
-    "L4_SUPERVISOR_MOMENTUM",  # 10. Never wait — always drive
-    "L4_URL_PROTOCOL",  # 11. Safety: URL hallucination check
-    "L4_FINAL_SYNTHESIS_PROTOCOL",  # 12. The Output: Supervisor owns the final answer
-    "TOOL_USAGE_PROTOCOL",  # 13. Base Tool Syntax
-    "FUNCTION_CALL_FORMATTING",  # 14. JSON formatting rules
-    "FUNCTION_CALL_WRAPPING",  # 15. XML wrapping rules
-    "CITATION_PROTOCOL",  # 16. Link formatting rules
+    "L4_SUPERVISOR_IDENTITY",
+    "L4_TRIAGE_PROTOCOL",
+    "L4_PLANNING_PROTOCOL",
+    "L4_TOOL_ORCHESTRATION_PROTOCOL",
+    "L4_DELEGATION_PROTOCOL",
+    "L4_SCRATCHPAD_MANAGEMENT_PROTOCOL",
+    "L4_EXECUTION_LOOP",
+    "L4_CITATION_INTEGRITY",
+    "L4_ANTI_STALL",
+    "L4_SUPERVISOR_MOMENTUM",
+    "L4_URL_PROTOCOL",
+    "L4_FINAL_SYNTHESIS_PROTOCOL",
+    "TOOL_USAGE_PROTOCOL",
+    "FUNCTION_CALL_FORMATTING",
+    "FUNCTION_CALL_WRAPPING",
+    "CITATION_PROTOCOL",
 ]
 
 
 L4_RESEARCH_INSTRUCTIONS = [
-    "L4_WORKER_IDENTITY",  # 1. You are a Transient Worker + scratchpad access overview
-    "L4_WORKER_SCRATCHPAD_PROTOCOL",  # 2. Read-first orientation, dedup, gap ID, tombstone awareness
-    "L4_TOOL_CHEATSHEET",  # 3. Syntax (Strict L4 Scratchpad Tools) ← UPDATED KEY
-    "TOOL_STRATEGY",  # 6. Very important for web search
-    "DIRECT_URL_EXCEPTION",  # 7. Skip SERP when URL is already known/provided
-    "L4_PARALLEL_EXECUTION",  # 8. Parallel First Strike rules ← UPDATED KEY
-    "L4_EXECUTION_ALGORITHM",  # 9. Discovery -> Recon -> Snipe, scratchpad read as Step 0
-    # "L4_DEPTH_PROTOCOL",  # 10. Comparative rigor, scratchpad-aware source counting
-    "RICH_MEDIA_HANDLING",  # 11. Keep images/video links (borrowed from L3)
-    "L4_STOPPING_CRITERIA",  # 12. When to quit, incl. "already in scratchpad" condition
-    "FUNCTION_CALL_FORMATTING",  # 4. JSON formatting rules
-    "FUNCTION_CALL_WRAPPING",  # 5. XML wrapping rules
-    "L4_WORKER_REPORTING_FORMAT",  # 13. Structured report for direct scratchpad appending
+    "L4_WORKER_IDENTITY",
+    "L4_WORKER_SCRATCHPAD_PROTOCOL",
+    "L4_TOOL_CHEATSHEET",
+    "TOOL_STRATEGY",
+    "DIRECT_URL_EXCEPTION",
+    "L4_PARALLEL_EXECUTION",
+    "L4_EXECUTION_ALGORITHM",
+    "RICH_MEDIA_HANDLING",
+    "L4_STOPPING_CRITERIA",
+    "FUNCTION_CALL_FORMATTING",
+    "FUNCTION_CALL_WRAPPING",
+    "L4_WORKER_REPORTING_FORMAT",
 ]
 
 
@@ -82,8 +95,8 @@ L4_SENIOR_ENGINEER_INSTRUCTIONS = [
     "SE_TRIAGE_PROTOCOL",
     "SE_SCRATCHPAD_PROTOCOL",
     "SE_DELEGATION_PROTOCOL",
-    "SE_PLATFORM_AWARENESS",  # NEW
-    "SE_COMMAND_STRATEGY",  # NEW
+    "SE_PLATFORM_AWARENESS",
+    "SE_COMMAND_STRATEGY",
     "SE_EXECUTION_LOOP",
     "SE_ANTI_STALL",
     "SE_EVIDENCE_INTEGRITY",
@@ -98,11 +111,11 @@ L4_JUNIOR_ENGINEER_INSTRUCTIONS = [
     "JE_COMMUNICATION_AND_SCRATCHPAD_PROTOCOL",
     "JE_EXECUTION_ALGORITHM",
     "JE_TOOL_USAGE",
-    "JE_STOPPING_CRITERIA",  # ← now exists
+    "JE_STOPPING_CRITERIA",
     "JE_EVIDENCE_INTEGRITY",
-    "TOOL_USAGE_PROTOCOL",  # shared
-    "FUNCTION_CALL_FORMATTING",  # shared
-    "FUNCTION_CALL_WRAPPING",  # shared
+    "TOOL_USAGE_PROTOCOL",
+    "FUNCTION_CALL_FORMATTING",
+    "FUNCTION_CALL_WRAPPING",
 ]
 
 
