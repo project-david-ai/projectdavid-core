@@ -71,12 +71,12 @@ class StreamingMixin:
         stop_event = Event()
 
         def monitor():
+
             terminal_statuses = {
                 StatusEnum.completed.value,
                 StatusEnum.failed.value,
                 StatusEnum.cancelled.value,
                 StatusEnum.expired.value,
-                StatusEnum.pending_action.value,
                 StatusEnum.deleted.value,
             }
 
