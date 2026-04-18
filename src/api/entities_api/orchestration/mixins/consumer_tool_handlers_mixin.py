@@ -248,14 +248,6 @@ class ConsumerToolHandlersMixin:
         is_error: bool,
         forced_status: Optional[str] = None,
     ) -> None:
-        """
-        Internal sync helper to persist assistant text and update run status.
-
-        Called via asyncio.to_thread so cannot await.  Accesses MessageService
-        and RunService through _native_exec's already-instantiated singletons
-        to avoid creating fresh service instances on every call.
-        """
-        # ── REPLACED: was self.project_david_client.messages.save_assistant_message_chunk(...)
         self._native_exec.message_svc.save_assistant_message_chunk(
             thread_id=thread_id,
             content=content,
@@ -265,7 +257,20 @@ class ConsumerToolHandlersMixin:
             is_last_chunk=True,
         )
 
-        # ── REPLACED: was self.project_david_client.runs.update_run_status(...)
+        # Push to Redis cache so the next turn's context build sees this message.
+        # Without this, Redis returns stale history and Turn 2 misses the <fc>
+        # assistant row, producing a dangling tool_call_id on the tool message.
+        try:
+            from src.api.entities_api.cache.message_cache import get_sync_message_cache
+
+            cache = get_sync_message_cache()
+            cache.append_message_sync(
+                thread_id,
+                {"role": "assistant", "content": content},
+            )
+        except Exception as exc:
+            LOG.warning("Failed to append assistant message to cache: %s", exc)
+
         status = forced_status or (
             StatusEnum.failed.value if is_error else StatusEnum.completed.value
         )
