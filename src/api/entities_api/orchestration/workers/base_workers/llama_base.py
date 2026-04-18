@@ -1,4 +1,4 @@
-# src/api/entities_api/workers/llama_worker.py
+# src/api/entities_api/orchestration/workers/base_workers/qwen_base.py
 from __future__ import annotations
 
 import asyncio
@@ -7,8 +7,9 @@ import os
 import queue as _queue_mod
 import threading
 import time
+import uuid
 from abc import ABC, abstractmethod
-from typing import Any, AsyncGenerator, Dict, Generator, List, Optional, Union
+from typing import Any, AsyncGenerator, Dict, Generator, Optional, Union
 
 from dotenv import load_dotenv
 from entities_api.cache.assistant_cache import AssistantCache
@@ -26,10 +27,7 @@ from src.api.entities_api.clients.multimodal_utils import (
     normalise_for_chat,
 )
 from src.api.entities_api.dependencies import get_redis_sync
-from src.api.entities_api.orchestration.engine.orchestrator_core import (
-    OrchestratorCore,
-    StreamState,
-)
+from src.api.entities_api.orchestration.engine.orchestrator_core import OrchestratorCore
 
 # --- MIXINS ---
 from src.api.entities_api.orchestration.mixins.provider_mixins import _ProviderMixins
@@ -44,22 +42,41 @@ class LlamaBaseWorker(
     ABC,
 ):
     """
-    Async Base for Llama-3.3 Providers (Hyperbolic, Together, etc.).
-    Refactored to match DeepSeek architecture with Supervisor capabilities.
+    Async Base for Qwen Providers (Hyperbolic, Together, etc.).
+    Handles QwQ-32B/Qwen2.5/Kimi specific stream parsing using DeltaNormalizer.
 
     Vision support:
         Multimodal messages (hydrated image blocks) are automatically detected
         and normalised to the OpenAI image_url format before dispatch.
+        Both TogetherAI and Hyperbolic accept base64 data URIs in this format.
 
     Provider image limits:
         VISION_MAX_IMAGES controls how many images are passed per request.
-        Default is None (unlimited). Subclasses override for providers with
-        per-request image caps.
+        Default is None (unlimited) — suitable for TogetherAI and vLLM.
+        Hyperbolic subclasses must override this to 1:
+
+            class HyperbolicQwenWorker(QwenBaseWorker):
+                VISION_MAX_IMAGES = 1  # Hyperbolic hard limit per request
+
+    Native tool passing:
+        prepare_native_tool_context() extracts tool definitions from the system
+        message and passes them natively to the provider via the tools= parameter.
+        This is required for providers that no longer parse text-embedded tool
+        definitions from the system prompt (e.g. Hyperbolic post-April 2026).
+        Providers that do not support native tools receive tools=None and fall
+        back to text-embedded definitions in the system prompt.
     """
 
     # Override in subclasses for providers with per-request image caps.
-    # None = unlimited.
+    # None = unlimited (TogetherAI, vLLM).
+    # 1    = Hyperbolic (documented hard limit).
     VISION_MAX_IMAGES: Optional[int] = None
+
+    # Override in subclasses to disable native tool passing for providers
+    # that do not support the tools= parameter.
+    # True  = extract tools from system message and pass natively (default).
+    # False = leave tools embedded in system prompt text.
+    USE_NATIVE_TOOLS: bool = True
 
     def __init__(
         self,
@@ -77,23 +94,22 @@ class LlamaBaseWorker(
 
         # 1. Config & Dependencies
         self.api_key = api_key or extra.get("api_key")
+        # ephemeral worker config
+        # These objects are used for deep search and engineering flows
         self.is_deep_research = None
         self._scratch_pad_thread = None
         self._batfish_owner_user_id: str | None = None
-
         self.is_engineer = None
-
         self._delete_ephemeral_thread = delete_ephemeral_thread or extra.get(
             "delete_ephemeral_thread"
         )
         self.ephemeral_supervisor_id = None
-
         self._research_worker_thread = None
         self._worker_thread = None
 
         self.redis = redis or get_redis_sync()
 
-        # 3. Setup the Cache Service
+        # 2. Cache Service Setup
         if assistant_cache_service:
             self._assistant_cache = assistant_cache_service
         elif "assistant_cache" in extra and isinstance(
@@ -101,7 +117,7 @@ class LlamaBaseWorker(
         ):
             self._assistant_cache = extra["assistant_cache"]
 
-        # 4. Setup Config
+        # 3. Config Legacy Support
         legacy_config = extra.get("assistant_config") or extra.get("assistant_cache")
         self.assistant_config: Dict[str, Any] = (
             legacy_config if isinstance(legacy_config, dict) else {}
@@ -112,23 +128,25 @@ class LlamaBaseWorker(
         self.thread_id = thread_id
         self.base_url = base_url or os.getenv("BASE_URL")
 
-        self.model_name = extra.get("model_name", "meta-llama/Llama-3.3-70B-Instruct")
+        self.model_name = extra.get("model_name", "qwen/Qwen1_5-32B-Chat")
         self.max_context_window = extra.get("max_context_window", 128000)
         self.threshold_percentage = extra.get("threshold_percentage", 0.8)
 
+        # 4. State Tracking
         self._current_tool_call_id: str | None = None
         self._pending_tool_payload: Optional[Dict[str, Any]] = None
         self._decision_payload: Optional[Dict[str, Any]] = None
 
         self.setup_services()
 
+        # 5. Mixin Safety Stub
         if not hasattr(self, "get_function_call_state"):
             LOG.error("CRITICAL: ToolRoutingMixin failed to load.")
             self.get_function_call_state = lambda: None
             self.set_function_call_state = lambda x: None
             self.set_tool_response_state = lambda x: None
 
-        LOG.debug("%s ready (assistant=%s)", self.__class__.__name__, assistant_id)
+        LOG.debug(f"{self.__class__.__name__} ready (assistant={assistant_id})")
 
     @abstractmethod
     def _get_client_instance(self, api_key: str):
@@ -148,38 +166,71 @@ class LlamaBaseWorker(
         **kwargs,
     ) -> AsyncGenerator[Union[str, StreamEvent], None]:
         """
-        Level 3 Agentic Stream (Native Mode):
-        - Supports Deep Research Supervisor & Engineer (Identity Swapping).
-        - Uses raw XML/Tag persistence to prevent Persona breakage.
-        - Uses centralized helper for stream state management.
+        Unified stream method supporting four distinct assistant roles:
+
+          1. SENIOR ENGINEER (Supervisor)  — is_engineer=True in assistant config
+             Plans the incident, delegates to Junior Engineers, writes the Change Request.
+             No web access. No SSH. Uses update_scratchpad / read_scratchpad / delegate_engineer_task.
+
+          2. RESEARCH SUPERVISOR           — deep_research=True in assistant config
+             Plans the research, delegates to Research Workers. No web access.
+
+          3. RESEARCH WORKER               — is_research_worker=True in assistant config
+             Browses the web, appends verified facts to the shared scratchpad.
+             Web access enabled. Used exclusively by the deep research workflow.
+
+          4. JUNIOR ENGINEER               — junior_engineer=True in assistant config
+             SSHs to network devices, runs delegated command sets, appends raw evidence
+             and flags to the shared scratchpad. No web access.
+
+          5. STANDARD ASSISTANT            — no role flags set
+             Normal user-facing assistant. Uses whatever is configured on the assistant record.
+
+        Role flags are set via assistant metadata at ephemeral creation time and read here
+        from the normalized assistant_config cache. Exactly one role is ever active per
+        stream invocation — the conflict resolution block enforces mutual exclusivity.
         """
+        # ------------------------------------------------------------------
+        # Ephemeral supervisor / delegation state
+        # ------------------------------------------------------------------
         self._run_user_id = None
         self.ephemeral_supervisor_id = None
         self._scratch_pad_thread = None
-
         stop_event = self.start_cancellation_monitor(run_id)
 
+        # Capture original assistant_id BEFORE any identity swap —
+        # the swap may mutate self.assistant_id to the supervisor's ID,
+        # and we need the original for cleanup / fallback.
         _original_assistant_id = assistant_id
 
+        # --- 1. State Initialization ---
         self._current_tool_call_id = None
         self._decision_payload = None
-        self._tool_queue: List[Dict] = []
-
-        # Initialize the State Machine Container (Same as DeepSeek)
-        state = StreamState()
-
+        self._tool_queue = []
+        accumulated: str = ""
+        assistant_reply: str = ""
+        decision_buffer: str = ""
+        current_block: str | None = None
         pre_mapped_model = model
+
         try:
+            # --- 2. Model Resolution ---
             if hasattr(self, "_get_model_map") and (
                 mapped := self._get_model_map(model)
             ):
                 model = mapped
 
             self.assistant_id = assistant_id
+
+            # Load the normalized config for the requested assistant from cache.
+            # This populates self.assistant_config with metadata, flags, and settings.
             await self._ensure_config_loaded()
 
             # ------------------------------------------------------------------
             # 3. ROLE FLAG EXTRACTION
+            # Read all role signals from the assistant's normalized config.
+            # These are set via meta_data at ephemeral creation time (or via the
+            # assistant record for standard assistants).
             # ------------------------------------------------------------------
             self.is_deep_research = self.assistant_config.get("deep_research", False)
             self.is_engineer = self.assistant_config.get("is_engineer", False)
@@ -187,10 +238,13 @@ class LlamaBaseWorker(
             agent_mode_setting = self.assistant_config.get("agent_mode", False)
             decision_telemetry = self.assistant_config.get("decision_telemetry", False)
 
+            # Default web_access from config — may be overridden by role resolution below
             web_access_setting = self.assistant_config.get("web_access", False)
 
+            # Extract from meta_data for dynamic ephemeral flags
             raw_meta = self.assistant_config.get("meta_data", {})
 
+            # Worker role flags — mutually exclusive, enforced below
             is_worker_val = raw_meta.get(
                 "is_research_worker", raw_meta.get("research_worker_calling", False)
             )
@@ -200,6 +254,7 @@ class LlamaBaseWorker(
                 "is_research_worker", False
             )
 
+            # Check for "junior_engineer" (and fallback to "junior_engineer_calling" just in case)
             is_junior_val = raw_meta.get(
                 "junior_engineer", raw_meta.get("junior_engineer_calling", False)
             )
@@ -207,6 +262,8 @@ class LlamaBaseWorker(
 
             # ------------------------------------------------------------------
             # 4. ROLE CONFLICT RESOLUTION
+            # Exactly one role is active per invocation.
+            # Priority: Senior Engineer > Research Supervisor > Research Worker > Junior Engineer > Standard
             # ------------------------------------------------------------------
             if self.is_engineer:
                 web_access_setting = False
@@ -275,7 +332,7 @@ class LlamaBaseWorker(
                 LOG.warning("STREAM ▸ Could not resolve run_user_id: %s", e)
 
             # ------------------------------------------------------------------
-            # 5. IDENTITY SWAP & RELOAD
+            # 5. IDENTITY SWAP (Supervisor roles only)
             # ------------------------------------------------------------------
             await self._handle_role_based_identity_swap(
                 requested_model=pre_mapped_model
@@ -324,23 +381,41 @@ class LlamaBaseWorker(
 
             # ------------------------------------------------------------------
             # 7. MULTIMODAL NORMALISATION
-            # Hydrated image blocks arrive as {"type": "image", "image": "data:..."}
-            # (internal format from NativeExecutionService.hydrate_messages).
-            # All OpenAI-compatible providers require
-            # {"type": "image_url", "image_url": {"url": "data:..."}} instead.
-            # Plain text contexts pass through this block untouched.
             # ------------------------------------------------------------------
             if is_multimodal(ctx):
                 LOG.info(
-                    "LlamaBaseWorker ▸ multimodal context detected — normalising to OpenAI "
+                    "QwenBaseWorker ▸ multimodal context detected — normalising to OpenAI "
                     "image_url format (max_images=%s).",
                     self.VISION_MAX_IMAGES,
                 )
                 ctx = normalise_for_chat(ctx, max_images=self.VISION_MAX_IMAGES)
 
             LOG.info(
-                f"\nRAW_CTX_DUMP:\n{json.dumps(ctx, indent=2, ensure_ascii=False)}"
+                f"\nRAW_CTX_DUMP_QUEN:\n{json.dumps(ctx, indent=2, ensure_ascii=False)}"
             )
+
+            # ------------------------------------------------------------------
+            # 7b. NATIVE TOOL EXTRACTION
+            # Extract tool definitions from the system message and pass them
+            # natively to the provider via tools=. Required for providers that
+            # no longer parse text-embedded tool definitions from the system prompt.
+            # Falls back gracefully — if extraction yields nothing, tools=None
+            # and the text-embedded definitions remain in the system prompt.
+            # ------------------------------------------------------------------
+            native_tools = None
+            if self.USE_NATIVE_TOOLS:
+                ctx, native_tools = self.prepare_native_tool_context(ctx)
+                if native_tools:
+                    LOG.info(
+                        "NATIVE TOOLS ▸ Extracted %d tool(s) for native dispatch: %s",
+                        len(native_tools),
+                        [t.get("function", {}).get("name") for t in native_tools],
+                    )
+                else:
+                    LOG.warning(
+                        "NATIVE TOOLS ▸ USE_NATIVE_TOOLS=True but no tools extracted "
+                        "from system message — falling back to text-embedded definitions."
+                    )
 
             # ------------------------------------------------------------------
             # 8. THE STREAM LOOP
@@ -361,6 +436,7 @@ class LlamaBaseWorker(
             raw_stream = client.stream_chat_completion(
                 messages=ctx,
                 model=model,
+                **({"tools": native_tools} if native_tools else {}),
                 **({"max_tokens": _max_tokens} if _max_tokens is not None else {}),
                 **({"top_p": _top_p} if _top_p is not None else {}),
                 temperature=_temperature,
@@ -370,52 +446,82 @@ class LlamaBaseWorker(
             async for chunk in DeltaNormalizer.async_iter_deltas(raw_stream, run_id):
                 if stop_event.is_set():
                     break
+                LOG.debug("PRE_ACCUM chunk: %s", json.dumps(chunk)[:150])
 
-                self._update_stream_state(chunk, state)
-
-                ctype = chunk.get("type")
-                if ctype == "call_arguments":
+                (
+                    current_block,
+                    accumulated,
+                    assistant_reply,
+                    decision_buffer,
+                    should_skip,
+                ) = self._handle_chunk_accumulation(
+                    chunk,
+                    current_block,
+                    accumulated,
+                    assistant_reply,
+                    decision_buffer,
+                )
+                LOG.warning("PRE_ACCUM chunk: %s", json.dumps(chunk)[:150])
+                LOG.warning(
+                    "POST_ACCUM skip=%s reply_len=%d", should_skip, len(assistant_reply)
+                )
+                if should_skip:
                     continue
 
                 yield json.dumps(chunk)
 
-            # Cleanup open tags (Native Mode cleanup)
-            if state.current_block == "fc":
-                state.accumulated += "</fc>"
-            elif state.current_block == "think":
-                state.accumulated += "</think>"
-            elif state.current_block == "plan":
-                state.accumulated += "</plan>"
+            # Ensure any dangling XML tag is closed cleanly at end of stream
+            if current_block:
+                accumulated += f"</{current_block}>"
 
             # ------------------------------------------------------------------
             # 9. POST-STREAM PROCESSING
             # ------------------------------------------------------------------
-            if state.decision_buffer:
+            if decision_buffer:
                 try:
-                    self._decision_payload = json.loads(state.decision_buffer.strip())
+                    self._decision_payload = json.loads(decision_buffer.strip())
                 except Exception:
-                    pass
+                    LOG.warning(
+                        f"Failed to parse decision buffer: {decision_buffer[:50]}..."
+                    )
+
+            tool_calls_batch = self.parse_and_set_function_calls(
+                accumulated, assistant_reply
+            )
+
+            message_to_save = assistant_reply
+            final_status = StatusEnum.completed.value
+
+            # ------------------------------------------------------------------
+            # 10. TOOL CALL ENVELOPE CONSTRUCTION
+            # ------------------------------------------------------------------
+            if tool_calls_batch:
+                self._tool_queue = tool_calls_batch
+                final_status = StatusEnum.pending_action.value
+
+                tool_calls_structure = []
+                for tool in tool_calls_batch:
+                    t_id = tool.get("id") or f"call_{uuid.uuid4().hex[:8]}"
+                    tool_calls_structure.append(
+                        {
+                            "id": t_id,
+                            "type": "function",
+                            "function": {
+                                "name": tool.get("name"),
+                                "arguments": json.dumps(tool.get("arguments", {})),
+                            },
+                        }
+                    )
+
+                message_to_save = json.dumps(tool_calls_structure)
 
             yield json.dumps(
                 {"type": "status", "status": "processing", "run_id": run_id}
             )
 
-            # ---[LEVEL 3] NATIVE PERSISTENCE ---
-            # Llama/DeepSeek requirement: Save RAW text (<fc>...</fc>) not JSON structure.
-            tool_calls_batch = self.parse_and_set_function_calls(
-                state.accumulated, state.assistant_reply
-            )
-
-            message_to_save = state.accumulated
-            final_status = StatusEnum.completed.value
-
-            if tool_calls_batch:
-                self._tool_queue = tool_calls_batch
-                final_status = StatusEnum.pending_action.value
-                LOG.info(
-                    f"🚀[L3 NATIVE MODE] Turn 1 Batch size: {len(tool_calls_batch)}"
-                )
-
+            # ------------------------------------------------------------------
+            # 11. FINALIZE & PERSIST
+            # ------------------------------------------------------------------
             if message_to_save:
                 await self.finalize_conversation(
                     message_to_save, thread_id, self.assistant_id, run_id
@@ -429,10 +535,8 @@ class LlamaBaseWorker(
                 )
 
         except Exception as exc:
-            LOG.error(f"DEBUG: Stream Exception: {exc}")
-            yield json.dumps(
-                {"type": "error", "content": f"Stream error: {exc}", "run_id": run_id}
-            )
+            LOG.error(f"Stream Exception: {exc}")
+            yield json.dumps({"type": "error", "content": str(exc), "run_id": run_id})
 
         finally:
             stop_event.set()
@@ -537,6 +641,7 @@ class LlamaBaseWorker(
         t = threading.Thread(target=_run_in_thread, daemon=True)
         t.start()
 
+        # Spin until the background thread has created and registered the queue
         while not queue_ref:
             time.sleep(0.001)
 

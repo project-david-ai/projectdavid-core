@@ -55,11 +55,17 @@ class DeepSeekBaseWorker(
         VISION_MAX_IMAGES controls how many images are passed per request.
         Default is None (unlimited). Subclasses override for providers with
         per-request image caps.
+
     """
 
     # Override in subclasses for providers with per-request image caps.
     # None = unlimited.
     VISION_MAX_IMAGES: Optional[int] = None
+
+    # "legacy" = strip tool_call_id, pass {role: tool, content: ...}
+    # "openai" = keep tool_call_id at message level (only use if a concrete
+    #            DeepSeek variant is known to tolerate it — V3-0324 does NOT)
+    TOOL_MESSAGE_FORMAT: str = "legacy"
 
     def __init__(
         self,
@@ -334,9 +340,32 @@ class DeepSeekBaseWorker(
                 )
                 ctx = normalise_for_chat(ctx, max_images=self.VISION_MAX_IMAGES)
 
-            LOG.info(
-                f"\nRAW_CTX_DUMP:\n{json.dumps(ctx, indent=2, ensure_ascii=False)}"
-            )
+            # ------------------------------------------------------------------
+            # 7b. TOOL MESSAGE FORMAT NORMALISATION
+            # DeepSeek-V3-0324 cannot parse OpenAI-style tool messages with
+            # `tool_call_id` at the message level — the Turn 2 (post-tool)
+            # response is empty when this field is present. The DB-level
+            # canonical shape includes tool_call_id (see MessageService
+            # ._format_messages_from_db) because that shape is what Llama
+            # and OpenAI-compatible models expect. For DeepSeek we strip
+            # the field right before wire dispatch. Llama keeps it.
+            # ------------------------------------------------------------------
+
+            if self.TOOL_MESSAGE_FORMAT == "legacy":
+                rewritten = 0
+                for msg in ctx:
+                    if msg.get("role") == "tool":
+                        content = msg.get("content", "")
+                        msg["role"] = "user"
+                        msg["content"] = f"Tool output:\n{content}"
+                        msg.pop("tool_call_id", None)
+                        msg.pop("name", None)
+                        rewritten += 1
+                if rewritten:
+                    LOG.info(
+                        "DeepSeekBaseWorker ▸ rewrote %d tool message(s) to user role.",
+                        rewritten,
+                    )
 
             # ------------------------------------------------------------------
             # 8. THE STREAM LOOP
@@ -410,10 +439,53 @@ class DeepSeekBaseWorker(
                     f"🚀[L3 NATIVE MODE] Turn 1 Batch size: {len(tool_calls_batch)}"
                 )
 
+            LOG.info(
+                "▸ FINALIZE CHECK: message_to_save_len=%d | tool_calls_batch_size=%d | accumulated_preview=%r",
+                len(message_to_save or ""),
+                len(tool_calls_batch or []),
+                (message_to_save or "")[:200],
+            )
+
+            LOG.info(
+                "▸ FINALIZE CHECK: message_to_save_len=%d | tool_calls_batch_size=%d | accumulated_preview=%r",
+                len(message_to_save or ""),
+                len(tool_calls_batch or []),
+                (message_to_save or "")[:200],
+            )
+
+            # ------------------------------------------------------------------
+            # 9b. SPLIT-SAVE — separate chat prose from <fc> tool-call block.
+            # When the model is chatty before emitting <fc>, persist the prose
+            # as one assistant message and the <fc> as a second assistant
+            # message. This gives the tool response a clean turn to anchor to
+            # on the next turn and keeps the chat history readable.
+            # ------------------------------------------------------------------
             if message_to_save:
-                await self.finalize_conversation(
-                    message_to_save, thread_id, self.assistant_id, run_id
-                )
+                fc_start = message_to_save.find("<fc>")
+
+                if tool_calls_batch and fc_start > 0:
+                    prose_part = message_to_save[:fc_start].strip()
+                    fc_part = message_to_save[fc_start:].strip()
+
+                    if prose_part:
+                        LOG.info(
+                            "SPLIT-SAVE ▸ prose=%d chars | fc=%d chars",
+                            len(prose_part),
+                            len(fc_part),
+                        )
+                        await self.finalize_conversation(
+                            prose_part, thread_id, self.assistant_id, run_id
+                        )
+
+                    if fc_part:
+                        await self.finalize_conversation(
+                            fc_part, thread_id, self.assistant_id, run_id
+                        )
+                else:
+                    # Either no tool call, or <fc> is at the start — save as one message
+                    await self.finalize_conversation(
+                        message_to_save, thread_id, self.assistant_id, run_id
+                    )
 
             await self._native_exec.update_run_status(run_id, final_status)
 
