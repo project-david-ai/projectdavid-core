@@ -39,6 +39,8 @@ class ToolRoutingMixin:
         self.handle_update_scratchpad()
         self.handle_append_scratchpad()       — ScratchpadMixin
         self._handover_to_consumer()          — ConsumerToolHandlersMixin
+        self.get_assistant_cache()            — AssistantCacheMixin
+        self._native_exec                     — NativeExecMixin
 
     Contract:
         parse_and_set_function_calls() raises TypeError if JsonUtilsMixin is
@@ -48,6 +50,15 @@ class ToolRoutingMixin:
         composition. Turn state (_tool_response, _function_calls, _tools_called)
         must be reset at the start of each orchestration turn via
         OrchestratorCore.process_conversation() — do not reset inside this mixin.
+
+    Platform tool gating:
+        Platform tools (code_interpreter, computer, file_search, web_search suite)
+        are gated at dispatch time against the assistant's opted-in tools array.
+        Models cannot fabricate access to platform tools that weren't declared —
+        rejected calls return an error message to the model via
+        submit_tool_output() so the next turn knows to stop attempting.
+        User-defined functions are NOT gated here; they fall through to
+        _handover_to_consumer() which routes back to the SDK.
 
     Parser:
         parse_and_set_function_calls() delegates to the fc_parser Rust extension
@@ -59,6 +70,22 @@ class ToolRoutingMixin:
     _tool_response: bool = False
     _function_calls: List[Dict] = []
     _tools_called: List[str] = []
+
+    # Names of all platform tool functions the dispatcher routes explicitly,
+    # derived from PLATFORM_TOOL_MAP entries in
+    # src/api/entities_api/constants/tools.py. Tool names here MUST match the
+    # `function.name` in each platform tool definition.
+    _PLATFORM_TOOL_NAMES: frozenset = frozenset(
+        {
+            "code_interpreter",
+            "computer",
+            "file_search",
+            "read_web_page",
+            "scroll_web_page",
+            "search_web_page",
+            "perform_web_search",
+        }
+    )
 
     # ------------------------------------------------------------------
     # State Management
@@ -118,6 +145,63 @@ class ToolRoutingMixin:
         return []
 
     # ------------------------------------------------------------------
+    # Platform Tool Gating
+    # ------------------------------------------------------------------
+
+    def _is_platform_tool(self, name: str) -> bool:
+        """Return True if `name` is a platform-routed tool."""
+        return name in self._PLATFORM_TOOL_NAMES
+
+    async def _resolve_allowed_platform_tool_names(
+        self, assistant_id: str
+    ) -> frozenset:
+        """
+        Return the set of platform tool function names the given assistant
+        has opted into via its tools array.
+
+        Translates opted-in platform tool `type` strings into the actual
+        function names that platform tool handlers expose. Example:
+            assistant.tools = [{"type": "web_search"}]
+            → allowed = {"read_web_page", "scroll_web_page",
+                         "search_web_page", "perform_web_search"}
+
+        Fails closed: any error loading the assistant config results in an
+        empty allow-set, causing all platform tool calls to be rejected.
+        """
+        from entities_api.constants.tools import PLATFORM_TOOL_MAP
+
+        try:
+            cache = self.get_assistant_cache()
+            cfg = await cache.retrieve(assistant_id)
+        except Exception as exc:
+            LOG.warning(
+                "TOOL-ROUTER ▸ Failed to load assistant %s config for gating: %s. "
+                "Failing closed — rejecting all platform tool calls.",
+                assistant_id,
+                exc,
+            )
+            return frozenset()
+
+        raw_tools = cfg.get("tools") or []
+        opted_in_types = {
+            t.get("type")
+            for t in raw_tools
+            if isinstance(t, dict) and t.get("type") in PLATFORM_TOOL_MAP
+        }
+
+        allowed: set = set()
+        for t_type in opted_in_types:
+            defn = PLATFORM_TOOL_MAP[t_type]
+            defs = defn if isinstance(defn, (list, tuple)) else [defn]
+            for d in defs:
+                try:
+                    allowed.add(d["function"]["name"])
+                except (KeyError, TypeError):
+                    continue
+
+        return frozenset(allowed)
+
+    # ------------------------------------------------------------------
     # Tool Processing & Dispatching (Level 3 Batch Enabled)
     # ------------------------------------------------------------------
 
@@ -136,6 +220,10 @@ class ToolRoutingMixin:
         """
         Orchestrates the execution of a detected batch of tool calls.
         Level 3: Iterates through the batch, propagating IDs for history linking.
+
+        Platform tools are gated against the assistant's opted-in tools array;
+        calls for undeclared platform tools are rejected with an error message
+        back to the model.
         """
         LOG.info("TOOL-ROUTER ▸ The scratchpad id: %s", scratch_pad_thread)
         LOG.info("TOOL-ROUTER ▸ The Real OwnerID: %s", self._batfish_owner_user_id)
@@ -145,6 +233,16 @@ class ToolRoutingMixin:
             return
 
         LOG.info("TOOL-ROUTER ▸ Dispatching Turn Batch (%s total)", len(batch))
+
+        # ------------------------------------------------------------------
+        # Resolve the platform tools this assistant has opted into. A model
+        # that fabricates a tool call for a platform tool it wasn't granted
+        # (e.g. naming `code_interpreter` when the assistant only declared
+        # `get_flight_times`) will be rejected here.
+        # ------------------------------------------------------------------
+        allowed_platform_tool_names = await self._resolve_allowed_platform_tool_names(
+            assistant_id
+        )
 
         for fc in batch:
             name = fc.get("name")
@@ -164,6 +262,38 @@ class ToolRoutingMixin:
                 LOG.error(
                     "TOOL-ROUTER ▸ Failed to resolve tool name for item in batch."
                 )
+                continue
+
+            # ----------------------------------------------------------
+            # Reject platform tool calls the assistant has not opted into.
+            # User-defined functions are not platform tools and are never
+            # gated here — they fall through to _handover_to_consumer below.
+            # ----------------------------------------------------------
+            if self._is_platform_tool(name) and name not in allowed_platform_tool_names:
+                LOG.warning(
+                    "TOOL-ROUTER ▸ Rejecting unopted platform tool call: %s "
+                    "(assistant=%s has not declared this tool in its tools array)",
+                    name,
+                    assistant_id,
+                )
+                try:
+                    await self._native_exec.submit_tool_output(
+                        thread_id=thread_id,
+                        assistant_id=assistant_id,
+                        tool_call_id=current_call_id,
+                        content=(
+                            f"Error: the tool '{name}' is not available to this "
+                            f"assistant. It was not declared in the assistant's "
+                            f"tools configuration. Do not attempt to call it again."
+                        ),
+                        is_error=True,
+                    )
+                except Exception as exc:
+                    LOG.error(
+                        "TOOL-ROUTER ▸ Failed to submit rejection for %s: %s",
+                        name,
+                        exc,
+                    )
                 continue
 
             LOG.info("TOOL-ROUTER ▸ scratchpad thread id: %s", scratch_pad_thread)

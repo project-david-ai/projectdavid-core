@@ -43,15 +43,15 @@ GENERAL_INSTRUCTIONS = {
         "Every tool/function call must be wrapped in `<fc>` and `</fc>` tags, for example:\n"
         "<fc>\n"
         "{\n"
-        '  "name": "vector_store_search",\n'
+        '  "name": "<tool_name>",\n'
         '  "arguments": {\n'
-        '    "query": "post-quantum migration",\n'
-        '    "search_type": "basic_semantic",\n'
-        '    "source_type": "chat"\n'
+        '    "<param>": "<value>"\n'
         "  }\n"
         "}\n"
         "</fc>\n"
-        "These tags let the host detect and stream calls cleanly."
+        "These tags let the host detect and stream calls cleanly. "
+        "Only call tools that appear in the AVAILABLE TOOLS list below — "
+        "do not invoke tools that are not declared."
     ),
     "CODE_INTERPRETER": (
         "\n🔹 **CODE INTERPRETER**\n"
@@ -73,15 +73,6 @@ GENERAL_INSTRUCTIONS = {
         "\n1. Always save generated files locally during code execution.\n"
         "2. Do not display, preview, or open files in memory.\n"
         "3. All generated files must exist as saved files for Base64 encoding."
-    ),
-    "VECTOR_SEARCH_COMMANDMENTS": (
-        "\n🔹 **VECTOR SEARCH COMMANDMENTS**\n"
-        "1. Temporal filters use UNIX timestamps (numeric).\n"
-        "2. Numeric ranges: $eq/$neq/$gte/$lte.\n"
-        "3. Boolean logic: $or/$and/$not.\n"
-        "4. Text matching: $match/$contains.\n\n"
-        "Note: The assistant must pass a natural language query as the 'query' parameter. "
-        "The handler will embed the text into a vector internally before executing the search."
     ),
     "VECTOR_SEARCH_EXAMPLES": (
         "\n🔹 **SEARCH TYPE EXAMPLES**\n"
@@ -205,10 +196,8 @@ GENERAL_INSTRUCTIONS = {
         "- ALWAYS use raw JSON syntax\n"
         "- Bold timestamps: **2025-03-01**\n"
         "- Example output:\n"
-        '  {"name": "vector_store_search", "arguments": {\n'
-        '    "query": "post-quantum migration",\n'
-        '    "search_type": "basic_semantic",\n'
-        '    "source_type": "chat"\n'
+        '  {"name": "<tool_name>", "arguments": {\n'
+        '    "<param>": "<value>"\n'
         "  }}"
     ),
     "LATEX_MARKDOWN_FORMATTING": (
