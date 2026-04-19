@@ -23,7 +23,9 @@ Training jobs on those nodes also use this same pure-subprocess approach.
 
 import json
 import os
+import queue
 import socket
+import threading
 import time
 
 import redis
@@ -58,9 +60,9 @@ def process_job(job_id: str, user_id: str):
 
     Progress feedback:
         unsloth_train.py emits PROGRESS:{...} lines on every logging step.
-        This loop parses those lines and writes them to job.metrics so users
-        polling client.training.retrieve(job_id) get live loss and step count
-        rather than a black hole between dispatch and completion.
+        The read loop parses these and pushes metrics dicts to a queue.
+        A background writer thread drains the queue and commits to the DB,
+        so DB latency never stalls the subprocess stdout pipe.
 
     All imports are local to keep the module lightweight and avoid
     import-time side effects from SQLAlchemy / ORM modules.
@@ -123,6 +125,7 @@ def process_job(job_id: str, user_id: str):
 
         cmd = [
             "python",
+            "-u",
             "src/api/training/unsloth_train.py",
             "--model",
             job.base_model,
@@ -135,27 +138,103 @@ def process_job(job_id: str, user_id: str):
         ]
 
         process = _subprocess.Popen(  # nosec B603
-            cmd, stdout=_subprocess.PIPE, stderr=_subprocess.STDOUT, text=True
+            cmd,
+            stdout=_subprocess.PIPE,
+            stderr=_subprocess.STDOUT,
+            text=True,
+            bufsize=1,
         )
 
-        # ─── STDOUT LOOP WITH PROGRESS PARSING ───────────────────────────────
+        # ─── STDOUT LOOP WITH PROGRESS PARSING (THREADED DB WRITES) ──────────
         # unsloth_train.py emits PROGRESS:{...} lines on every logging step.
-        # We parse these and write them to job.metrics so polling clients
-        # get live feedback. Non-PROGRESS lines are logged normally.
-        for line in process.stdout:
-            line = line.strip()
-            logging_utility.info(f"[{job_id}] {line}")
+        # Read loop parses lines and pushes metrics dicts onto a queue.
+        # A daemon writer thread drains the queue and commits to the DB,
+        # decoupling slow DB writes from the hot stdout-read path.
+        metrics_queue: queue.Queue = queue.Queue()
+        writer_stop = threading.Event()
+        write_counter = {"attempted": 0, "succeeded": 0, "failed": 0}
 
-            if line.startswith("PROGRESS:"):
+        def _metrics_writer():
+            while not writer_stop.is_set() or not metrics_queue.empty():
                 try:
-                    metrics = json.loads(line[9:])
-                    job.metrics = metrics
-                    job.updated_at = int(_time.time())
-                    db.commit()
-                except Exception as parse_err:
-                    logging_utility.warning(
-                        f"[{job_id}] Failed to parse PROGRESS line: {parse_err}"
+                    m = metrics_queue.get(timeout=0.5)
+                except queue.Empty:
+                    continue
+
+                write_counter["attempted"] += 1
+                t_start = _time.time()
+                _db = _SessionLocal()
+                try:
+                    _job = (
+                        _db.query(_TrainingJob)
+                        .filter(_TrainingJob.id == job_id)
+                        .first()
                     )
+                    if _job:
+                        _job.metrics = m
+                        _job.updated_at = int(_time.time())
+                        _db.commit()
+                        write_counter["succeeded"] += 1
+                        logging_utility.info(
+                            f"[{job_id}] DB_WRITE_OK step={m.get('step')} "
+                            f"elapsed={(_time.time() - t_start) * 1000:.1f}ms "
+                            f"attempted={write_counter['attempted']} "
+                            f"succeeded={write_counter['succeeded']}"
+                        )
+                    else:
+                        write_counter["failed"] += 1
+                        logging_utility.warning(
+                            f"[{job_id}] DB_WRITE_MISS — TrainingJob not found"
+                        )
+                except Exception as write_err:
+                    write_counter["failed"] += 1
+                    logging_utility.warning(
+                        f"[{job_id}] DB_WRITE_FAIL step={m.get('step')} "
+                        f"err={write_err}"
+                    )
+                finally:
+                    _db.close()
+                    metrics_queue.task_done()
+
+        writer_thread = threading.Thread(
+            target=_metrics_writer, daemon=True, name=f"metrics_writer_{job_id}"
+        )
+        writer_thread.start()
+        logging_utility.info(f"[{job_id}] Metrics writer thread started")
+
+        try:
+            for line in process.stdout:
+                line = line.strip()
+                logging_utility.info(f"[{job_id}] {line}")
+
+                if line.startswith("PROGRESS:"):
+                    try:
+                        metrics = json.loads(line[9:])
+                        metrics_queue.put(metrics)
+                        logging_utility.info(
+                            f"[{job_id}] QUEUED step={metrics.get('step')} "
+                            f"qsize={metrics_queue.qsize()}"
+                        )
+                    except Exception as parse_err:
+                        logging_utility.warning(
+                            f"[{job_id}] Failed to parse PROGRESS line: {parse_err}"
+                        )
+        finally:
+            logging_utility.info(
+                f"[{job_id}] Stopping metrics writer — "
+                f"attempted={write_counter['attempted']} "
+                f"succeeded={write_counter['succeeded']} "
+                f"failed={write_counter['failed']} "
+                f"qsize={metrics_queue.qsize()}"
+            )
+            writer_stop.set()
+            writer_thread.join(timeout=10)
+            logging_utility.info(
+                f"[{job_id}] Metrics writer stopped — "
+                f"final attempted={write_counter['attempted']} "
+                f"succeeded={write_counter['succeeded']} "
+                f"failed={write_counter['failed']}"
+            )
         # ─────────────────────────────────────────────────────────────────────
 
         process.wait()
