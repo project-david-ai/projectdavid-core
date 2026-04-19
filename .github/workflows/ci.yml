@@ -410,6 +410,8 @@ jobs:
           images: thanosprime/projectdavid-core-api
           tags: |
             type=semver,pattern={{version}},value=${{ steps.get_version.outputs.VERSION }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.get_version.outputs.VERSION }}
+            type=semver,pattern={{major}},value=${{ steps.get_version.outputs.VERSION }}
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
 
@@ -420,6 +422,8 @@ jobs:
           images: thanosprime/projectdavid-core-sandbox
           tags: |
             type=semver,pattern={{version}},value=${{ steps.get_version.outputs.VERSION }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.get_version.outputs.VERSION }}
+            type=semver,pattern={{major}},value=${{ steps.get_version.outputs.VERSION }}
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
 
@@ -430,6 +434,8 @@ jobs:
           images: thanosprime/projectdavid-core-training-api
           tags: |
             type=semver,pattern={{version}},value=${{ steps.get_version.outputs.VERSION }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.get_version.outputs.VERSION }}
+            type=semver,pattern={{major}},value=${{ steps.get_version.outputs.VERSION }}
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
 
@@ -440,6 +446,8 @@ jobs:
           images: thanosprime/projectdavid-core-training-worker
           tags: |
             type=semver,pattern={{version}},value=${{ steps.get_version.outputs.VERSION }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.get_version.outputs.VERSION }}
+            type=semver,pattern={{major}},value=${{ steps.get_version.outputs.VERSION }}
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
 
@@ -450,6 +458,8 @@ jobs:
           images: thanosprime/projectdavid-core-inference-worker
           tags: |
             type=semver,pattern={{version}},value=${{ steps.get_version.outputs.VERSION }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.get_version.outputs.VERSION }}
+            type=semver,pattern={{major}},value=${{ steps.get_version.outputs.VERSION }}
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
 
@@ -460,6 +470,8 @@ jobs:
           images: thanosprime/projectdavid-core-router
           tags: |
             type=semver,pattern={{version}},value=${{ steps.get_version.outputs.VERSION }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.get_version.outputs.VERSION }}
+            type=semver,pattern={{major}},value=${{ steps.get_version.outputs.VERSION }}
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
 
@@ -527,16 +539,25 @@ jobs:
 
       - name: "📋 Output production image tags"
         run: |
-          echo "## Production images released @ v${{ steps.get_version.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
+          VERSION="${{ steps.get_version.outputs.VERSION }}"
+          MINOR=$(echo "${VERSION}" | cut -d. -f1-2)
+          MAJOR=$(echo "${VERSION}" | cut -d. -f1)
+          echo "## Production images released @ v${VERSION}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Service | Tag |" >> $GITHUB_STEP_SUMMARY
-          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
-          echo "| api | \`${{ steps.get_version.outputs.VERSION }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| sandbox | \`${{ steps.get_version.outputs.VERSION }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| training-api | \`${{ steps.get_version.outputs.VERSION }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| training-worker | \`${{ steps.get_version.outputs.VERSION }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| inference-worker | \`${{ steps.get_version.outputs.VERSION }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| router | \`${{ steps.get_version.outputs.VERSION }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "Each image is pushed with the following rolling tags:" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${VERSION}\` — exact version, immutable" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${MINOR}\` — rolling minor (auto-updates on patch releases)" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${MAJOR}\` — rolling major (auto-updates on minor + patch releases)" >> $GITHUB_STEP_SUMMARY
+          echo "- \`latest\` — tip of main" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | Exact | Minor | Major |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| api | \`${VERSION}\` | \`${MINOR}\` | \`${MAJOR}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| sandbox | \`${VERSION}\` | \`${MINOR}\` | \`${MAJOR}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| training-api | \`${VERSION}\` | \`${MINOR}\` | \`${MAJOR}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| training-worker | \`${VERSION}\` | \`${MINOR}\` | \`${MAJOR}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| inference-worker | \`${VERSION}\` | \`${MINOR}\` | \`${MAJOR}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| router | \`${VERSION}\` | \`${MINOR}\` | \`${MAJOR}\` |" >> $GITHUB_STEP_SUMMARY
 
       - name: "📦 Update projectdavid-platform with production image tags"
         env:
@@ -548,6 +569,34 @@ jobs:
 
           git config user.email "ci@projectdavid.ai"
           git config user.name "Project David CI"
+
+          # ──────────────────────────────────────────────────────────────
+          # Rolling-tag guard:
+          # Platform YMLs pin core images to the MINOR tag (e.g. :1.39).
+          # Docker Hub re-tags :1.39 on every patch release, so patch-level
+          # bumps (1.39.0 → 1.39.1) propagate to operators automatically on
+          # their next `docker compose pull` / stack restart — NO platform
+          # release needed.
+          #
+          # This guard detects patch-only releases and exits early, leaving
+          # the platform repo untouched. Only minor/major bumps trigger a
+          # platform update (which cuts a new platform release downstream).
+          # ──────────────────────────────────────────────────────────────
+          CURR_MINOR=$(echo "${VERSION}" | cut -d. -f1-2)
+          PREV_MINOR=$(grep -oP 'projectdavid-core-api:\K[0-9]+\.[0-9]+' docker-compose.yml 2>/dev/null | head -1 || echo "")
+
+          echo "Previous platform pinned minor: ${PREV_MINOR:-<none>}"
+          echo "Current core release minor:     ${CURR_MINOR}"
+
+          if [ -n "${PREV_MINOR}" ] && [ "${PREV_MINOR}" = "${CURR_MINOR}" ]; then
+            echo "✅ Patch release within same minor series (${CURR_MINOR}.x)."
+            echo "   Operators on :${CURR_MINOR} will pull new patch on next restart."
+            echo "   No platform update required. Exiting cleanly."
+            exit 0
+          fi
+
+          echo "🚀 Minor/major bump detected (${PREV_MINOR:-<none>} → ${CURR_MINOR})."
+          echo "   Updating platform YMLs to pin :${CURR_MINOR}"
 
           YML_FILES=(
             "docker-compose.yml"
@@ -567,23 +616,28 @@ jobs:
               echo "Skipping missing file: $FILE"
               continue
             fi
-            sed -i "s|thanosprime/projectdavid-core-\([^:]*\):[0-9]*\.[0-9]*\.[0-9]*|thanosprime/projectdavid-core-\1:${VERSION}|g" "$FILE"
-            sed -i "s|thanosprime/projectdavid-core-\([^:]*\):latest|thanosprime/projectdavid-core-\1:${VERSION}|g" "$FILE"
+            # Pin to MINOR tag (e.g. :1.39) so patches auto-propagate.
+            sed -i "s|thanosprime/projectdavid-core-\([^:]*\):[0-9]*\.[0-9]*\.[0-9]*|thanosprime/projectdavid-core-\1:${CURR_MINOR}|g" "$FILE"
+            sed -i "s|thanosprime/projectdavid-core-\([^:]*\):[0-9]*\.[0-9]*\b|thanosprime/projectdavid-core-\1:${CURR_MINOR}|g" "$FILE"
+            sed -i "s|thanosprime/projectdavid-core-\([^:]*\):latest|thanosprime/projectdavid-core-\1:${CURR_MINOR}|g" "$FILE"
             echo "Updated: $FILE"
           done
 
           if [ -f "PINNED_IMAGES.md" ]; then
-            sed -i "s|:[0-9]*\.[0-9]*\.[0-9]*|:${VERSION}|g" PINNED_IMAGES.md
-            sed -i "s|:latest|:${VERSION}|g" PINNED_IMAGES.md
+            sed -i "s|:[0-9]*\.[0-9]*\.[0-9]*|:${CURR_MINOR}|g" PINNED_IMAGES.md
+            sed -i "s|:latest|:${CURR_MINOR}|g" PINNED_IMAGES.md
             echo "Updated: PINNED_IMAGES.md"
           fi
 
           git add -A
           git diff --cached --quiet && echo "No changes to commit" && exit 0
 
-          git commit -m "chore(deps): pin production images to v${VERSION} [skip ci]
+          git commit -m "chore(deps): pin production images to :${CURR_MINOR} (core v${VERSION}) [skip ci]
 
           Released from projectdavid-core @ $(date +%Y-%m-%d)
+          Platform YMLs now pin to rolling minor tag :${CURR_MINOR}.
+          Patch releases within ${CURR_MINOR}.x will propagate automatically
+          on operator restart — no new platform release required.
           All docker-compose variants updated (root + projectdavid_platform/)."
 
           git push origin main
