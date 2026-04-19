@@ -1,3 +1,18 @@
+# [1.40.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.39.0...v1.40.0) (2026-04-19)
+
+
+### Bug Fixes
+
+* **deployment:** return deactivating status matching reconciler semantics ([1f9b85e](https://github.com/project-david-ai/projectdavid-core/commit/1f9b85edf136715a5fa1879c36a013b4ce8840e9))
+* **deployment:** return deactivating status matching reconciler semantics ([5f2ccce](https://github.com/project-david-ai/projectdavid-core/commit/5f2ccce5b892b28fe494fb2d05c8e380d60fad48))
+* **training:** live progress metrics persist mid-training ([8890bbf](https://github.com/project-david-ai/projectdavid-core/commit/8890bbf290b33afc68137b423520855034e4d76b))
+* **training:** use HF_HOME for cache lookup, matches compose env ([5f96570](https://github.com/project-david-ai/projectdavid-core/commit/5f96570d444a1b3917d681325b0569e7c015f6c5))
+
+
+### Features
+
+* **ci:** emit rolling minor/major tags and guard patch releases ([b831293](https://github.com/project-david-ai/projectdavid-core/commit/b831293160ab3d143df53e8824d2c2200dd94157))
+
 # [1.39.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.38.0...v1.39.0) (2026-04-18)
 
 
