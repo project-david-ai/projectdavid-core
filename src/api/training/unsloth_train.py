@@ -47,6 +47,23 @@ class ProgressEmitter(TrainerCallback):
 
     Output format (one line per logging step):
         PROGRESS:{"step": 5, "total_steps": 20, "epoch": 0.25, "loss": 1.423, "learning_rate": 0.0002}
+
+    Note on leading newline:
+        HuggingFace Transformers uses tqdm for its progress bar, which writes
+        progress updates to stdout without a trailing newline (it uses carriage
+        returns to update in-place). When our PROGRESS print fires on the same
+        logging step, its output ends up concatenated to the end of the tqdm
+        line, e.g.:
+
+            5%|▌ | 1/20 [00:03<01:08,  3.61s/it]PROGRESS:{"step": 1, ...}
+
+        The downstream parser in worker.py uses line.startswith("PROGRESS:")
+        which fails on that concatenated form — only the final, clean PROGRESS
+        emit (after tqdm is done) gets captured.
+
+        Prepending "\n" guarantees our PROGRESS line starts on its own line
+        regardless of what tqdm has done to stdout. The worker's stdout reader
+        then sees it as an independent line and matches cleanly.
     """
 
     def on_log(self, args, state, control, logs=None, **kwargs):
@@ -59,7 +76,7 @@ class ProgressEmitter(TrainerCallback):
             "loss": round(logs.get("loss", 0), 4),
             "learning_rate": logs.get("learning_rate"),
         }
-        print(f"PROGRESS:{json.dumps(progress)}", flush=True)
+        print(f"\nPROGRESS:{json.dumps(progress)}", flush=True)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
