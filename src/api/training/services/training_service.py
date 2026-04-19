@@ -28,24 +28,17 @@ def _is_model_in_hf_cache(model_id: str) -> bool:
     """
     Check whether a HuggingFace model is present in the local cache.
 
-    Looks for a snapshot directory under:
-        $HF_CACHE_PATH/hub/models--<org>--<model>/snapshots/
-
-    A model is considered cached if at least one snapshot directory exists
-    and is non-empty. This mirrors how HuggingFace stores downloaded models
-    and is cache-format stable across transformers versions.
-
-    Returns True if cached, False otherwise.
+    Uses HF_HOME (the HuggingFace-native env var) with a fallback to the
+    standard default cache location. HF_HOME is the canonical variable
+    set by transformers/huggingface_hub itself.
     """
-    hf_cache = os.getenv("HF_CACHE_PATH", "/root/.cache/huggingface")
-    # Convert 'org/model-name' → 'models--org--model-name'
+    hf_home = os.getenv("HF_HOME", "/root/.cache/huggingface")
     safe_name = "models--" + model_id.replace("/", "--")
-    snapshots_path = Path(hf_cache) / "hub" / safe_name / "snapshots"
+    snapshots_path = Path(hf_home) / "hub" / safe_name / "snapshots"
 
     if not snapshots_path.exists():
         return False
 
-    # At least one non-empty snapshot directory must exist
     for snapshot_dir in snapshots_path.iterdir():
         if snapshot_dir.is_dir() and any(snapshot_dir.iterdir()):
             return True
