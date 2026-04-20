@@ -3,8 +3,6 @@ import os
 
 # ─── SOVEREIGNTY GUARD ────────────────────────────────────────────────────────
 # HF_HUB_OFFLINE = "1" enforces cache-only mode — no downloads permitted.
-# Set to "0" only if you explicitly want to allow HuggingFace hub downloads.
-# For production sovereign deployments this should be "1".
 os.environ["HF_HUB_OFFLINE"] = "1"
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -12,6 +10,7 @@ os.environ["HF_HUB_OFFLINE"] = "1"
 
 # 1. CRITICAL: Unsloth MUST be imported before everything else
 import argparse
+from pathlib import Path
 
 import unsloth  # noqa: F401 — must precede trl/transformers/peft
 from datasets import load_dataset
@@ -19,22 +18,38 @@ from transformers import TrainerCallback
 from trl import SFTConfig, SFTTrainer
 from unsloth import FastLanguageModel, is_bfloat16_supported
 
-# ─── PROFILE DEFINITIONS ──────────────────────────────────────────────────
-PROFILES = {
-    "laptop": {
-        "max_seq_length": 1024,
-        "per_device_train_batch_size": 1,
-        "gradient_accumulation_steps": 8,
-        "max_steps": 12500,
-        "optim": "adamw_8bit",
-    },
-    "standard": {
-        "max_seq_length": 2048,
-        "per_device_train_batch_size": 2,
-        "gradient_accumulation_steps": 4,
-        "max_steps": 60,
-        "optim": "adamw_8bit",
-    },
+# ─── TRAINER FALLBACKS ────────────────────────────────────────────────────────
+# Safety net only. The service layer is expected to write a complete resolved
+# config, in which case none of these are used. Retained so manual invocations
+# with sparse config files still run.
+#
+# target_modules is fixed here (not exposed via the API in Phase 1) — Phase 2
+# will add base-model-aware validation before it becomes user-tunable.
+TRAINER_FALLBACKS = {
+    "max_seq_length": 2048,
+    "per_device_train_batch_size": 2,
+    "gradient_accumulation_steps": 4,
+    "max_steps": 60,
+    "optim": "adamw_8bit",
+    "learning_rate": 2e-4,
+    "warmup_steps": 2,
+    "weight_decay": 0.01,
+    "lr_scheduler_type": "linear",
+    "seed": 3407,
+    "logging_steps": 50,
+    "lora_r": 32,
+    "lora_alpha": 32,
+    "lora_dropout": 0.0,
+    "bias": "none",
+    "target_modules": [
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj",
+        "gate_proj",
+        "up_proj",
+        "down_proj",
+    ],
 }
 
 
@@ -42,28 +57,12 @@ PROFILES = {
 class ProgressEmitter(TrainerCallback):
     """
     Emits structured PROGRESS: lines to stdout on every logging step.
-    The training worker parses these lines and writes them to job.metrics
-    so users get live feedback during training instead of a black hole.
+    The training worker parses these lines and writes them to job.metrics.
 
-    Output format (one line per logging step):
-        PROGRESS:{"step": 5, "total_steps": 20, "epoch": 0.25, "loss": 1.423, "learning_rate": 0.0002}
-
-    Note on leading newline:
-        HuggingFace Transformers uses tqdm for its progress bar, which writes
-        progress updates to stdout without a trailing newline (it uses carriage
-        returns to update in-place). When our PROGRESS print fires on the same
-        logging step, its output ends up concatenated to the end of the tqdm
-        line, e.g.:
-
-            5%|▌ | 1/20 [00:03<01:08,  3.61s/it]PROGRESS:{"step": 1, ...}
-
-        The downstream parser in worker.py uses line.startswith("PROGRESS:")
-        which fails on that concatenated form — only the final, clean PROGRESS
-        emit (after tqdm is done) gets captured.
-
-        Prepending "\n" guarantees our PROGRESS line starts on its own line
-        regardless of what tqdm has done to stdout. The worker's stdout reader
-        then sees it as an independent line and matches cleanly.
+    Leading newline: HuggingFace tqdm writes progress without trailing newline
+    (uses carriage returns). Prepending "\\n" guarantees our PROGRESS line
+    starts on its own line so the worker's line.startswith("PROGRESS:") parser
+    matches cleanly.
     """
 
     def on_log(self, args, state, control, logs=None, **kwargs):
@@ -82,37 +81,64 @@ class ProgressEmitter(TrainerCallback):
 # ──────────────────────────────────────────────────────────────────────────────
 
 
+def load_config(config_path: str) -> dict:
+    """Load training config from the JSON file written by the worker."""
+    path = Path(config_path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Training config not found: {config_path}")
+    with path.open("r", encoding="utf-8") as f:
+        raw = json.load(f)
+    # Merge fallbacks under the file contents so missing keys don't crash.
+    # The service layer writes a complete dict; fallbacks are last-resort.
+    merged = dict(TRAINER_FALLBACKS)
+    merged.update(raw)
+    return merged
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True)
     parser.add_argument("--data", required=True)
     parser.add_argument("--out", required=True)
-    parser.add_argument("--profile", default="standard", choices=["standard", "laptop"])
+    parser.add_argument(
+        "--config-path",
+        required=True,
+        help="Path to JSON file containing the fully-resolved training config "
+        "(written by the training worker at job start).",
+    )
     args = parser.parse_args()
 
-    p = PROFILES[args.profile]
+    cfg = load_config(args.config_path)
 
-    print(f"🚀 Initializing Unsloth Fine-Tuning [Profile: {args.profile.upper()}]")
+    print(f"🚀 Initializing Unsloth Fine-Tuning [config: {args.config_path}]")
+    print(
+        f"   profile={cfg.get('_profile')}  "
+        f"max_seq_length={cfg['max_seq_length']}  "
+        f"max_steps={cfg['max_steps']}  lr={cfg['learning_rate']}"
+    )
+    print(
+        f"   lora_r={cfg['lora_r']}  lora_alpha={cfg['lora_alpha']}  "
+        f"batch={cfg['per_device_train_batch_size']}  "
+        f"accum={cfg['gradient_accumulation_steps']}"
+    )
 
     # 2. Load Model & Tokenizer
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=args.model,
-        max_seq_length=p["max_seq_length"],
+        max_seq_length=cfg["max_seq_length"],
         load_in_4bit=True,
         token=os.getenv("HF_TOKEN"),
         fix_tokenizer=True,
     )
 
     # ─── TOKENIZER COMPATIBILITY ──────────────────────────────────────────────
-    # Qwen2 uses native special tokens that differ from other model families:
-    #   <|im_end|>    — end of turn, used as eos
+    # Qwen2 uses native special tokens differing from other families:
+    #   <|im_end|>    — end of turn (eos)
     #   <|endoftext|> — safe pad token, always in Qwen2 vocab
     #
-    # For all other model families (Llama, Mistral, Phi, Gemma, etc.),
-    # fall back to the universal safe pattern: pad_token = eos_token.
-    #
-    # Do NOT hardcode <|endoftext|> globally — it is not in Llama-3.x vocab
-    # and will cause SFTTrainer to reject the tokenizer at init.
+    # For other families (Llama, Mistral, Phi, Gemma, etc.), fall back to
+    # the universal safe pattern: pad_token = eos_token. Do NOT hardcode
+    # <|endoftext|> globally — not in Llama-3.x vocab, SFTTrainer rejects.
     if "qwen" in args.model.lower():
         tokenizer.eos_token = "<|im_end|>"  # nosec B105
         tokenizer.pad_token = "<|endoftext|>"  # nosec B105
@@ -120,27 +146,19 @@ def main():
         tokenizer.pad_token = tokenizer.eos_token
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
-    tokenizer.model_max_length = p["max_seq_length"]
+    tokenizer.model_max_length = cfg["max_seq_length"]
     # ──────────────────────────────────────────────────────────────────────────
 
     # 3. Add LoRA Adapters
     model = FastLanguageModel.get_peft_model(
         model,
-        r=32,
-        target_modules=[
-            "q_proj",
-            "k_proj",
-            "v_proj",
-            "o_proj",
-            "gate_proj",
-            "up_proj",
-            "down_proj",
-        ],
-        lora_alpha=32,
-        lora_dropout=0,
-        bias="none",
+        r=cfg["lora_r"],
+        target_modules=cfg["target_modules"],
+        lora_alpha=cfg["lora_alpha"],
+        lora_dropout=cfg["lora_dropout"],
+        bias=cfg["bias"],
         use_gradient_checkpointing="unsloth",
-        random_state=3407,
+        random_state=cfg["seed"],
     )
 
     # 4. Process Dataset
@@ -150,13 +168,12 @@ def main():
         texts = []
 
         # Support both ShareGPT (conversations) and ChatML (messages) formats.
-        # ShareGPT uses 'from'/'value' keys; ChatML uses 'role'/'content' keys.
+        # ShareGPT uses 'from'/'value'; ChatML uses 'role'/'content'.
         # apply_chat_template requires role/content — normalise ShareGPT on the fly.
         records = examples.get("conversations") or examples.get("messages") or []
 
         for messages in records:
             if messages and isinstance(messages[0], dict) and "from" in messages[0]:
-                # Normalise ShareGPT → ChatML
                 messages = [
                     {
                         "role": "user" if m["from"] == "human" else "assistant",
@@ -171,7 +188,6 @@ def main():
             )
         return {"text": texts}
 
-    # Clean the dataset to have ONLY the 'text' column for SFTTrainer
     dataset = dataset.map(
         format_prompts, batched=True, num_proc=2, remove_columns=dataset.column_names
     )
@@ -179,39 +195,41 @@ def main():
     # 5. Initialize Trainer
     # max_seq_length is not accepted by SFTConfig or SFTTrainer in newer TRL
     # versions — set via tokenizer.model_max_length above instead.
+    sft_kwargs = dict(
+        dataset_text_field="text",
+        per_device_train_batch_size=cfg["per_device_train_batch_size"],
+        gradient_accumulation_steps=cfg["gradient_accumulation_steps"],
+        warmup_steps=cfg["warmup_steps"],
+        max_steps=cfg["max_steps"],
+        learning_rate=cfg["learning_rate"],
+        fp16=not is_bfloat16_supported(),
+        bf16=is_bfloat16_supported(),
+        logging_steps=cfg["logging_steps"],
+        optim=cfg["optim"],
+        weight_decay=cfg["weight_decay"],
+        lr_scheduler_type=cfg["lr_scheduler_type"],
+        seed=cfg["seed"],
+        output_dir="/tmp/outputs",  # nosec B108
+        report_to="none",
+        packing=False,
+        dataset_kwargs={
+            "add_special_tokens": False,
+            "append_concat_token": False,  # nosec B105
+        },
+    )
+
     trainer = SFTTrainer(
         model=model,
         train_dataset=dataset,
         processing_class=tokenizer,
         callbacks=[ProgressEmitter()],
-        args=SFTConfig(
-            dataset_text_field="text",
-            per_device_train_batch_size=p["per_device_train_batch_size"],
-            gradient_accumulation_steps=p["gradient_accumulation_steps"],
-            warmup_steps=2,
-            max_steps=p["max_steps"],
-            learning_rate=2e-4,
-            fp16=not is_bfloat16_supported(),
-            bf16=is_bfloat16_supported(),
-            logging_steps=50,
-            optim=p["optim"],
-            weight_decay=0.01,
-            lr_scheduler_type="linear",
-            seed=3407,
-            output_dir="/tmp/outputs",  # nosec B108
-            report_to="none",
-            packing=False,
-            dataset_kwargs={
-                "add_special_tokens": False,
-                "append_concat_token": False,  # nosec B105
-            },
-        ),
+        args=SFTConfig(**sft_kwargs),
     )
 
     # 6. Execute Training
     print(
-        f"🔥 Starting GPU Training kernels (Profile: {args.profile.upper()}, "
-        f"ctx: {p['max_seq_length']})..."
+        f"🔥 Starting GPU Training kernels "
+        f"(ctx: {cfg['max_seq_length']}, max_steps: {cfg['max_steps']})..."
     )
     trainer.train()
 
