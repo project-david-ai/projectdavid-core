@@ -22,6 +22,13 @@ Cancellation model:
         3. SIGKILL if still alive
         4. Delete partial adapter output directory
         5. Flip DB status CANCELLING → CANCELLED
+
+Config model:
+    The training service resolves profile + user overrides into a complete
+    config dict at job-create time and persists it on TrainingJob.config.
+    This worker writes that dict verbatim to a per-job JSON file under
+    /tmp/training/<job_id>_config.json and passes the path to the trainer
+    via --config-path. No late resolution — the DB row IS the execution plan.
 """
 
 import json
@@ -63,6 +70,25 @@ def get_redis():
 
 def _cancel_key(job_id: str) -> str:
     return f"{CANCEL_KEY_PREFIX}{job_id}"
+
+
+def _write_training_config(job_id: str, resolved_config: dict) -> str:
+    """
+    Persist the fully-resolved training config to a per-job JSON file.
+
+    The file is the execution plan for unsloth_train.py — audit artefact
+    and sole input to the trainer's hyperparameter resolution. Written
+    sorted + indented so it's grep-friendly in container logs and shared
+    storage dumps.
+
+    Returns the absolute path, which gets passed to the subprocess as
+    --config-path.
+    """
+    os.makedirs(LOCAL_SCRATCH, exist_ok=True)
+    config_path = os.path.join(LOCAL_SCRATCH, f"{job_id}_config.json")
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(resolved_config or {}, f, indent=2, sort_keys=True)
+    return config_path
 
 
 # ─── TRAINING JOB ───────────────────────────────────────────────────────────
@@ -207,6 +233,7 @@ def process_job(job_id: str, user_id: str):
     db: Session = _SessionLocal()
     local_data_path = None
     full_output_path = None
+    config_path = None
     job = None
 
     try:
@@ -242,6 +269,21 @@ def process_job(job_id: str, user_id: str):
         full_output_path = _os.path.join(_SHARED_PATH, model_rel_path)
         _os.makedirs(full_output_path, exist_ok=True)
 
+        # ─── WRITE RESOLVED CONFIG FOR TRAINER ───────────────────────────────
+        # TrainingJob.config was fully resolved at job-create time by the
+        # service layer (BASE_DEFAULTS → profile preset → user overrides →
+        # lora_alpha convention). We write it verbatim; the trainer applies
+        # it without further resolution.
+        resolved_config = dict(job.config or {})
+        config_path = _write_training_config(job_id, resolved_config)
+        logging_utility.info(
+            f"[{job_id}] Resolved training config written to {config_path} "
+            f"(profile={resolved_config.get('_profile')}, "
+            f"max_steps={resolved_config.get('max_steps')}, "
+            f"lr={resolved_config.get('learning_rate')}, "
+            f"lora_r={resolved_config.get('lora_r')})"
+        )
+
         cmd = [
             "python",
             "-u",
@@ -252,8 +294,8 @@ def process_job(job_id: str, user_id: str):
             local_data_path,
             "--out",
             full_output_path,
-            "--profile",
-            _os.getenv("TRAINING_PROFILE", "laptop"),
+            "--config-path",
+            config_path,
         ]
 
         process = _subprocess.Popen(  # nosec B603
@@ -427,6 +469,13 @@ def process_job(job_id: str, user_id: str):
     finally:
         if local_data_path and _os.path.exists(local_data_path):
             _os.remove(local_data_path)
+        # Config file retained for post-mortem inspection — it's a tiny JSON
+        # per job and a valuable audit artefact. LOCAL_SCRATCH is ephemeral
+        # container storage, so it naturally clears on container restart.
+        if config_path:
+            logging_utility.info(
+                f"[{job_id}] Training config retained at {config_path}"
+            )
         db.close()
 
 
