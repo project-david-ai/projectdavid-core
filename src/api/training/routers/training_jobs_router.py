@@ -84,6 +84,7 @@ def get_training_job_endpoint(
 
 @router.post(
     "/{job_id}/cancel",
+    response_model=ValidationInterface.TrainingJobCancelResponse,
     summary="Cancel a running or pending training job",
 )
 def cancel_training_job_endpoint(
@@ -91,8 +92,22 @@ def cancel_training_job_endpoint(
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
+    """
+    Cancel a training job.
+
+    Idempotent — calling cancel on a job in a terminal state (completed,
+    failed, cancelled) returns the current status without error.
+
+    For in-progress jobs, cancellation is asynchronous. The response status
+    will be 'cancelling'; poll GET /v1/training-jobs/{job_id} to observe
+    the transition to 'cancelled' after the worker unwinds the subprocess
+    (typically within 30 seconds).
+
+    Partial training artifacts are discarded on cancellation.
+    """
     service = TrainingService(db)
-    return service.cancel_training_job(job_id=job_id, user_id=user_id)
+    result = service.cancel_training_job(job_id=job_id, user_id=user_id)
+    return ValidationInterface.TrainingJobCancelResponse(**result)
 
 
 @router.get(

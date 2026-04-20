@@ -8,22 +8,27 @@ Responsibilities:
   - Dispatch training jobs as direct subprocesses (GPU claimed for duration)
   - Parse PROGRESS: lines from unsloth_train.py and write live metrics
     to job.metrics so users get feedback during training
+  - Honour cancellation signals (DB status + Redis fast-path) and cleanly
+    unwind subprocess + discard partial adapter artifacts
 
 Ray is NOT used here. inference_worker owns the Ray cluster (HEAD node)
 and manages all inference GPU reservations via Ray Serve.
 
-GPU contention between training and inference is managed by policy on
-single-GPU machines — the operator activates inference OR submits training,
-not both simultaneously. On multi-GPU machines this is a non-issue.
-
-For multi-node clusters: additional compute nodes join the Ray cluster
-via ray://inference_worker:10001 and contribute their GPUs to Ray Serve.
-Training jobs on those nodes also use this same pure-subprocess approach.
+Cancellation model:
+    API flips DB status to CANCELLING and sets Redis key `cancel:job:{id}`.
+    Worker polls the Redis key between stdout reads. On cancel:
+        1. SIGTERM the subprocess (process group — kills children too)
+        2. Wait up to SIGTERM_GRACE_SECONDS for clean exit
+        3. SIGKILL if still alive
+        4. Delete partial adapter output directory
+        5. Flip DB status CANCELLING → CANCELLED
 """
 
 import json
 import os
 import queue
+import shutil
+import signal
 import socket
 import threading
 import time
@@ -41,6 +46,11 @@ SHARED_PATH = os.getenv("SHARED_PATH", "/mnt/training_data")
 HF_CACHE_PATH = os.getenv("HF_CACHE_PATH", "/root/.cache/huggingface")
 NODE_ID = os.getenv("NODE_ID", f"node_{socket.gethostname()}")
 
+# Cancellation signaling — must match src/api/training/services/training_service.py
+CANCEL_KEY_PREFIX = "cancel:job:"
+SIGTERM_GRACE_SECONDS = 30  # Wait up to this long for graceful subprocess exit
+DB_CANCEL_POLL_INTERVAL = 10  # How often to fall back to DB status check (seconds)
+
 os.makedirs(LOCAL_SCRATCH, exist_ok=True)
 
 
@@ -49,6 +59,10 @@ os.makedirs(LOCAL_SCRATCH, exist_ok=True)
 
 def get_redis():
     return redis.from_url(REDIS_URL, decode_responses=True)
+
+
+def _cancel_key(job_id: str) -> str:
+    return f"{CANCEL_KEY_PREFIX}{job_id}"
 
 
 # ─── TRAINING JOB ───────────────────────────────────────────────────────────
@@ -61,11 +75,12 @@ def process_job(job_id: str, user_id: str):
     Progress feedback:
         unsloth_train.py emits PROGRESS:{...} lines on every logging step.
         The read loop parses these and pushes metrics dicts to a queue.
-        A background writer thread drains the queue and commits to the DB,
-        so DB latency never stalls the subprocess stdout pipe.
+        A background writer thread drains the queue and commits to the DB.
 
-    All imports are local to keep the module lightweight and avoid
-    import-time side effects from SQLAlchemy / ORM modules.
+    Cancellation:
+        Between every stdout line read, the worker checks Redis for a cancel
+        signal. A periodic DB status check (every DB_CANCEL_POLL_INTERVAL
+        seconds) provides a backstop if Redis is unavailable.
     """
     import os as _os
     import subprocess as _subprocess  # nosec B404
@@ -87,6 +102,7 @@ def process_job(job_id: str, user_id: str):
     _NODE_ID = _os.getenv("NODE_ID", f"node_{__import__('socket').gethostname()}")
     _LOCAL_SCRATCH = "/tmp/training"  # nosec B108
     _SHARED_PATH = _os.getenv("SHARED_PATH", "/mnt/training_data")
+    _r = get_redis()
 
     def _get_samba_client():
         return _SambaClient(
@@ -96,12 +112,115 @@ def process_job(job_id: str, user_id: str):
             password=_os.getenv("SMBCLIENT_PASSWORD"),
         )
 
+    def _is_cancel_requested(job_id: str) -> bool:
+        try:
+            return _r.get(_cancel_key(job_id)) is not None
+        except Exception as e:
+            logging_utility.warning(
+                f"[{job_id}] Redis cancel check failed (will fall back to DB): {e}"
+            )
+            return False
+
+    def _db_confirms_cancel(job_id: str) -> bool:
+        _db = _SessionLocal()
+        try:
+            _job = _db.query(_TrainingJob).filter(_TrainingJob.id == job_id).first()
+            if not _job:
+                return False
+            return _job.status in (_StatusEnum.cancelling, _StatusEnum.cancelled)
+        except Exception as e:
+            logging_utility.warning(f"[{job_id}] DB cancel check failed: {e}")
+            return False
+        finally:
+            _db.close()
+
+    def _terminate_subprocess(process, job_id: str) -> None:
+        if process.poll() is not None:
+            return
+
+        try:
+            pgid = _os.getpgid(process.pid)
+            _os.killpg(pgid, signal.SIGTERM)
+            logging_utility.info(
+                f"[{job_id}] SIGTERM sent to process group {pgid}, "
+                f"waiting up to {SIGTERM_GRACE_SECONDS}s for graceful exit"
+            )
+        except ProcessLookupError:
+            logging_utility.info(f"[{job_id}] Process already exited before SIGTERM")
+            return
+        except Exception as e:
+            logging_utility.warning(f"[{job_id}] SIGTERM send failed: {e}")
+
+        try:
+            process.wait(timeout=SIGTERM_GRACE_SECONDS)
+            logging_utility.info(f"[{job_id}] Subprocess exited cleanly after SIGTERM")
+        except _subprocess.TimeoutExpired:
+            logging_utility.warning(
+                f"[{job_id}] SIGTERM grace period expired — escalating to SIGKILL"
+            )
+            try:
+                pgid = _os.getpgid(process.pid)
+                _os.killpg(pgid, signal.SIGKILL)
+                process.wait(timeout=5)
+                logging_utility.info(f"[{job_id}] Subprocess SIGKILLed")
+            except Exception as e:
+                logging_utility.error(
+                    f"[{job_id}] SIGKILL failed — subprocess may be orphaned: {e}"
+                )
+
+    def _cleanup_partial_artifact(output_path: str, job_id: str) -> None:
+        if not output_path or not _os.path.exists(output_path):
+            return
+        try:
+            shutil.rmtree(output_path)
+            logging_utility.info(
+                f"[{job_id}] Deleted partial adapter output: {output_path}"
+            )
+        except Exception as e:
+            logging_utility.warning(
+                f"[{job_id}] Could not delete partial adapter {output_path}: {e}"
+            )
+
+    def _finalize_cancelled(job_id: str) -> None:
+        _db = _SessionLocal()
+        try:
+            _job = _db.query(_TrainingJob).filter(_TrainingJob.id == job_id).first()
+            if _job:
+                _job.status = _StatusEnum.cancelled
+                if not _job.cancelled_at:
+                    _job.cancelled_at = int(_time.time())
+                _job.updated_at = int(_time.time())
+                _db.commit()
+                logging_utility.info(f"[{job_id}] Job finalized as CANCELLED")
+        except Exception as e:
+            logging_utility.error(
+                f"[{job_id}] Failed to finalize cancelled status: {e}"
+            )
+        finally:
+            _db.close()
+
+        try:
+            _r.delete(_cancel_key(job_id))
+        except Exception:
+            pass
+
     db: Session = _SessionLocal()
     local_data_path = None
+    full_output_path = None
     job = None
 
     try:
         job = db.query(_TrainingJob).filter(_TrainingJob.id == job_id).first()
+
+        # Pre-start cancel check — handles cancelled-while-queued
+        if job and job.status in (_StatusEnum.cancelled, _StatusEnum.cancelling):
+            logging_utility.info(
+                f"[{job_id}] Skipping — job was cancelled before execution "
+                f"(status={job.status.value})"
+            )
+            _finalize_cancelled(job_id)
+            return
+
         dataset = db.query(_Dataset).filter(_Dataset.id == job.dataset_id).first()
 
         logging_utility.info(f"🚀 Node {_NODE_ID} claiming Training Job: {job_id}")
@@ -143,13 +262,10 @@ def process_job(job_id: str, user_id: str):
             stderr=_subprocess.STDOUT,
             text=True,
             bufsize=1,
+            start_new_session=True,
         )
 
         # ─── STDOUT LOOP WITH PROGRESS PARSING (THREADED DB WRITES) ──────────
-        # unsloth_train.py emits PROGRESS:{...} lines on every logging step.
-        # Read loop parses lines and pushes metrics dicts onto a queue.
-        # A daemon writer thread drains the queue and commits to the DB,
-        # decoupling slow DB writes from the hot stdout-read path.
         metrics_queue: queue.Queue = queue.Queue()
         writer_stop = threading.Event()
         write_counter = {"attempted": 0, "succeeded": 0, "failed": 0}
@@ -202,6 +318,9 @@ def process_job(job_id: str, user_id: str):
         writer_thread.start()
         logging_utility.info(f"[{job_id}] Metrics writer thread started")
 
+        cancel_detected = False
+        last_db_cancel_check = _time.time()
+
         try:
             for line in process.stdout:
                 line = line.strip()
@@ -219,6 +338,23 @@ def process_job(job_id: str, user_id: str):
                         logging_utility.warning(
                             f"[{job_id}] Failed to parse PROGRESS line: {parse_err}"
                         )
+
+                # Cancel check — fast path (Redis) + periodic slow path (DB)
+                if _is_cancel_requested(job_id):
+                    cancel_detected = True
+                    logging_utility.info(f"[{job_id}] Cancel signal detected via Redis")
+                    break
+
+                now = _time.time()
+                if now - last_db_cancel_check >= DB_CANCEL_POLL_INTERVAL:
+                    last_db_cancel_check = now
+                    if _db_confirms_cancel(job_id):
+                        cancel_detected = True
+                        logging_utility.info(
+                            f"[{job_id}] Cancel signal detected via DB backstop"
+                        )
+                        break
+
         finally:
             logging_utility.info(
                 f"[{job_id}] Stopping metrics writer — "
@@ -235,9 +371,27 @@ def process_job(job_id: str, user_id: str):
                 f"succeeded={write_counter['succeeded']} "
                 f"failed={write_counter['failed']}"
             )
-        # ─────────────────────────────────────────────────────────────────────
 
+        # Cancel path
+        if cancel_detected:
+            logging_utility.info(f"[{job_id}] Cancelling subprocess")
+            _terminate_subprocess(process, job_id)
+            _cleanup_partial_artifact(full_output_path, job_id)
+            _finalize_cancelled(job_id)
+            return
+
+        # Normal completion path
         process.wait()
+
+        # Late-cancel race check
+        if _db_confirms_cancel(job_id):
+            logging_utility.info(
+                f"[{job_id}] Late cancel detected post-subprocess — "
+                f"discarding artifact"
+            )
+            _cleanup_partial_artifact(full_output_path, job_id)
+            _finalize_cancelled(job_id)
+            return
 
         if process.returncode == 0:
             new_ftm = _FineTunedModel(
@@ -266,7 +420,10 @@ def process_job(job_id: str, user_id: str):
         if job:
             job.status = _StatusEnum.failed
             job.last_error = str(e)
+            job.failed_at = int(_time.time())
             db.commit()
+        if full_output_path:
+            _cleanup_partial_artifact(full_output_path, job_id)
     finally:
         if local_data_path and _os.path.exists(local_data_path):
             _os.remove(local_data_path)
@@ -289,8 +446,6 @@ def main():
                 _, data = result
                 payload = json.loads(data)
 
-                # Target node routing — if job specifies a different node,
-                # re-queue and let that node pick it up.
                 if payload.get("target_node") and payload.get("target_node") != NODE_ID:
                     r.rpush(QUEUE_NAME, data)
                     time.sleep(1)
