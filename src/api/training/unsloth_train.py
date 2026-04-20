@@ -25,7 +25,7 @@ PROFILES = {
         "max_seq_length": 1024,
         "per_device_train_batch_size": 1,
         "gradient_accumulation_steps": 8,
-        "max_steps": 20,
+        "max_steps": 12500,
         "optim": "adamw_8bit",
     },
     "standard": {
@@ -126,7 +126,7 @@ def main():
     # 3. Add LoRA Adapters
     model = FastLanguageModel.get_peft_model(
         model,
-        r=16,
+        r=32,
         target_modules=[
             "q_proj",
             "k_proj",
@@ -136,7 +136,7 @@ def main():
             "up_proj",
             "down_proj",
         ],
-        lora_alpha=16,
+        lora_alpha=32,
         lora_dropout=0,
         bias="none",
         use_gradient_checkpointing="unsloth",
@@ -193,7 +193,7 @@ def main():
             learning_rate=2e-4,
             fp16=not is_bfloat16_supported(),
             bf16=is_bfloat16_supported(),
-            logging_steps=1,
+            logging_steps=50,
             optim=p["optim"],
             weight_decay=0.01,
             lr_scheduler_type="linear",
