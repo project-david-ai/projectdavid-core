@@ -9,11 +9,13 @@ import redis
 from fastapi import HTTPException
 from projectdavid_common import UtilsInterface
 from projectdavid_common.schemas.enums import StatusEnum
+from projectdavid_common.schemas.training_schema import TrainingConfig
 from projectdavid_common.utilities.identifier_service import IdentifierService
 from sqlalchemy.orm import Session
 
 from src.api.training.models.models import TrainingJob
 from src.api.training.services.dataset_service import get_dataset
+from src.api.training.services.training_config_resolver import resolve_training_config
 
 logging_utility = UtilsInterface.LoggingUtility()
 
@@ -121,17 +123,23 @@ class TrainingService:
                 ),
             )
 
-        # 3. Create job record — node binding deferred to activation
+        # 3. Resolve user-supplied config into fully-specified execution plan.
+        #    Re-validate via TrainingConfig here so the resolver always sees a
+        #    typed object (profile becomes TrainingProfile enum, Literals are
+        #    checked, bounds are enforced). The router already validates on the
+        #    way in, but this keeps the service robust to direct internal calls.
+        user_config = TrainingConfig(**config) if config else None
+        resolved_config = resolve_training_config(user_config)
+
         job_id = IdentifierService.generate_prefixed_id("job")
         now = int(time.time())
-
         job = TrainingJob(
             id=job_id,
             user_id=user_id,
             dataset_id=dataset_id,
             base_model=base_model,
             framework=framework,
-            config=config or {},
+            config=resolved_config,
             status=StatusEnum.queued,
             node_id=None,
             created_at=now,
