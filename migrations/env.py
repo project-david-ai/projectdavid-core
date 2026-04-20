@@ -37,7 +37,8 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-DB_URL = os.getenv("DATABASE_URL")
+# DB_URL = os.getenv("DATABASE_URL")
+DB_URL = os.getenv("SPECIAL_DB_URL") or os.getenv("DATABASE_URL")
 if not DB_URL:
     raise ValueError("FATAL: DATABASE_URL not set.")
 
