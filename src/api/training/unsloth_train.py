@@ -14,6 +14,7 @@ from pathlib import Path
 
 import unsloth  # noqa: F401 — must precede trl/transformers/peft
 from datasets import load_dataset
+from projectdavid_common.constants import BASE_DEFAULTS
 from transformers import TrainerCallback
 from trl import SFTConfig, SFTTrainer
 from unsloth import FastLanguageModel, is_bfloat16_supported
@@ -25,22 +26,10 @@ from unsloth import FastLanguageModel, is_bfloat16_supported
 #
 # target_modules is fixed here (not exposed via the API in Phase 1) — Phase 2
 # will add base-model-aware validation before it becomes user-tunable.
+
+
 TRAINER_FALLBACKS = {
-    "max_seq_length": 2048,
-    "per_device_train_batch_size": 2,
-    "gradient_accumulation_steps": 4,
-    "max_steps": 60,
-    "optim": "adamw_8bit",
-    "learning_rate": 2e-4,
-    "warmup_steps": 2,
-    "weight_decay": 0.01,
-    "lr_scheduler_type": "linear",
-    "seed": 3407,
-    "logging_steps": 50,
-    "lora_r": 32,
-    "lora_alpha": 32,
-    "lora_dropout": 0.0,
-    "bias": "none",
+    **BASE_DEFAULTS,
     "target_modules": [
         "q_proj",
         "k_proj",
