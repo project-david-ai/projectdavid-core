@@ -128,7 +128,14 @@ class TrainingService:
         #    typed object (profile becomes TrainingProfile enum, Literals are
         #    checked, bounds are enforced). The router already validates on the
         #    way in, but this keeps the service robust to direct internal calls.
-        user_config = TrainingConfig(**config) if config else None
+
+        if config is None:
+            user_config = None
+        elif isinstance(config, TrainingConfig):
+            user_config = config
+        else:
+            user_config = TrainingConfig(**config)
+
         resolved_config = resolve_training_config(user_config)
 
         job_id = IdentifierService.generate_prefixed_id("job")
