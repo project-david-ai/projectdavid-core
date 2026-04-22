@@ -1,3 +1,25 @@
+# [1.41.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.40.0...v1.41.0) (2026-04-22)
+
+
+### Bug Fixes
+
+* **deployment:** return deactivating status matching reconciler semantics ([bb68ebb](https://github.com/project-david-ai/projectdavid-core/commit/bb68ebb1473e64ad7ae62fc41015dd859517e52f))
+* **deployment:** return deactivating status matching reconciler semantics ([b3db03e](https://github.com/project-david-ai/projectdavid-core/commit/b3db03e12d9b4b5a7cfc874382807e94269b20d4))
+* **inference:** raise default max_lora_rank to 64 to support r>16 adapters ([ab895a0](https://github.com/project-david-ai/projectdavid-core/commit/ab895a025c9d8e90951366cbde55f35843a2a3e5))
+* **migrations:** honour SPECIAL_DB_URL/DATABASE_URL env in alembic env.py ([45211bc](https://github.com/project-david-ai/projectdavid-core/commit/45211bc34405df104b08f895bac65d427418b97d))
+* **training:** handle TrainingConfig passed directly from router ([18d1500](https://github.com/project-david-ai/projectdavid-core/commit/18d15001fb37c3573dab2d6616f329eacf32352b))
+* **training:** live progress metrics persist mid-training ([d9544c6](https://github.com/project-david-ai/projectdavid-core/commit/d9544c64e6fc260a86e0d0eabdf265ccb56c128c))
+* **training:** use HF_HOME for cache lookup, matches compose env ([69ee9cb](https://github.com/project-david-ai/projectdavid-core/commit/69ee9cbd051f321a2cdbf8de209518638ab3101a))
+
+
+### Features
+
+* **ci:** emit rolling minor/major tags and guard patch releases ([e9509a7](https://github.com/project-david-ai/projectdavid-core/commit/e9509a72a5ccecc360f98a644bb8e68afe91429d))
+* **training:** cancel-training-job endpoint with graceful subprocess shutdown ([e795442](https://github.com/project-david-ai/projectdavid-core/commit/e7954425a3aca718fcee3f461d26f4862729c4c1))
+* **training:** config-file-based trainer invocation ([7dcd65d](https://github.com/project-david-ai/projectdavid-core/commit/7dcd65dcf0e4d1dc57c87132ad3bd9932bb05451))
+* **training:** tune laptop profile for production-grade fine-tunes ([e4e5ea7](https://github.com/project-david-ai/projectdavid-core/commit/e4e5ea73c11ff813696de38365c978fbb51c39d1))
+* **training:** wire TrainingConfig resolver into job creation ([cce0949](https://github.com/project-david-ai/projectdavid-core/commit/cce094944a9f08517b608c238c983d91d5c13eb5))
+
 # [1.40.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.39.0...v1.40.0) (2026-04-19)
 
 
