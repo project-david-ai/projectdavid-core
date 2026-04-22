@@ -50,14 +50,11 @@ import socket
 import time
 
 import ray
+from projectdavid_common.utilities.logging_service import LoggingUtility
 from ray import serve
 from sqlalchemy.orm import Session
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-)
-log = logging.getLogger(__name__)
+log = LoggingUtility()
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -94,6 +91,14 @@ _GPU_MEM_UTIL_MAX = 0.95
 # Maximum sequence length (prompt + completion tokens).
 # Larger values consume more KV cache VRAM linearly.
 _DEFAULT_MAX_MODEL_LEN = int(os.getenv("VLLM_DEFAULT_MAX_MODEL_LEN", "4096"))
+
+# Maximum LoRA rank this vLLM instance will accept.
+# vLLM pre-allocates GPU buffers for the largest possible adapter at startup.
+# Setting this higher than needed costs a small amount of VRAM but no more
+# than a single large adapter's worth — cheap insurance for future adapters.
+# Must be >= the rank of every LoRA adapter that will ever be served.
+# 64 covers the common range (r=8, 16, 32, 64) without requiring reconfig.
+_DEFAULT_MAX_LORA_RANK = int(os.getenv("VLLM_DEFAULT_MAX_LORA_RANK", "64"))
 
 
 def _resolve_gpu_memory_utilization(dep) -> float:
@@ -297,6 +302,7 @@ class VLLMDeployment:
         max_model_len: int = _DEFAULT_MAX_MODEL_LEN,
         gpu_memory_utilization: float = _DEFAULT_GPU_MEM_UTIL,
         lora_modules: dict = None,
+        max_lora_rank: int = _DEFAULT_MAX_LORA_RANK,
         # --- Per-deployment vLLM engine hyperparam overrides ---
         # Read from InferenceDeployment DB columns at deploy time.
         # None values defer to vLLM's own defaults except where noted.
@@ -315,11 +321,12 @@ class VLLMDeployment:
 
         log.info(
             "🚀 VLLMDeployment initialising — model=%s tp=%d gpu_mem_util=%.2f "
-            "max_model_len=%d quantization=%s dtype=%s enforce_eager=%s lora_modules=%s",
+            "max_model_len=%d max_lora_rank=%d quantization=%s dtype=%s enforce_eager=%s lora_modules=%s",
             model_endpoint,
             tensor_parallel_size,
             gpu_memory_utilization,
             max_model_len,
+            max_lora_rank,
             quantization,
             dtype,
             enforce_eager,
@@ -335,6 +342,7 @@ class VLLMDeployment:
             tensor_parallel_size=tensor_parallel_size,
             enable_lora=bool(self.lora_modules),
             max_loras=max(1, len(self.lora_modules)),
+            max_lora_rank=max_lora_rank,
             enforce_eager=enforce_eager,
             # dtype: float16 is the safe explicit default for mixed-precision GPUs.
             # None would let vLLM auto-select which can pick bfloat16 on some cards
@@ -721,6 +729,11 @@ class InferenceReconciler:
         # Max sequence length: DB column → VLLM_DEFAULT_MAX_MODEL_LEN env → 4096
         max_model_len = getattr(dep, "max_model_len", None) or _DEFAULT_MAX_MODEL_LEN
 
+        # Max LoRA rank: DB column → VLLM_DEFAULT_MAX_LORA_RANK env → 64
+        # Must be >= the rank of every adapter loaded into this deployment.
+        # vLLM refuses to load an adapter whose rank exceeds this value.
+        max_lora_rank = getattr(dep, "max_lora_rank", None) or _DEFAULT_MAX_LORA_RANK
+
         # Quantization: "awq", "awq_marlin", "gptq", "bitsandbytes", or None
         quantization = getattr(dep, "quantization", None)
 
@@ -740,12 +753,13 @@ class InferenceReconciler:
 
         log.info(
             "🚢 Deploying via Ray Serve: %s model=%s tp=%d gpu_mem_util=%.2f "
-            "max_model_len=%d quantization=%s dtype=%s enforce_eager=%s lora=%s",
+            "max_model_len=%d max_lora_rank=%d quantization=%s dtype=%s enforce_eager=%s lora=%s",
             deployment_name,
             model_endpoint,
             tp_size,
             gpu_mem_util,
             max_model_len,
+            max_lora_rank,
             quantization,
             dtype,
             enforce_eager,
@@ -761,6 +775,7 @@ class InferenceReconciler:
             max_model_len=max_model_len,
             gpu_memory_utilization=gpu_mem_util,
             lora_modules=lora_modules,
+            max_lora_rank=max_lora_rank,
             quantization=quantization,
             dtype=dtype,
             enforce_eager=enforce_eager,
@@ -781,10 +796,11 @@ class InferenceReconciler:
 
         self._active[dep.id] = deployment_name
         log.info(
-            "✅ Ray Serve deployment active: %s (gpu_mem_util=%.2f max_model_len=%d)",
+            "✅ Ray Serve deployment active: %s (gpu_mem_util=%.2f max_model_len=%d max_lora_rank=%d)",
             deployment_name,
             gpu_mem_util,
             max_model_len,
+            max_lora_rank,
         )
 
     def _delete_deployment(self, deployment_name: str) -> None:

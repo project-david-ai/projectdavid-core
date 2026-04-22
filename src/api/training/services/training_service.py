@@ -9,13 +9,30 @@ import redis
 from fastapi import HTTPException
 from projectdavid_common import UtilsInterface
 from projectdavid_common.schemas.enums import StatusEnum
+from projectdavid_common.schemas.training_schema import TrainingConfig
 from projectdavid_common.utilities.identifier_service import IdentifierService
 from sqlalchemy.orm import Session
 
 from src.api.training.models.models import TrainingJob
 from src.api.training.services.dataset_service import get_dataset
+from src.api.training.services.training_config_resolver import resolve_training_config
 
 logging_utility = UtilsInterface.LoggingUtility()
+
+# ─── CANCELLATION SIGNALING ──────────────────────────────────────────────────
+# The worker polls this Redis key on every stdout read from the training
+# subprocess. Presence of the key = user requested cancellation.
+# TTL prevents orphaned keys from accumulating if the worker misses a read
+# (crashed, disconnected, etc.) and the job completes on its own.
+CANCEL_KEY_PREFIX = "cancel:job:"
+CANCEL_KEY_TTL_SECONDS = 3600  # 1 hour — generous; training rarely outlasts this
+
+
+def _cancel_key(job_id: str) -> str:
+    return f"{CANCEL_KEY_PREFIX}{job_id}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 def get_redis_client() -> redis.Redis:
@@ -106,17 +123,30 @@ class TrainingService:
                 ),
             )
 
-        # 3. Create job record — node binding deferred to activation
+        # 3. Resolve user-supplied config into fully-specified execution plan.
+        #    Re-validate via TrainingConfig here so the resolver always sees a
+        #    typed object (profile becomes TrainingProfile enum, Literals are
+        #    checked, bounds are enforced). The router already validates on the
+        #    way in, but this keeps the service robust to direct internal calls.
+
+        if config is None:
+            user_config = None
+        elif isinstance(config, TrainingConfig):
+            user_config = config
+        else:
+            user_config = TrainingConfig(**config)
+
+        resolved_config = resolve_training_config(user_config)
+
         job_id = IdentifierService.generate_prefixed_id("job")
         now = int(time.time())
-
         job = TrainingJob(
             id=job_id,
             user_id=user_id,
             dataset_id=dataset_id,
             base_model=base_model,
             framework=framework,
-            config=config or {},
+            config=resolved_config,
             status=StatusEnum.queued,
             node_id=None,
             created_at=now,
@@ -188,33 +218,141 @@ class TrainingService:
     # ------------------------------------------------------------------
 
     def cancel_training_job(self, job_id: str, user_id: str) -> dict:
+        """
+        Cancel a queued or in-progress training job.
+
+        Behaviour by current status:
+            queued       → flip to CANCELLED immediately (worker skips on claim)
+            in_progress  → flip to CANCELLING + signal Redis; worker unwinds
+            cancelling   → idempotent, return current status
+            cancelled    → idempotent, return current status
+            completed    → idempotent, return current status ("already finished")
+            failed       → idempotent, return current status ("already failed")
+        """
         job = self.get_training_job(job_id, user_id)
 
-        if job.status in [
-            StatusEnum.completed,
-            StatusEnum.failed,
-            StatusEnum.cancelled,
-        ]:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cannot cancel job in status: {job.status.value}",
-            )
+        current_status = (
+            job.status.value if hasattr(job.status, "value") else str(job.status)
+        )
 
-        job.status = StatusEnum.cancelling
-        job.updated_at = int(time.time())
+        # ── Idempotent short-circuits for terminal / in-flight-cancel states ──
+        if job.status == StatusEnum.cancelled:
+            return {
+                "job_id": job_id,
+                "status": current_status,
+                "cancelled_at": job.cancelled_at,
+                "message": "Job was already cancelled.",
+            }
 
-        try:
-            self.db.commit()
-            logging_utility.info(
-                "Training job %s marked for cancellation by user %s", job_id, user_id
-            )
-        except Exception as e:
-            self.db.rollback()
-            raise HTTPException(
-                status_code=500, detail="Database error during cancellation."
-            )
+        if job.status == StatusEnum.cancelling:
+            return {
+                "job_id": job_id,
+                "status": current_status,
+                "cancelled_at": job.cancelled_at,
+                "message": "Cancellation already in progress.",
+            }
 
-        return {"status": "cancelling", "job_id": job_id}
+        if job.status == StatusEnum.completed:
+            return {
+                "job_id": job_id,
+                "status": current_status,
+                "cancelled_at": None,
+                "message": "Job already completed — nothing to cancel.",
+            }
+
+        if job.status == StatusEnum.failed:
+            return {
+                "job_id": job_id,
+                "status": current_status,
+                "cancelled_at": None,
+                "message": "Job already failed — nothing to cancel.",
+            }
+
+        # ── Actionable cancellations ────────────────────────────────────────
+        now = int(time.time())
+
+        if job.status == StatusEnum.queued:
+            # Queued jobs: flip straight to CANCELLED.
+            # The worker inspects DB status on claim and will skip.
+            job.status = StatusEnum.cancelled
+            job.cancelled_at = now
+            job.updated_at = now
+
+            try:
+                self.db.commit()
+                logging_utility.info(
+                    "Training job %s cancelled while queued (user %s)",
+                    job_id,
+                    user_id,
+                )
+            except Exception as e:
+                self.db.rollback()
+                logging_utility.error(
+                    "DB commit failed cancelling queued job %s: %s", job_id, e
+                )
+                raise HTTPException(
+                    status_code=500, detail="Database error during cancellation."
+                )
+
+            return {
+                "job_id": job_id,
+                "status": StatusEnum.cancelled.value,
+                "cancelled_at": now,
+                "message": "Queued job cancelled before execution started.",
+            }
+
+        if job.status == StatusEnum.in_progress:
+            # In-progress: flip to CANCELLING, set Redis signal.
+            # The worker polls the Redis key between subprocess stdout reads
+            # and initiates two-stage subprocess shutdown (SIGTERM → grace → SIGKILL).
+            job.status = StatusEnum.cancelling
+            job.cancelled_at = now
+            job.updated_at = now
+
+            try:
+                self.db.commit()
+            except Exception as e:
+                self.db.rollback()
+                logging_utility.error(
+                    "DB commit failed flagging job %s for cancellation: %s", job_id, e
+                )
+                raise HTTPException(
+                    status_code=500, detail="Database error during cancellation."
+                )
+
+            # Set the cancel signal. If Redis is unreachable, the DB flip is
+            # authoritative — worker does a periodic DB check as a backstop,
+            # but Redis is the fast path.
+            try:
+                self.r.set(
+                    _cancel_key(job_id),
+                    "1",
+                    ex=CANCEL_KEY_TTL_SECONDS,
+                )
+                logging_utility.info(
+                    "Training job %s marked for cancellation (user %s), Redis signal set",
+                    job_id,
+                    user_id,
+                )
+            except Exception as e:
+                logging_utility.warning(
+                    "Could not set Redis cancel signal for %s (falling back to DB poll): %s",
+                    job_id,
+                    e,
+                )
+
+            return {
+                "job_id": job_id,
+                "status": StatusEnum.cancelling.value,
+                "cancelled_at": now,
+                "message": "Cancellation initiated — worker is unwinding subprocess.",
+            }
+
+        # Fallthrough — unexpected state
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot cancel job in unexpected status: {current_status}",
+        )
 
     # ------------------------------------------------------------------
     # Diagnostics
