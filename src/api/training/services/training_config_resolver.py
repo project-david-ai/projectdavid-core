@@ -3,54 +3,8 @@
 
 from typing import Any, Dict, Optional
 
+from projectdavid_common.constants import BASE_DEFAULTS, PROFILES
 from projectdavid_common.schemas.training_schema import TrainingConfig, TrainingProfile
-
-# Canonical defaults. Represents the behaviour of the current codebase when
-# no config is supplied — the values currently hardcoded in unsloth_train.py
-# (SFTConfig + get_peft_model call sites). These are also the values baked
-# into PROFILES["standard"] for profile-scoped fields, so an empty config
-# reproduces the previous default-profile-standard behaviour.
-BASE_DEFAULTS: Dict[str, Any] = {
-    # Profile-scoped (overridable by profile preset):
-    "max_seq_length": 2048,
-    "per_device_train_batch_size": 2,
-    "gradient_accumulation_steps": 4,
-    "max_steps": 60,
-    "optim": "adamw_8bit",
-    # SFTConfig-scoped:
-    "learning_rate": 2e-4,
-    "warmup_steps": 2,
-    "weight_decay": 0.01,
-    "lr_scheduler_type": "linear",
-    "seed": 3407,
-    "logging_steps": 50,
-    "num_train_epochs": 3,
-    # PEFT-scoped:
-    "lora_r": 32,
-    "lora_alpha": 32,
-    "lora_dropout": 0.0,
-    "bias": "none",
-}
-
-# Must match PROFILES in unsloth_train.py. Kept duplicated for Phase 1;
-# Phase 2 cleanup should hoist this into a shared constants module imported
-# by both the resolver and the trainer.
-PROFILES: Dict[str, Dict[str, Any]] = {
-    "laptop": {
-        "max_seq_length": 1024,
-        "per_device_train_batch_size": 1,
-        "gradient_accumulation_steps": 8,
-        "max_steps": 12500,
-        "optim": "adamw_8bit",
-    },
-    "standard": {
-        "max_seq_length": 2048,
-        "per_device_train_batch_size": 2,
-        "gradient_accumulation_steps": 4,
-        "max_steps": 60,
-        "optim": "adamw_8bit",
-    },
-}
 
 
 def resolve_training_config(user_config: Optional[TrainingConfig]) -> Dict[str, Any]:
@@ -67,6 +21,11 @@ def resolve_training_config(user_config: Optional[TrainingConfig]) -> Dict[str, 
 
     The returned dict is the complete execution plan. Worker and trainer
     read from it without further resolution logic.
+
+    BASE_DEFAULTS and PROFILES are the canonical dicts exported from
+    projectdavid_common.constants — the trainer safety-net fallbacks in
+    unsloth_train.py import the same objects, so there is no possible
+    drift between resolver and trainer.
     """
     resolved: Dict[str, Any] = dict(BASE_DEFAULTS)
 
