@@ -231,7 +231,44 @@ def main():
         f"🔥 Starting GPU Training kernels "
         f"(ctx: {cfg['max_seq_length']}, max_steps: {cfg['max_steps']})..."
     )
-    trainer.train()
+    train_output = trainer.train()
+
+    # ─── FINAL LOSS EMISSION ──────────────────────────────────────────────────
+    # trainer.train() returns a TrainOutput with train_output.training_loss —
+    # the MEAN loss across all training steps. That's the canonical HF summary
+    # value. Separately, trainer.state.log_history carries the per-step losses
+    # from logging_steps emissions; the last entry with a "loss" key is the
+    # LAST STEP'S loss.
+    #
+    # Per-step chart trajectories are only honest if we emit the last step's
+    # loss, not the run mean (means always look anomalous next to step values
+    # — they sit at the average of the descending curve rather than at its
+    # tail, which reads as a regression on a chart).
+    #
+    # We emit both:
+    #   loss       — last-step value, continues the per-step trajectory cleanly
+    #   mean_loss  — run summary (HuggingFace's canonical training_loss)
+    #
+    # Downstream consumers (SDK, chart tooling, DB metrics) can choose which
+    # makes sense for their context.
+    last_step_loss = None
+    if trainer.state.log_history:
+        for entry in reversed(trainer.state.log_history):
+            if "loss" in entry:
+                last_step_loss = round(float(entry["loss"]), 4)
+                break
+
+    final_progress = {
+        "step": trainer.state.global_step,
+        "total_steps": trainer.state.max_steps,
+        "epoch": round(trainer.state.epoch or 0, 3),
+        "loss": last_step_loss,  # last-step loss — continues the per-step curve
+        "mean_loss": round(float(train_output.training_loss), 4),  # run summary
+        "learning_rate": None,  # scheduler has completed; no active LR
+        "final": True,  # provenance: this is the summary, not a step log
+    }
+    print(f"\nPROGRESS:{json.dumps(final_progress)}", flush=True)
+    # ──────────────────────────────────────────────────────────────────────────
 
     # 7. Save Artifacts
     print(f"💾 Exporting fine-tuned adapters to {args.out}...")
