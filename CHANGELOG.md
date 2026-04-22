@@ -1,3 +1,10 @@
+## [1.41.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.41.0...v1.41.1) (2026-04-22)
+
+
+### Bug Fixes
+
+* **training:** emit final PROGRESS line with last-step loss and run mean ([d7edae4](https://github.com/project-david-ai/projectdavid-core/commit/d7edae4556cb4dc15b4e881b5ac2557331edb561))
+
 # [1.41.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.40.0...v1.41.0) (2026-04-22)
 
 
