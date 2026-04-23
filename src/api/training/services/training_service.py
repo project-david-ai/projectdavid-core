@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from src.api.training.models.models import TrainingJob
 from src.api.training.services.dataset_service import get_dataset
+from src.api.training.services.disk_preflight import DiskPreflight
 from src.api.training.services.training_config_resolver import resolve_training_config
 
 logging_utility = UtilsInterface.LoggingUtility()
@@ -122,6 +123,38 @@ class TrainingService:
                     f"submitting a fine-tuning job."
                 ),
             )
+
+        # 2a. Disk preflight — reject early if storage is below threshold.
+        #     Training runs are long-lived; a mid-run SMB write failure or HF
+        #     cache explosion costs the user an hour-plus of wasted GPU time.
+        #     Cheaper to fail fast at dispatch than to let the worker discover
+        #     it mid-training. Thresholds are env-configurable via
+        #     MIN_SAMBA_FREE_GB / MIN_SCRATCH_FREE_GB.
+        disk_results = DiskPreflight().run()
+        failed = [r for r in disk_results if not r.ok]
+        if failed:
+            detail = {
+                "error": "Insufficient storage for training job",
+                "failures": [
+                    {
+                        "path": r.path,
+                        "free_gb": r.free_gb,
+                        "required_gb": r.required_gb,
+                        "reason": r.reason,
+                    }
+                    for r in failed
+                ],
+                "hint": (
+                    "Free up space on the listed paths, or adjust "
+                    "MIN_SAMBA_FREE_GB / MIN_SCRATCH_FREE_GB env vars."
+                ),
+            }
+            logging_utility.warning(
+                "Training job rejected on disk preflight for user %s: %s",
+                user_id,
+                detail,
+            )
+            raise HTTPException(status_code=507, detail=detail)
 
         # 3. Resolve user-supplied config into fully-specified execution plan.
         #    Re-validate via TrainingConfig here so the resolver always sees a
