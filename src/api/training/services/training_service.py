@@ -14,7 +14,7 @@ from projectdavid_common.utilities.identifier_service import IdentifierService
 from sqlalchemy.orm import Session
 
 from src.api.training.models.models import TrainingJob
-from src.api.training.services.dataset_service import get_dataset
+from src.api.training.services.dataset_service import DatasetService
 from src.api.training.services.disk_preflight import DiskPreflight
 from src.api.training.services.training_config_resolver import resolve_training_config
 
@@ -91,7 +91,7 @@ class TrainingService:
         config: Optional[dict] = None,
     ) -> TrainingJob:
         # 1. Verify dataset exists and is ready
-        dataset = get_dataset(self.db, dataset_id, user_id)
+        dataset = DatasetService(self.db).get(dataset_id, user_id)
 
         current_status = (
             dataset.status.value
