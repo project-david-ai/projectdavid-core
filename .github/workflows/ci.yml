@@ -158,6 +158,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: "🧹 Free up disk space on runner"
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          df -h
+
       - name: "⚙️ Setup Docker Buildx"
         uses: docker/setup-buildx-action@v3
 
@@ -227,6 +236,15 @@ jobs:
     steps:
       - name: "🕺 Checkout"
         uses: actions/checkout@v4
+
+      - name: "🧹 Free up disk space on runner"
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          df -h
 
       - name: "⚙️ Setup QEMU"
         uses: docker/setup-qemu-action@v3
@@ -356,6 +374,15 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "🧹 Free up disk space on runner"
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          df -h
 
       - name: "⚙️ Setup QEMU"
         uses: docker/setup-qemu-action@v3
