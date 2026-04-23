@@ -1,29 +1,20 @@
 # src/api/training/routers/datasets_router.py
 
-import os
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from projectdavid_common import UtilsInterface, ValidationInterface
 from projectdavid_common.schemas.enums import StatusEnum
 from sqlalchemy.orm import Session
 
 from src.api.training.db.database import get_db
 from src.api.training.dependencies import get_current_user_id
-from src.api.training.services.dataset_service import (
-    create_dataset,
-    delete_dataset,
-    get_dataset,
-    list_datasets,
-    prepare_dataset,
-)
+from src.api.training.services.dataset_service import DatasetService
 
 logging_utility = UtilsInterface.LoggingUtility()
 
 router = APIRouter()
 
-# Note: API_BASE_URL and WORKER_API_KEY removed as they are no longer
-# needed by the router for internal file fetching.
 
 # ---------------------------------------------------------------------------
 # POST /v1/datasets
@@ -48,8 +39,7 @@ def create_dataset_endpoint(
         payload.format,
         payload.file_id,
     )
-    dataset = create_dataset(
-        db=db,
+    dataset = DatasetService(db).create(
         user_id=user_id,
         name=payload.name,
         fmt=payload.format,
@@ -86,8 +76,8 @@ def list_datasets_endpoint(
                 status_code=422, detail=f"Invalid status value '{status}'."
             )
 
-    datasets = list_datasets(
-        db=db, user_id=user_id, status=status_filter, limit=limit, offset=offset
+    datasets = DatasetService(db).list(
+        user_id=user_id, status=status_filter, limit=limit, offset=offset
     )
     return ValidationInterface.DatasetList(
         data=[ValidationInterface.DatasetRead.model_validate(d) for d in datasets],
@@ -110,7 +100,7 @@ def get_dataset_endpoint(
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
-    dataset = get_dataset(db=db, dataset_id=dataset_id, user_id=user_id)
+    dataset = DatasetService(db).get(dataset_id=dataset_id, user_id=user_id)
     return ValidationInterface.DatasetRead.model_validate(dataset)
 
 
@@ -128,15 +118,7 @@ async def prepare_dataset_endpoint(
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
-    """
-    Trigger background preparation.
-    Service logic now uses direct Samba/Shared DB access.
-    """
-    return prepare_dataset(
-        db=db,
-        dataset_id=dataset_id,
-        user_id=user_id,
-    )
+    return DatasetService(db).prepare(dataset_id=dataset_id, user_id=user_id)
 
 
 # ---------------------------------------------------------------------------
@@ -147,12 +129,23 @@ async def prepare_dataset_endpoint(
 @router.delete(
     "/{dataset_id}",
     response_model=ValidationInterface.DatasetDeleted,
-    summary="Soft delete a dataset",
+    summary="Delete a dataset (soft by default; ?hard=true cascades to storage)",
 )
 def delete_dataset_endpoint(
     dataset_id: str,
+    hard: bool = Query(
+        False,
+        description=(
+            "If true, permanently remove the dataset, its File/FileStorage DB rows, "
+            "and the physical .jsonl on Samba. Default is soft-delete (reversible)."
+        ),
+    ),
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
-    result = delete_dataset(db=db, dataset_id=dataset_id, user_id=user_id)
+    result = DatasetService(db).delete(
+        dataset_id=dataset_id,
+        user_id=user_id,
+        hard=hard,
+    )
     return ValidationInterface.DatasetDeleted(**result)
