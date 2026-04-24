@@ -10,7 +10,6 @@ from sqlalchemy.orm import sessionmaker
 logging_utility = UtilsInterface.LoggingUtility()
 
 # --- ALL ENGINE AND SESSION LOGIC IS NOW CENTRALIZED HERE ---
-
 DATABASE_URL = os.getenv("DATABASE_URL")
 SPECIAL_DB_URL = os.getenv("SPECIAL_DB_URL")
 
@@ -21,7 +20,24 @@ def running_in_docker() -> bool:
 
 
 def resolve_special_db_runtime_url(special_raw: str | None) -> str | None:
+    """
+    Resolve the effective SPECIAL_DB_URL for the current runtime.
+
+    SPECIAL_DB_URL is intended for host-shell use only (see .env.migrations).
+    Its value typically points at localhost:3307, which is meaningless inside
+    containers. If it leaks into container env via .env / env_file, we ignore
+    it and fall back to DATABASE_URL — and log a warning so the leak is
+    visible to the operator.
+    """
     if running_in_docker():
+        if special_raw:
+            logging_utility.warning(
+                "SPECIAL_DB_URL is set inside a container — ignoring and "
+                "falling back to DATABASE_URL. SPECIAL_DB_URL is host-shell-only; "
+                "it should live in .env.migrations, not .env. "
+                "See: https://github.com/project-david-ai/projectdavid-core "
+                "(container hygiene section)."
+            )
         return DATABASE_URL
     return special_raw or None
 
@@ -71,8 +87,6 @@ def get_db():
 
 # Optional: You can also move the wait logic here to keep all DB startup
 # code together, which makes app.py even cleaner.
-
-
 def _wait_for_engine(engine_to_check, db_name, logger, retries=30, delay=3):
     if not engine_to_check:
         return
