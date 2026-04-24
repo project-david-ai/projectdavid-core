@@ -1,3 +1,18 @@
+# [1.42.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.41.0...v1.42.0) (2026-04-24)
+
+
+### Bug Fixes
+
+* **db:** isolate SPECIAL_DB_URL from container runtime ([1da5779](https://github.com/project-david-ai/projectdavid-core/commit/1da5779f7828e52790f7e252a26c17c1c48feea9))
+* **training:** emit final PROGRESS line with last-step loss and run mean ([d7edae4](https://github.com/project-david-ai/projectdavid-core/commit/d7edae4556cb4dc15b4e881b5ac2557331edb561))
+* **training:** emit final PROGRESS line with last-step loss and run mean ([f463cb3](https://github.com/project-david-ai/projectdavid-core/commit/f463cb3db964dfeb741d965214469fdbf4236e6a))
+
+
+### Features
+
+* **training:** DiskPreflight + DatasetService class with hard-delete + race guards ([b939110](https://github.com/project-david-ai/projectdavid-core/commit/b9391104b505ceb0220afa92a2a1a452f9962fb1))
+* **training:** pre-dispatch disk space preflight ([38bb9a4](https://github.com/project-david-ai/projectdavid-core/commit/38bb9a41eb548c5ca59743a75c82a24ca6ee8027))
+
 # [1.41.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.40.0...v1.41.0) (2026-04-22)
 
 
