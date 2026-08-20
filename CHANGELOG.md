@@ -1,3 +1,10 @@
+## [1.42.2](https://github.com/project-david-ai/projectdavid-core/compare/v1.42.1...v1.42.2) (2026-08-20)
+
+
+### Bug Fixes
+
+* upgrade router Rust toolchain and healthcheck deps ([926002b](https://github.com/project-david-ai/projectdavid-core/commit/926002bbcdecf8d22f195214c1c6dda532b6afdf))
+
 ## [1.42.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.42.0...v1.42.1) (2026-08-20)
 
 
