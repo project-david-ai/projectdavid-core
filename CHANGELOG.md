@@ -1,3 +1,10 @@
+## [1.42.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.42.0...v1.42.1) (2026-08-20)
+
+
+### Bug Fixes
+
+* rebuild API with updated projectdavid_common dependency ([ce10766](https://github.com/project-david-ai/projectdavid-core/commit/ce107667b5010c38adc99e3d3ae8414ee57cc25d))
+
 # [1.42.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.41.0...v1.42.0) (2026-04-24)
 
 
