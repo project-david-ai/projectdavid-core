@@ -1,15 +1,20 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from projectdavid_common import ValidationInterface
 from projectdavid_common.schemas.api_key_schemas import (
     ApiKeyCreateRequest,
     ApiKeyCreateResponse,
     ApiKeyDetails,
 )
 from projectdavid_common.utilities.logging_service import LoggingUtility
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from src.api.entities_api.dependencies import get_api_key, get_db
 from src.api.entities_api.models.models import ApiKey as ApiKeyModel
 from src.api.entities_api.models.models import User as UserModel
+from src.api.entities_api.services.admin_provisioning_service import (
+    AdminProvisioningService,
+)
 from src.api.entities_api.services.api_key_service import ApiKeyService
 
 admin_router = APIRouter(
@@ -21,6 +26,66 @@ admin_router = APIRouter(
     },
 )
 logging_utility = LoggingUtility()
+validation = ValidationInterface()
+
+
+class AdminProvisionUserRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=320)
+    full_name: str = Field(min_length=1, max_length=255)
+    external_reference: str = Field(min_length=3, max_length=255)
+    key_name: str = Field(default="project-black-bird", min_length=1, max_length=100)
+
+
+class AdminProvisionUserResponse(BaseModel):
+    user: validation.UserRead
+    key: ApiKeyCreateResponse
+    user_created: bool
+    keys_revoked: int
+
+
+@admin_router.post(
+    "/users/provision",
+    response_model=AdminProvisionUserResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Admin: Ensure User and API Key",
+)
+def admin_provision_user(
+    request_data: AdminProvisionUserRequest,
+    db: Session = Depends(get_db),
+    auth_key: ApiKeyModel = Depends(get_api_key),
+):
+    """Ensure one verified Project David user and one active Black Bird key."""
+    requesting_user = (
+        db.query(UserModel).filter(UserModel.id == auth_key.user_id).first()
+    )
+    if not requesting_user or not requesting_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges required for this operation.",
+        )
+
+    result = AdminProvisioningService(db).ensure_user_api_key(
+        email=str(request_data.email),
+        full_name=request_data.full_name,
+        external_reference=request_data.external_reference,
+        key_name=request_data.key_name,
+    )
+    logging_utility.info(
+        "Admin %s ensured Project David access for user %s (prefix=%s, revoked=%d)",
+        requesting_user.id,
+        result.user.id,
+        result.api_key.prefix,
+        result.keys_revoked,
+    )
+    return AdminProvisionUserResponse(
+        user=validation.UserRead.model_validate(result.user),
+        key=ApiKeyCreateResponse(
+            plain_key=result.plain_key,
+            details=ApiKeyDetails.model_validate(result.api_key),
+        ),
+        user_created=result.user_created,
+        keys_revoked=result.keys_revoked,
+    )
 
 
 @admin_router.post(

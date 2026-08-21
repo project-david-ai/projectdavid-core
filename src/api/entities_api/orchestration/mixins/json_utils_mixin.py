@@ -13,7 +13,7 @@ import json
 import re
 from typing import Dict, Optional
 
-from projectdavid_common.constants.ai_model_map import MODEL_MAP
+from projectdavid_common.constants.ai_model_map import translate_model_id
 from projectdavid_common.utilities.logging_service import LoggingUtility
 
 LOG = LoggingUtility()
@@ -188,8 +188,8 @@ class JsonUtilsMixin:
         # Implementation kept for compatibility
         return None
 
-    def _get_model_map(self, value: str) -> str | None:
-        return MODEL_MAP.get(value)
+    def _get_model_map(self, value: str) -> str:
+        return translate_model_id(value)
 
     @staticmethod
     def validate_tool_args(

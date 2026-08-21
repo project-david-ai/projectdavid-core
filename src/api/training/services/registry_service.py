@@ -79,7 +79,9 @@ class RegistryService:
         Returns:
             The existing or newly created BaseModel ORM instance.
         """
-        existing = self.db.query(BaseModel).filter(BaseModel.endpoint == hf_model_id).first()
+        existing = (
+            self.db.query(BaseModel).filter(BaseModel.endpoint == hf_model_id).first()
+        )
         if existing:
             logger.info(
                 "RegistryService: base model already registered — returning existing. "
@@ -137,7 +139,9 @@ class RegistryService:
 
         Raises 404 if not found.
         """
-        base = self.db.query(BaseModel).filter(BaseModel.endpoint == hf_model_id).first()
+        base = (
+            self.db.query(BaseModel).filter(BaseModel.endpoint == hf_model_id).first()
+        )
         if not base:
             raise HTTPException(
                 status_code=404,
