@@ -60,7 +60,6 @@ DB_CANCEL_POLL_INTERVAL = 10  # How often to fall back to DB status check (secon
 
 os.makedirs(LOCAL_SCRATCH, exist_ok=True)
 
-
 # ─── INFRASTRUCTURE HELPERS ─────────────────────────────────────────────────
 
 
@@ -92,8 +91,6 @@ def _write_training_config(job_id: str, resolved_config: dict) -> str:
 
 
 # ─── TRAINING JOB ───────────────────────────────────────────────────────────
-
-
 def process_job(job_id: str, user_id: str):
     """
     Core training job logic — runs as a direct subprocess.
