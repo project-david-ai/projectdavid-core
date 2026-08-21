@@ -1,3 +1,10 @@
+## [1.42.3](https://github.com/project-david-ai/projectdavid-core/compare/v1.42.2...v1.42.3) (2026-08-21)
+
+
+### Bug Fixes
+
+* use generic provider prefix model translation in API routing ([69a1a63](https://github.com/project-david-ai/projectdavid-core/commit/69a1a63514bbc8a96027add50f5eaf43b15d658b))
+
 ## [1.42.2](https://github.com/project-david-ai/projectdavid-core/compare/v1.42.1...v1.42.2) (2026-08-20)
 
 
