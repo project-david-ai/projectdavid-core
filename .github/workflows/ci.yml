@@ -9,10 +9,63 @@ on:
 permissions:
   contents: write
   packages: write
+  pull-requests: read
 
 jobs:
   # ──────────────────────────────────────────────────────────────────────────
-  #  🧹  Lint
+  #  🔎 Detect image-affecting changes
+  # ──────────────────────────────────────────────────────────────────────────
+  changes:
+    name: "🔎 Detect Changed Components"
+    runs-on: ubuntu-latest
+    outputs:
+      api: ${{ steps.filter.outputs.api }}
+      sandbox: ${{ steps.filter.outputs.sandbox }}
+      training: ${{ steps.filter.outputs.training }}
+      inference: ${{ steps.filter.outputs.inference }}
+      router: ${{ steps.filter.outputs.router }}
+      shared: ${{ steps.filter.outputs.shared }}
+
+    steps:
+      - name: "🕺 Checkout repository"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: "🔎 Detect component changes"
+        id: filter
+        uses: dorny/paths-filter@v4.0.3
+        with:
+          filters: |
+            api:
+              - 'src/**'
+              - '!src/api/training/**'
+              - '!src/api/sandbox/**'
+              - 'docker/api/**'
+            sandbox:
+              - 'src/api/sandbox/**'
+              - 'docker/sandbox/**'
+            training:
+              - 'src/api/training/**'
+              - '!src/api/training/inference_worker.py'
+              - 'docker/training/**'
+            inference:
+              - 'src/api/training/inference_worker.py'
+              - 'src/api/training/models/**'
+              - 'docker/inference/**'
+            router:
+              - 'rust/router/**'
+              - 'docker/router/**'
+            shared:
+              - 'pyproject.toml'
+              - 'setup.py'
+              - 'setup.cfg'
+              - '*_reqs_*.txt'
+              - '**/*_reqs_*.txt'
+              - 'projectdavid_common/**'
+
+  # ──────────────────────────────────────────────────────────────────────────
+  #  🧹 Lint
   # ──────────────────────────────────────────────────────────────────────────
   lint:
     name: "🧹 Lint Code & Dockerfiles"
@@ -32,18 +85,17 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: "📦 Cache pip dependencies"
-        uses: actions/cache@v4
+      - name: "⚡ Set up uv"
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-lint-${{ hashFiles('**/*_reqs_*.txt', '**/pyproject.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-lint-
+          enable-cache: true
+          cache-dependency-glob: |
+            **/*_reqs_*.txt
+            **/pyproject.toml
 
       - name: "⚙️ Install Linting Tools"
         run: |
-          python -m pip install --upgrade pip
-          pip install "ruff==0.4.0" "black==24.1.1" "isort==5.13.2" bandit mypy
+          uv pip install --system "ruff==0.4.0" "black==24.1.1" "isort==5.13.2" bandit mypy
           sudo wget -qO /usr/local/bin/hadolint \
             https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64
           sudo chmod +x /usr/local/bin/hadolint
@@ -83,7 +135,7 @@ jobs:
           hadolint docker/router/Dockerfile || true
 
   # ──────────────────────────────────────────────────────────────────────────
-  #  ✅  Tests
+  #  ✅ Tests
   # ──────────────────────────────────────────────────────────────────────────
   test:
     name: "✅ Run Unit Tests"
@@ -106,22 +158,22 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: "📦 Cache pip dependencies"
-        uses: actions/cache@v4
+      - name: "⚡ Set up uv"
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-test-${{ matrix.python-version }}-${{ hashFiles('**/*_reqs_*.txt', '**/pyproject.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-test-${{ matrix.python-version }}-
+          enable-cache: true
+          cache-suffix: py${{ matrix.python-version }}
+          cache-dependency-glob: |
+            **/*_reqs_*.txt
+            **/pyproject.toml
 
       - name: "⚙️ Install Project & Test Deps"
         run: |
-          python -m pip install --upgrade pip
-          pip install -r api_unhashed_reqs.txt
-          pip install --require-hashes -r api_reqs_hashed.txt
-          pip install -r sandbox_reqs_unhashed.txt
-          pip install --require-hashes -r sandbox_reqs_hashed.txt
-          pip install pytest pytest-cov
+          uv pip install --system -r api_unhashed_reqs.txt
+          uv pip install --system --require-hashes -r api_reqs_hashed.txt
+          uv pip install --system -r sandbox_reqs_unhashed.txt
+          uv pip install --system --require-hashes -r sandbox_reqs_hashed.txt
+          uv pip install --system pytest pytest-cov
 
       - name: "🦀 Install Rust toolchain"
         uses: dtolnay/rust-toolchain@stable
@@ -139,20 +191,21 @@ jobs:
 
       - name: "🦀 Build fc_parser Rust extension"
         run: |
-          pip install maturin
-          cd rust/fc_parser && maturin build --release
-          pip install target/wheels/*.whl
+          uv pip install --system maturin
+          cd rust/fc_parser
+          maturin build --release
+          uv pip install --system target/wheels/*.whl
 
       - name: "✅ Run Pytest with Coverage"
         run: pytest tests/ --cov=src --cov-report=term-missing
 
   # ──────────────────────────────────────────────────────────────────────────
-  #  🏗️  Verify Docker Builds (DRY RUN FOR PRs)
+  #  🏗️ Verify Docker Builds (PRs only, changed components only)
   # ──────────────────────────────────────────────────────────────────────────
   verify_docker_builds:
     name: "🏗️ Verify Docker Builds (Dry Run)"
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test, changes]
     if: github.event_name == 'pull_request'
 
     steps:
@@ -171,6 +224,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: "🏗️ Build API Image (No Push)"
+        if: needs.changes.outputs.api == 'true' || needs.changes.outputs.shared == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -181,6 +235,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=api
 
       - name: "🏗️ Build Sandbox Image (No Push)"
+        if: needs.changes.outputs.sandbox == 'true' || needs.changes.outputs.shared == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -191,6 +246,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=sandbox
 
       - name: "🏗️ Build Training Image (No Push)"
+        if: needs.changes.outputs.training == 'true' || needs.changes.outputs.shared == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -201,6 +257,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=training
 
       - name: "🏗️ Build Inference Worker Image (No Push)"
+        if: needs.changes.outputs.inference == 'true' || needs.changes.outputs.shared == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -211,6 +268,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=inference
 
       - name: "🏗️ Build Router Image (No Push)"
+        if: needs.changes.outputs.router == 'true' || needs.changes.outputs.shared == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -221,12 +279,12 @@ jobs:
           cache-to: type=gha,mode=max,scope=router
 
   # ──────────────────────────────────────────────────────────────────────────
-  #  🧪  Build & Publish Staging Images (DEV BRANCH ONLY)
+  #  🧪 Build & Publish Staging Images (DEV only, changed components only)
   # ──────────────────────────────────────────────────────────────────────────
   build_staging:
     name: "🧪 Build & Publish Staging Images"
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test, changes]
     if: |
       github.event_name == 'push' &&
       github.ref == 'refs/heads/dev' &&
@@ -246,9 +304,6 @@ jobs:
           sudo docker image prune --all --force
           df -h
 
-      - name: "⚙️ Setup QEMU"
-        uses: docker/setup-qemu-action@v3
-
       - name: "⚙️ Setup Docker Buildx"
         uses: docker/setup-buildx-action@v3
 
@@ -263,6 +318,7 @@ jobs:
         run: echo "SHORT_SHA=${GITHUB_SHA::8}" >> $GITHUB_OUTPUT
 
       - name: "🏗️ Build & Push Staging API Image"
+        if: needs.changes.outputs.api == 'true' || needs.changes.outputs.shared == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -274,6 +330,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=api
 
       - name: "🏗️ Build & Push Staging Sandbox Image"
+        if: needs.changes.outputs.sandbox == 'true' || needs.changes.outputs.shared == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -285,6 +342,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=sandbox
 
       - name: "🏗️ Build & Push Staging Training Images"
+        if: needs.changes.outputs.training == 'true' || needs.changes.outputs.shared == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -298,6 +356,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=training
 
       - name: "🏗️ Build & Push Staging Inference Worker Image"
+        if: needs.changes.outputs.inference == 'true' || needs.changes.outputs.shared == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -309,6 +368,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=inference
 
       - name: "🏗️ Build & Push Staging Router Image"
+        if: needs.changes.outputs.router == 'true' || needs.changes.outputs.shared == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -320,24 +380,43 @@ jobs:
           cache-to: type=gha,mode=max,scope=router
 
       - name: "📋 Output staging image tags"
+        env:
+          SHORT_SHA: ${{ steps.sha.outputs.SHORT_SHA }}
+          API_CHANGED: ${{ needs.changes.outputs.api }}
+          SANDBOX_CHANGED: ${{ needs.changes.outputs.sandbox }}
+          TRAINING_CHANGED: ${{ needs.changes.outputs.training }}
+          INFERENCE_CHANGED: ${{ needs.changes.outputs.inference }}
+          ROUTER_CHANGED: ${{ needs.changes.outputs.router }}
+          SHARED_CHANGED: ${{ needs.changes.outputs.shared }}
         run: |
-          echo "## Staging images built from dev @ ${{ steps.sha.outputs.SHORT_SHA }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Service | Tag |" >> $GITHUB_STEP_SUMMARY
-          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
-          echo "| api | \`dev-${{ steps.sha.outputs.SHORT_SHA }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| sandbox | \`dev-${{ steps.sha.outputs.SHORT_SHA }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| training-api | \`dev-${{ steps.sha.outputs.SHORT_SHA }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| training-worker | \`dev-${{ steps.sha.outputs.SHORT_SHA }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| inference-worker | \`dev-${{ steps.sha.outputs.SHORT_SHA }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| router | \`dev-${{ steps.sha.outputs.SHORT_SHA }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Pin these in platform \`docker-compose.yml\` for pre-release testing." >> $GITHUB_STEP_SUMMARY
+          echo "## Staging images built from dev @ ${SHORT_SHA}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Service | Tag |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+
+          changed() {
+            [ "$1" = "true" ] || [ "$SHARED_CHANGED" = "true" ]
+          }
+
+          changed "$API_CHANGED"       && echo "| api | \`dev-${SHORT_SHA}\` |" >> "$GITHUB_STEP_SUMMARY"
+          changed "$SANDBOX_CHANGED"   && echo "| sandbox | \`dev-${SHORT_SHA}\` |" >> "$GITHUB_STEP_SUMMARY"
+          if changed "$TRAINING_CHANGED"; then
+            echo "| training-api | \`dev-${SHORT_SHA}\` |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| training-worker | \`dev-${SHORT_SHA}\` |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          changed "$INFERENCE_CHANGED" && echo "| inference-worker | \`dev-${SHORT_SHA}\` |" >> "$GITHUB_STEP_SUMMARY"
+          changed "$ROUTER_CHANGED"    && echo "| router | \`dev-${SHORT_SHA}\` |" >> "$GITHUB_STEP_SUMMARY"
 
       - name: "📦 Update staging repo docker-compose.yml"
         env:
           STAGING_REPO_PAT: ${{ secrets.STAGING_REPO_PAT }}
           SHORT_SHA: ${{ steps.sha.outputs.SHORT_SHA }}
+          API_CHANGED: ${{ needs.changes.outputs.api }}
+          SANDBOX_CHANGED: ${{ needs.changes.outputs.sandbox }}
+          TRAINING_CHANGED: ${{ needs.changes.outputs.training }}
+          INFERENCE_CHANGED: ${{ needs.changes.outputs.inference }}
+          ROUTER_CHANGED: ${{ needs.changes.outputs.router }}
+          SHARED_CHANGED: ${{ needs.changes.outputs.shared }}
         run: |
           git clone https://x-access-token:${STAGING_REPO_PAT}@github.com/project-david-ai/projectdavid-platform-staging.git /tmp/staging
           cd /tmp/staging
@@ -345,22 +424,47 @@ jobs:
           git config user.email "ci@projectdavid.ai"
           git config user.name "Project David CI"
 
-          sed -i "s/dev-[a-f0-9]\{8\}/dev-${SHORT_SHA}/g" docker-compose.yml
-          sed -i "s/Pinned to staging build: dev-[a-f0-9]\{8\} ([0-9-]*)/Pinned to staging build: dev-${SHORT_SHA} ($(date +%Y-%m-%d))/g" docker-compose.yml
+          changed() {
+            [ "$1" = "true" ] || [ "$SHARED_CHANGED" = "true" ]
+          }
+
+          if changed "$API_CHANGED"; then
+            sed -i -E "s|(thanosprime/projectdavid-core-api:)dev-[a-f0-9]{8}|\1dev-${SHORT_SHA}|g" docker-compose.yml
+          fi
+
+          if changed "$SANDBOX_CHANGED"; then
+            sed -i -E "s|(thanosprime/projectdavid-core-sandbox:)dev-[a-f0-9]{8}|\1dev-${SHORT_SHA}|g" docker-compose.yml
+          fi
+
+          if changed "$TRAINING_CHANGED"; then
+            sed -i -E "s|(thanosprime/projectdavid-core-training-api:)dev-[a-f0-9]{8}|\1dev-${SHORT_SHA}|g" docker-compose.yml
+            sed -i -E "s|(thanosprime/projectdavid-core-training-worker:)dev-[a-f0-9]{8}|\1dev-${SHORT_SHA}|g" docker-compose.yml
+          fi
+
+          if changed "$INFERENCE_CHANGED"; then
+            sed -i -E "s|(thanosprime/projectdavid-core-inference-worker:)dev-[a-f0-9]{8}|\1dev-${SHORT_SHA}|g" docker-compose.yml
+          fi
+
+          if changed "$ROUTER_CHANGED"; then
+            sed -i -E "s|(thanosprime/projectdavid-core-router:)dev-[a-f0-9]{8}|\1dev-${SHORT_SHA}|g" docker-compose.yml
+          fi
 
           git add docker-compose.yml
-          git diff --cached --quiet && echo "No changes to commit" && exit 0
+          git diff --cached --quiet && echo "No staging pin changes to commit" && exit 0
 
-          git commit -m "chore(deps): pin staging images to dev-${SHORT_SHA} [skip ci]"
+          git commit -m "chore(deps): pin changed staging images to dev-${SHORT_SHA} [skip ci]"
           git push origin main
 
   # ──────────────────────────────────────────────────────────────────────────
-  #  🚀  Build & Publish Docker images (MAIN BRANCH ONLY)
+  #  🚀 Build & Publish Production Images (MAIN only)
+  #
+  #  Changed images are rebuilt. Unchanged images are re-tagged from :latest
+  #  so every Core release still exposes a complete umbrella version.
   # ──────────────────────────────────────────────────────────────────────────
   build_and_publish:
     name: "🚀 Build, Tag, and Publish Images to Docker Hub"
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test, changes]
     if: |
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
@@ -383,9 +487,6 @@ jobs:
           sudo rm -rf /opt/hostedtoolcache/CodeQL
           sudo docker image prune --all --force
           df -h
-
-      - name: "⚙️ Setup QEMU"
-        uses: docker/setup-qemu-action@v3
 
       - name: "⚙️ Setup Docker Buildx"
         uses: docker/setup-buildx-action@v3
@@ -412,97 +513,117 @@ jobs:
             @semantic-release/github
 
       - name: "🚀 Run semantic-release"
-        id: semantic
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx semantic-release
 
-      - name: "🏷️ Extract Git Tag Version"
-        id: get_version
+      - name: "🏷️ Detect release version"
+        id: release
         run: |
           git fetch --tags origin
-          VERSION=$(git describe --tags --exact-match HEAD 2>/dev/null || git describe --tags --abbrev=0 HEAD 2>/dev/null)
-          if [ -z "$VERSION" ]; then
-            echo "::error::Could not determine version tag after semantic-release."
-            exit 1
+
+          TAG=$(git tag --points-at HEAD | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+
+          if [ -z "$TAG" ]; then
+            echo "No semantic-release version tag points at HEAD; skipping Docker publication."
+            echo "released=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-          VERSION=${VERSION#v}
+
+          VERSION=${TAG#v}
+          MINOR=$(echo "$VERSION" | cut -d. -f1-2)
+          MAJOR=$(echo "$VERSION" | cut -d. -f1)
+          SHORT_SHA=${GITHUB_SHA::7}
+
           echo "Detected version: $VERSION"
-          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "released=true" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "minor=$MINOR" >> "$GITHUB_OUTPUT"
+          echo "major=$MAJOR" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
 
       - name: "🔧 Define API Image Metadata"
+        if: steps.release.outputs.released == 'true'
         id: meta_api
         uses: docker/metadata-action@v5
         with:
           images: thanosprime/projectdavid-core-api
           tags: |
-            type=semver,pattern={{version}},value=${{ steps.get_version.outputs.VERSION }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ steps.get_version.outputs.VERSION }}
-            type=semver,pattern={{major}},value=${{ steps.get_version.outputs.VERSION }}
+            type=semver,pattern={{version}},value=${{ steps.release.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.release.outputs.version }}
+            type=semver,pattern={{major}},value=${{ steps.release.outputs.version }}
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
 
       - name: "🔧 Define Sandbox Image Metadata"
+        if: steps.release.outputs.released == 'true'
         id: meta_sandbox
         uses: docker/metadata-action@v5
         with:
           images: thanosprime/projectdavid-core-sandbox
           tags: |
-            type=semver,pattern={{version}},value=${{ steps.get_version.outputs.VERSION }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ steps.get_version.outputs.VERSION }}
-            type=semver,pattern={{major}},value=${{ steps.get_version.outputs.VERSION }}
+            type=semver,pattern={{version}},value=${{ steps.release.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.release.outputs.version }}
+            type=semver,pattern={{major}},value=${{ steps.release.outputs.version }}
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
 
       - name: "🔧 Define Training API Image Metadata"
+        if: steps.release.outputs.released == 'true'
         id: meta_training_api
         uses: docker/metadata-action@v5
         with:
           images: thanosprime/projectdavid-core-training-api
           tags: |
-            type=semver,pattern={{version}},value=${{ steps.get_version.outputs.VERSION }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ steps.get_version.outputs.VERSION }}
-            type=semver,pattern={{major}},value=${{ steps.get_version.outputs.VERSION }}
+            type=semver,pattern={{version}},value=${{ steps.release.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.release.outputs.version }}
+            type=semver,pattern={{major}},value=${{ steps.release.outputs.version }}
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
 
       - name: "🔧 Define Training Worker Image Metadata"
+        if: steps.release.outputs.released == 'true'
         id: meta_training_worker
         uses: docker/metadata-action@v5
         with:
           images: thanosprime/projectdavid-core-training-worker
           tags: |
-            type=semver,pattern={{version}},value=${{ steps.get_version.outputs.VERSION }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ steps.get_version.outputs.VERSION }}
-            type=semver,pattern={{major}},value=${{ steps.get_version.outputs.VERSION }}
+            type=semver,pattern={{version}},value=${{ steps.release.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.release.outputs.version }}
+            type=semver,pattern={{major}},value=${{ steps.release.outputs.version }}
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
 
       - name: "🔧 Define Inference Worker Image Metadata"
+        if: steps.release.outputs.released == 'true'
         id: meta_inference_worker
         uses: docker/metadata-action@v5
         with:
           images: thanosprime/projectdavid-core-inference-worker
           tags: |
-            type=semver,pattern={{version}},value=${{ steps.get_version.outputs.VERSION }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ steps.get_version.outputs.VERSION }}
-            type=semver,pattern={{major}},value=${{ steps.get_version.outputs.VERSION }}
+            type=semver,pattern={{version}},value=${{ steps.release.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.release.outputs.version }}
+            type=semver,pattern={{major}},value=${{ steps.release.outputs.version }}
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
 
       - name: "🔧 Define Router Image Metadata"
+        if: steps.release.outputs.released == 'true'
         id: meta_router
         uses: docker/metadata-action@v5
         with:
           images: thanosprime/projectdavid-core-router
           tags: |
-            type=semver,pattern={{version}},value=${{ steps.get_version.outputs.VERSION }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ steps.get_version.outputs.VERSION }}
-            type=semver,pattern={{major}},value=${{ steps.get_version.outputs.VERSION }}
+            type=semver,pattern={{version}},value=${{ steps.release.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.release.outputs.version }}
+            type=semver,pattern={{major}},value=${{ steps.release.outputs.version }}
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
 
       - name: "🏗️ Build & Push API Image"
+        if: |
+          steps.release.outputs.released == 'true' &&
+          (needs.changes.outputs.api == 'true' || needs.changes.outputs.shared == 'true')
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -515,6 +636,9 @@ jobs:
           cache-to: type=gha,mode=max,scope=api
 
       - name: "🏗️ Build & Push Sandbox Image"
+        if: |
+          steps.release.outputs.released == 'true' &&
+          (needs.changes.outputs.sandbox == 'true' || needs.changes.outputs.shared == 'true')
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -527,6 +651,9 @@ jobs:
           cache-to: type=gha,mode=max,scope=sandbox
 
       - name: "🏗️ Build & Push Training Images (training-api + training-worker)"
+        if: |
+          steps.release.outputs.released == 'true' &&
+          (needs.changes.outputs.training == 'true' || needs.changes.outputs.shared == 'true')
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -541,6 +668,9 @@ jobs:
           cache-to: type=gha,mode=max,scope=training
 
       - name: "🏗️ Build & Push Inference Worker Image"
+        if: |
+          steps.release.outputs.released == 'true' &&
+          (needs.changes.outputs.inference == 'true' || needs.changes.outputs.shared == 'true')
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -553,6 +683,9 @@ jobs:
           cache-to: type=gha,mode=max,scope=inference
 
       - name: "🏗️ Build & Push Router Image"
+        if: |
+          steps.release.outputs.released == 'true' &&
+          (needs.changes.outputs.router == 'true' || needs.changes.outputs.shared == 'true')
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -564,32 +697,71 @@ jobs:
           cache-from: type=gha,scope=router
           cache-to: type=gha,mode=max,scope=router
 
-      - name: "📋 Output production image tags"
+      - name: "🏷️ Re-tag unchanged production images"
+        if: steps.release.outputs.released == 'true'
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          MINOR: ${{ steps.release.outputs.minor }}
+          MAJOR: ${{ steps.release.outputs.major }}
+          SHORT_SHA: ${{ steps.release.outputs.short_sha }}
+          API_CHANGED: ${{ needs.changes.outputs.api }}
+          SANDBOX_CHANGED: ${{ needs.changes.outputs.sandbox }}
+          TRAINING_CHANGED: ${{ needs.changes.outputs.training }}
+          INFERENCE_CHANGED: ${{ needs.changes.outputs.inference }}
+          ROUTER_CHANGED: ${{ needs.changes.outputs.router }}
+          SHARED_CHANGED: ${{ needs.changes.outputs.shared }}
         run: |
-          VERSION="${{ steps.get_version.outputs.VERSION }}"
-          MINOR=$(echo "${VERSION}" | cut -d. -f1-2)
-          MAJOR=$(echo "${VERSION}" | cut -d. -f1)
-          echo "## Production images released @ v${VERSION}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Each image is pushed with the following rolling tags:" >> $GITHUB_STEP_SUMMARY
-          echo "- \`${VERSION}\` — exact version, immutable" >> $GITHUB_STEP_SUMMARY
-          echo "- \`${MINOR}\` — rolling minor (auto-updates on patch releases)" >> $GITHUB_STEP_SUMMARY
-          echo "- \`${MAJOR}\` — rolling major (auto-updates on minor + patch releases)" >> $GITHUB_STEP_SUMMARY
-          echo "- \`latest\` — tip of main" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Service | Exact | Minor | Major |" >> $GITHUB_STEP_SUMMARY
-          echo "|---|---|---|---|" >> $GITHUB_STEP_SUMMARY
-          echo "| api | \`${VERSION}\` | \`${MINOR}\` | \`${MAJOR}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| sandbox | \`${VERSION}\` | \`${MINOR}\` | \`${MAJOR}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| training-api | \`${VERSION}\` | \`${MINOR}\` | \`${MAJOR}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| training-worker | \`${VERSION}\` | \`${MINOR}\` | \`${MAJOR}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| inference-worker | \`${VERSION}\` | \`${MINOR}\` | \`${MAJOR}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| router | \`${VERSION}\` | \`${MINOR}\` | \`${MAJOR}\` |" >> $GITHUB_STEP_SUMMARY
+          retag_if_unchanged() {
+            repo="$1"
+            changed="$2"
+
+            if [ "$changed" = "true" ] || [ "$SHARED_CHANGED" = "true" ]; then
+              echo "Rebuilt: $repo"
+              return
+            fi
+
+            echo "Re-tagging unchanged image: $repo"
+            docker buildx imagetools create \
+              --tag "${repo}:${VERSION}" \
+              --tag "${repo}:${MINOR}" \
+              --tag "${repo}:${MAJOR}" \
+              --tag "${repo}:latest" \
+              --tag "${repo}:sha-${SHORT_SHA}" \
+              "${repo}:latest"
+          }
+
+          retag_if_unchanged "thanosprime/projectdavid-core-api" "$API_CHANGED"
+          retag_if_unchanged "thanosprime/projectdavid-core-sandbox" "$SANDBOX_CHANGED"
+          retag_if_unchanged "thanosprime/projectdavid-core-training-api" "$TRAINING_CHANGED"
+          retag_if_unchanged "thanosprime/projectdavid-core-training-worker" "$TRAINING_CHANGED"
+          retag_if_unchanged "thanosprime/projectdavid-core-inference-worker" "$INFERENCE_CHANGED"
+          retag_if_unchanged "thanosprime/projectdavid-core-router" "$ROUTER_CHANGED"
+
+      - name: "📋 Output production image tags"
+        if: steps.release.outputs.released == 'true'
+        run: |
+          VERSION="${{ steps.release.outputs.version }}"
+          MINOR="${{ steps.release.outputs.minor }}"
+          MAJOR="${{ steps.release.outputs.major }}"
+
+          echo "## Production images released @ v${VERSION}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Changed components were rebuilt; unchanged components were re-tagged from their existing \`:latest\` digest." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Service | Exact | Minor | Major |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| api | \`${VERSION}\` | \`${MINOR}\` | \`${MAJOR}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| sandbox | \`${VERSION}\` | \`${MINOR}\` | \`${MAJOR}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| training-api | \`${VERSION}\` | \`${MINOR}\` | \`${MAJOR}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| training-worker | \`${VERSION}\` | \`${MINOR}\` | \`${MAJOR}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| inference-worker | \`${VERSION}\` | \`${MINOR}\` | \`${MAJOR}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| router | \`${VERSION}\` | \`${MINOR}\` | \`${MAJOR}\` |" >> "$GITHUB_STEP_SUMMARY"
 
       - name: "📦 Update projectdavid-platform with production image tags"
+        if: steps.release.outputs.released == 'true'
         env:
           PLATFORM_REPO_PAT: ${{ secrets.PLATFORM_REPO_PAT }}
-          VERSION: ${{ steps.get_version.outputs.VERSION }}
+          VERSION: ${{ steps.release.outputs.version }}
         run: |
           git clone https://x-access-token:${PLATFORM_REPO_PAT}@github.com/project-david-ai/projectdavid-platform.git /tmp/platform
           cd /tmp/platform
@@ -597,18 +769,10 @@ jobs:
           git config user.email "ci@projectdavid.ai"
           git config user.name "Project David CI"
 
-          # ──────────────────────────────────────────────────────────────
           # Rolling-tag guard:
-          # Platform YMLs pin core images to the MINOR tag (e.g. :1.39).
-          # Docker Hub re-tags :1.39 on every patch release, so patch-level
-          # bumps (1.39.0 → 1.39.1) propagate to operators automatically on
-          # their next `docker compose pull` / stack restart — NO platform
-          # release needed.
-          #
-          # This guard detects patch-only releases and exits early, leaving
-          # the platform repo untouched. Only minor/major bumps trigger a
-          # platform update (which cuts a new platform release downstream).
-          # ──────────────────────────────────────────────────────────────
+          # Platform YMLs pin core images to the MINOR tag (e.g. :1.43).
+          # Patch releases re-tag :1.43 automatically, so no Platform release
+          # is needed for patch-only Core releases.
           CURR_MINOR=$(echo "${VERSION}" | cut -d. -f1-2)
           PREV_MINOR=$(grep -oP 'projectdavid-core-api:\K[0-9]+\.[0-9]+' docker-compose.yml 2>/dev/null | head -1 || echo "")
 
@@ -617,8 +781,8 @@ jobs:
 
           if [ -n "${PREV_MINOR}" ] && [ "${PREV_MINOR}" = "${CURR_MINOR}" ]; then
             echo "✅ Patch release within same minor series (${CURR_MINOR}.x)."
-            echo "   Operators on :${CURR_MINOR} will pull new patch on next restart."
-            echo "   No platform update required. Exiting cleanly."
+            echo "   Operators on :${CURR_MINOR} receive the new image on next pull/restart."
+            echo "   No platform update required."
             exit 0
           fi
 
@@ -643,7 +807,7 @@ jobs:
               echo "Skipping missing file: $FILE"
               continue
             fi
-            # Pin to MINOR tag (e.g. :1.39) so patches auto-propagate.
+
             sed -i "s|thanosprime/projectdavid-core-\([^:]*\):[0-9]*\.[0-9]*\.[0-9]*|thanosprime/projectdavid-core-\1:${CURR_MINOR}|g" "$FILE"
             sed -i "s|thanosprime/projectdavid-core-\([^:]*\):[0-9]*\.[0-9]*\b|thanosprime/projectdavid-core-\1:${CURR_MINOR}|g" "$FILE"
             sed -i "s|thanosprime/projectdavid-core-\([^:]*\):latest|thanosprime/projectdavid-core-\1:${CURR_MINOR}|g" "$FILE"
@@ -663,7 +827,7 @@ jobs:
 
           Released from projectdavid-core @ $(date +%Y-%m-%d)
           Platform YMLs now pin to rolling minor tag :${CURR_MINOR}.
-          Patch releases within ${CURR_MINOR}.x will propagate automatically
+          Patch releases within ${CURR_MINOR}.x propagate automatically
           on operator restart — no new platform release required.
           All docker-compose variants updated (root + projectdavid_platform/)."
 
