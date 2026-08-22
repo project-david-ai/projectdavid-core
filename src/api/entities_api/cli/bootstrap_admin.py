@@ -7,8 +7,10 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -57,6 +59,20 @@ DEFAULT_ADMIN_NAME = "Default Admin"
 DEFAULT_ADMIN_KEY_NAME = "Admin Bootstrap Key"
 ADMIN_API_KEY_ENV_VAR = "ADMIN_API_KEY"
 DB_URL_ENV_VAR = "DATABASE_URL"
+
+
+@dataclass(frozen=True)
+class BootstrapAdminResult:
+    """Structured result for human and machine bootstrap consumers."""
+
+    status: str
+    user_id: str
+    email: str
+    key_prefix: str
+    user_created: bool
+    key_created: bool
+    api_key: str | None
+
 
 # ---------------------------------------------------------------------------
 # Utilities
@@ -198,29 +214,74 @@ def _ensure_api_key(db: Session, user: User, key_name: str) -> tuple[str | None,
 # ---------------------------------------------------------------------------
 
 
-def _print_new_key(user: User, prefix: str, plain_key: str) -> None:
+def _print_new_key(
+    *,
+    email: str,
+    user_id: str,
+    prefix: str,
+    plain_key: str,
+) -> None:
     width = 64
     typer.echo("\n" + "=" * width)
     typer.echo("  ✓  Admin API Key Generated")
     typer.echo("=" * width)
-    typer.echo(f"  Email   : {user.email}")
-    typer.echo(f"  User ID : {user.id}")
+    typer.echo(f"  Email   : {email}")
+    typer.echo(f"  User ID : {user_id}")
     typer.echo(f"  Prefix  : {prefix}")
     typer.echo("-" * width)
     typer.echo(f"  API KEY : {plain_key}")
     typer.echo("-" * width)
     typer.echo("  This key will NOT be shown again.")
-    typer.echo(f"  Set it in your environment:")
+    typer.echo("  Set it in your environment:")
     typer.echo(f"    export {ADMIN_API_KEY_ENV_VAR}={plain_key}")
     typer.echo("=" * width + "\n")
 
 
-def _print_existing_key(user: User, prefix: str) -> None:
+def _print_existing_key(*, email: str, prefix: str) -> None:
     typer.echo(
-        f"\n[info] Admin user '{user.email}' already has an API key (prefix={prefix}).\n"
+        f"\n[info] Admin user '{email}' already has an API key (prefix={prefix}).\n"
         "       No new key was generated.\n"
-        "       If you have lost the key, delete the existing ApiKey row and re-run.\n"
+        "       If you have lost the key, rotate/revoke the existing key and re-run.\n"
     )
+
+
+def bootstrap_admin_record(
+    *,
+    db_url: str,
+    email: str,
+    name: str,
+    key_name: str,
+) -> BootstrapAdminResult:
+    """Bootstrap the Project David administrator and return a structured result.
+
+    Project David Core is the sole authority that creates the administrator API
+    key.  The plaintext is returned only when a new key is created; an existing
+    hashed key cannot be recovered.
+    """
+    effective_url = _fix_db_url_for_local_dev(db_url)
+    engine = _build_engine(effective_url)
+
+    with Session(engine) as db:
+        try:
+            # All mutations happen in one atomic transaction.
+            user, user_created = _ensure_admin_user(db, email, name)
+            plain_key, prefix = _ensure_api_key(db, user, key_name)
+            db.commit()
+            db.refresh(user)
+            log.info("Bootstrap transaction committed successfully.")
+
+            return BootstrapAdminResult(
+                status="ok",
+                user_id=str(user.id),
+                email=str(user.email),
+                key_prefix=prefix,
+                user_created=user_created,
+                key_created=plain_key is not None,
+                api_key=plain_key,
+            )
+        except Exception:
+            db.rollback()
+            raise
 
 
 # ---------------------------------------------------------------------------
@@ -248,41 +309,61 @@ def bootstrap_admin(
         ...,
         "--db-url",
         envvar=DB_URL_ENV_VAR,
-        help="SQLAlchemy database URL.  Required if SPECIAL_DB_URL is not set.",
+        help="SQLAlchemy database URL. Required if SPECIAL_DB_URL is not set.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit a machine-readable bootstrap result.",
     ),
 ) -> None:
-    """
-    Bootstrap an admin user and API key.
+    """Bootstrap an admin user and API key.
 
     Safe to re-run: existing users and keys are detected and left untouched.
-    The generated API key is printed once to stdout — store it immediately.
+    A newly generated API key is returned once; existing plaintext keys cannot be
+    recovered from their stored hash.
     """
-    effective_url = _fix_db_url_for_local_dev(db_url)
-    engine = _build_engine(effective_url)
-
-    with Session(engine) as db:
-        try:
-            # --- All mutations in a single atomic transaction ---
-            user, user_created = _ensure_admin_user(db, email, name)
-            plain_key, prefix = _ensure_api_key(db, user, key_name)
-            db.commit()
-            # Refresh while session is still open so attributes are accessible
-            # for the print functions below — avoids DetachedInstanceError.
-            db.refresh(user)
-            log.info("Bootstrap transaction committed successfully.")
-        except Exception as exc:
-            db.rollback()
-            log.error(
-                f"Bootstrap failed, transaction rolled back: {exc}", exc_info=True
+    try:
+        result = bootstrap_admin_record(
+            db_url=db_url,
+            email=email,
+            name=name,
+            key_name=key_name,
+        )
+    except SystemExit:
+        raise
+    except Exception as exc:
+        log.error(
+            f"Bootstrap failed, transaction rolled back: {exc}",
+            exc_info=True,
+        )
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {"status": "error", "error": str(exc)},
+                    separators=(",", ":"),
+                )
             )
-            typer.echo(f"[error] Bootstrap failed: {exc}", err=True)
-            raise SystemExit(1)
-
-        # --- Output inside the session block so user attributes remain accessible ---
-        if plain_key:
-            _print_new_key(user, prefix, plain_key)
         else:
-            _print_existing_key(user, prefix)
+            typer.echo(f"[error] Bootstrap failed: {exc}", err=True)
+        raise SystemExit(1)
+
+    if json_output:
+        typer.echo(json.dumps(asdict(result), separators=(",", ":")))
+        return
+
+    if result.api_key:
+        _print_new_key(
+            email=result.email,
+            user_id=result.user_id,
+            prefix=result.key_prefix,
+            plain_key=result.api_key,
+        )
+    else:
+        _print_existing_key(
+            email=result.email,
+            prefix=result.key_prefix,
+        )
 
 
 # ---------------------------------------------------------------------------
