@@ -1,3 +1,10 @@
+## [1.43.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.43.0...v1.43.1) (2026-08-22)
+
+
+### Bug Fixes
+
+* restore Ray inference startup and optimise CI builds ([bf65f28](https://github.com/project-david-ai/projectdavid-core/commit/bf65f281bcbc1bc5def6228265218970cd166c17))
+
 # [1.43.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.42.3...v1.43.0) (2026-08-22)
 
 
