@@ -50,11 +50,10 @@ import socket
 import time
 
 import ray
-from projectdavid_common.utilities.logging_service import LoggingUtility
 from ray import serve
 from sqlalchemy.orm import Session
 
-log = LoggingUtility()
+log = logging.getLogger("projectdavid.inference_worker")
 
 # ---------------------------------------------------------------------------
 # Configuration
