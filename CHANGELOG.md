@@ -1,3 +1,10 @@
+# [1.43.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.42.3...v1.43.0) (2026-08-22)
+
+
+### Features
+
+* add machine-readable admin bootstrap contract ([cbb773d](https://github.com/project-david-ai/projectdavid-core/commit/cbb773db5c08e8e40ba9d4808a383b0d80052cff))
+
 ## [1.42.3](https://github.com/project-david-ai/projectdavid-core/compare/v1.42.2...v1.42.3) (2026-08-21)
 
 
