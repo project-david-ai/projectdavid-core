@@ -41,7 +41,11 @@ class DeploymentService:
             return []
 
         nodes = data.get("data", {}).get("result", {}).get("result", [])
-        return [n for n in nodes if isinstance(n, dict) and n.get("state") == "ALIVE"]
+        return [
+            node
+            for node in nodes
+            if isinstance(node, dict) and node.get("state") == "ALIVE"
+        ]
 
     def _find_available_node(
         self,
@@ -63,7 +67,7 @@ class DeploymentService:
 
         nodes_sorted = sorted(
             nodes,
-            key=lambda n: n.get("resources_total", {}).get("memory", 0.0),
+            key=lambda node: node.get("resources_total", {}).get("memory", 0.0),
             reverse=True,
         )
 
@@ -159,14 +163,14 @@ class DeploymentService:
                 ),
                 "deployments": [
                     {
-                        "deployment_id": dep.id,
+                        "deployment_id": deployment.id,
                         "status": (
-                            dep.status.value
-                            if hasattr(dep.status, "value")
-                            else str(dep.status)
+                            deployment.status.value
+                            if hasattr(deployment.status, "value")
+                            else str(deployment.status)
                         ),
                     }
-                    for dep in blocking
+                    for deployment in blocking
                 ],
             },
         )
@@ -254,6 +258,28 @@ class DeploymentService:
             .order_by(InferenceDeployment.last_seen.desc())
             .all()
         )
+
+    def deactivate_all(self) -> dict:
+        deployment_ids = self._mark_deployments_cancelling(
+            self.db.query(InferenceDeployment)
+        )
+
+        if not deployment_ids:
+            return {
+                "status": "cancelled",
+                "deployment_ids": [],
+                "message": "No active local deployments require teardown.",
+            }
+
+        return {
+            "status": "cancelling",
+            "deployment_ids": deployment_ids,
+            "message": (
+                "All local deployments are being removed from Ray Serve. "
+                "Project David will report them cancelled only after runtime "
+                "teardown and GPU release are confirmed."
+            ),
+        }
 
     def deactivate_all_for_user(self, user_id: str) -> dict:
         self.db.query(FineTunedModel).filter(
