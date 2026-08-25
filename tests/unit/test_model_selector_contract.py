@@ -119,7 +119,7 @@ def test_fine_tuned_activation_links_ftm_to_resolved_base_model():
     base_model = SimpleNamespace(id=BASE_MODEL_ID, endpoint=HF_MODEL_ID)
 
     service.get_fine_tuned_model = MagicMock(return_value=fine_tuned_model)
-    service.deactivate_all_for_user = MagicMock()
+    service._get_blocking_deployments = MagicMock(return_value=[])
     service.registry.resolve.return_value = base_model
     service._find_available_node = MagicMock(return_value="node_test")
     service._check_node_capacity = MagicMock()
@@ -131,7 +131,9 @@ def test_fine_tuned_activation_links_ftm_to_resolved_base_model():
     ):
         result = service.activate_fine_tuned_model(FINE_TUNED_MODEL_ID)
 
+    service._get_blocking_deployments.assert_called_once_with()
     service.registry.resolve.assert_called_once_with(HF_MODEL_ID)
+
     created_deployment = db.add.call_args.args[0]
     assert created_deployment.fine_tuned_model_id == FINE_TUNED_MODEL_ID
     assert created_deployment.base_model_id == BASE_MODEL_ID
