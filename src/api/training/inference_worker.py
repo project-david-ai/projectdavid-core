@@ -641,11 +641,16 @@ def _deployment_name(deployment_id: str) -> str:
 
 class InferenceReconciler:
     """
-    Polls the inference_deployments DB table and reconciles Ray Serve state.
+    Poll the inference_deployments DB table and reconcile Ray Serve state.
 
-    Pending deployments  → create Ray Serve deployment (GPU reserved)
-    Active deployments   → verify healthy
-    Orphaned deployments → delete Ray Serve deployment (GPU released)
+    Lifecycle ordering is intentionally teardown-first:
+
+        cancelling -> Ray application removed -> GPU capacity returned -> cancelled
+        pending    -> Ray application submitted -> RUNNING -> active
+
+    New deployments are never submitted while a cancellation or managed Ray Serve
+    orphan is still being torn down. This prevents model switches from racing the
+    previous vLLM process for the same GPU.
     """
 
     def __init__(self):
@@ -670,6 +675,18 @@ class InferenceReconciler:
                 self._InferenceDeployment.status.in_(
                     [StatusEnum.pending, StatusEnum.active]
                 ),
+            )
+            .all()
+        )
+
+    def _get_cancelling_deployments(self, db: Session) -> list:
+        from projectdavid_common.schemas.enums import StatusEnum
+
+        return (
+            db.query(self._InferenceDeployment)
+            .filter(
+                self._InferenceDeployment.node_id.is_not(None),
+                self._InferenceDeployment.status == StatusEnum.cancelling,
             )
             .all()
         )
@@ -704,12 +721,16 @@ class InferenceReconciler:
         return {dep.fine_tuned_model_id: adapter_path}
 
     def _deploy(self, db: Session, dep) -> None:
-        """Create a Ray Serve deployment on this HEAD node.
+        """Submit a Ray Serve deployment on this HEAD node.
 
         All vLLM engine hyperparams are resolved from the InferenceDeployment
         DB record first, falling back to env vars, then built-in safe defaults.
         This means each model can have its own tuned configuration without
         requiring a container rebuild or compose change.
+
+        serve.run(..., blocking=False) only submits the application. The DB row
+        therefore remains pending here; reconcile() promotes it to active only
+        after Ray Serve reports RUNNING.
         """
         from projectdavid_common.schemas.enums import StatusEnum
 
@@ -736,23 +757,24 @@ class InferenceReconciler:
         # Quantization: "awq", "awq_marlin", "gptq", "bitsandbytes", or None
         quantization = getattr(dep, "quantization", None)
 
-        # Compute dtype: "float16", "bfloat16", "auto", or None → VLLMDeployment defaults to float16
+        # Compute dtype: "float16", "bfloat16", "auto", or None → defaults to float16
         dtype = getattr(dep, "dtype", None)
 
         # Disable CUDA graphs — slower but useful when debugging OOM crashes
         enforce_eager = bool(getattr(dep, "enforce_eager", False))
 
         # Per-modality token cap — critical for vision models on constrained GPUs
-        # e.g. {"image": 2} prevents a single high-res image from consuming all KV cache
+        # e.g. {"image": 2} prevents one high-res image consuming all KV cache
         limit_mm_per_prompt = getattr(dep, "limit_mm_per_prompt", None)
 
-        # Processor-level kwargs — overrides family registry defaults when set via API.
+        # Processor-level kwargs — overrides family registry defaults via API.
         # e.g. {"min_pixels": 784, "max_pixels": 50176} for Qwen2.5-VL
         mm_processor_kwargs = getattr(dep, "mm_processor_kwargs", None)
 
         log.info(
             "🚢 Deploying via Ray Serve: %s model=%s tp=%d gpu_mem_util=%.2f "
-            "max_model_len=%d max_lora_rank=%d quantization=%s dtype=%s enforce_eager=%s lora=%s",
+            "max_model_len=%d max_lora_rank=%d quantization=%s dtype=%s "
+            "enforce_eager=%s lora=%s",
             deployment_name,
             model_endpoint,
             tp_size,
@@ -789,60 +811,248 @@ class InferenceReconciler:
             blocking=False,
         )
 
-        dep.status = StatusEnum.active
+        dep.status = StatusEnum.pending
         dep.internal_hostname = f"http://inference_worker:8000/{deployment_name}"
+        dep.last_seen = int(time.time())
         db.commit()
 
         self._active[dep.id] = deployment_name
         log.info(
-            "✅ Ray Serve deployment active: %s (gpu_mem_util=%.2f max_model_len=%d max_lora_rank=%d)",
+            "⏳ Ray Serve deployment submitted: %s "
+            "(waiting for RUNNING; gpu_mem_util=%.2f max_model_len=%d "
+            "max_lora_rank=%d)",
             deployment_name,
             gpu_mem_util,
             max_model_len,
             max_lora_rank,
         )
 
-    def _delete_deployment(self, deployment_name: str) -> None:
+    def _delete_deployment(self, deployment_name: str) -> bool:
         try:
             serve.delete(deployment_name)
-            log.info("🛑 Ray Serve deployment deleted: %s", deployment_name)
-        except Exception as e:
-            log.warning("Could not delete deployment %s: %s", deployment_name, e)
+            log.info("🛑 Ray Serve deployment deletion requested: %s", deployment_name)
+            return True
+        except Exception as exc:
+            log.warning(
+                "Could not delete deployment %s: %s",
+                deployment_name,
+                exc,
+            )
+            return False
 
-    def _get_active_serve_deployments(self) -> set:
+    def _get_serve_applications(self):
+        """Return current Ray Serve applications, or None if state is unreadable.
+
+        Failing closed matters here: an unavailable Serve status API must never be
+        interpreted as "there are no deployments", otherwise a cancellation could
+        be marked complete while the old vLLM actor is still alive.
+        """
         try:
-            statuses = serve.status().applications
-            return set(statuses.keys())
-        except Exception:
-            return set()
+            return dict(serve.status().applications)
+        except Exception as exc:
+            log.warning("Could not read Ray Serve application state: %s", exc)
+            return None
+
+    @staticmethod
+    def _application_status(application) -> str:
+        status = getattr(application, "status", "")
+        value = getattr(status, "value", status)
+        return str(value).split(".")[-1].upper()
+
+    def _gpu_capacity_available(self, dep) -> bool:
+        """Return True only when Ray exposes enough free GPU for this deployment."""
+        required = int(getattr(dep, "tensor_parallel_size", 1) or 1)
+
+        try:
+            cluster_resources = ray.cluster_resources()
+            available_resources = ray.available_resources()
+            total_gpu = float(cluster_resources.get("GPU", 0.0))
+            available_gpu = float(available_resources.get("GPU", 0.0))
+        except Exception as exc:
+            log.warning("Could not inspect Ray GPU resources: %s", exc)
+            return False
+
+        # Unit-test/CPU-only clusters legitimately expose no GPU resource at all.
+        # In a real GPU inference node total_gpu is positive, so free capacity is
+        # still required before cancellation completes or activation can proceed.
+        if total_gpu <= 0:
+            return True
+
+        if available_gpu + 1e-6 < required:
+            log.info(
+                "⏳ Waiting for GPU release — required=%d available=%.2f total=%.2f",
+                required,
+                available_gpu,
+                total_gpu,
+            )
+            return False
+
+        return True
+
+    def _mark_cancelled(self, db: Session, dep, deployment_name: str) -> None:
+        from projectdavid_common.schemas.enums import StatusEnum
+
+        dep.status = StatusEnum.cancelled
+        dep.internal_hostname = None
+        dep.last_seen = int(time.time())
+        db.commit()
+        self._active.pop(dep.id, None)
+        log.info(
+            "✅ Deployment cancelled; Ray application gone and GPU released: %s",
+            deployment_name,
+        )
 
     def reconcile(self) -> None:
+        from projectdavid_common.schemas.enums import StatusEnum
+
         db = self._get_db()
         try:
-            deployments = self._get_pending_deployments(db)
-            db_ids = {dep.id for dep in deployments}
-            expected_serve_names = {_deployment_name(dep_id) for dep_id in db_ids}
-            serve_names = self._get_active_serve_deployments()
+            # -----------------------------------------------------------------
+            # Phase 1 — explicit cancellation always wins.
+            # -----------------------------------------------------------------
+            cancelling = self._get_cancelling_deployments(db)
+            applications = self._get_serve_applications()
+            if applications is None:
+                return
 
-            for dep in deployments:
+            for dep in cancelling:
                 deployment_name = _deployment_name(dep.id)
-                if deployment_name not in serve_names:
-                    log.warning(
-                        "🚨 Deployment drift — %s not in Ray Serve. Redeploying.",
-                        deployment_name,
-                    )
-                    try:
-                        self._deploy(db, dep)
-                    except RuntimeError as e:
-                        log.error("Skipping deployment %s: %s", deployment_name, e)
+                application = applications.get(deployment_name)
 
-            for name in serve_names:
-                if name.startswith("vllm_") and name not in expected_serve_names:
+                if application is not None:
+                    app_status = self._application_status(application)
+
+                    if app_status == "DELETING":
+                        log.info(
+                            "⏳ Deployment deletion still in progress: %s",
+                            deployment_name,
+                        )
+                    else:
+                        log.info(
+                            "🛑 Cancelling %s — Ray status=%s",
+                            deployment_name,
+                            app_status or "UNKNOWN",
+                        )
+                        self._delete_deployment(deployment_name)
+                    continue
+
+                # Ray Serve no longer knows about the application. Cancellation
+                # is complete only once the scheduler also exposes the GPU again.
+                if self._gpu_capacity_available(dep):
+                    self._mark_cancelled(db, dep, deployment_name)
+
+            # Re-read cancellation rows after any completed transitions.
+            cancelling = self._get_cancelling_deployments(db)
+            if cancelling:
+                log.info(
+                    "⏳ Teardown barrier active — %d deployment(s) cancelling",
+                    len(cancelling),
+                )
+                return
+
+            # -----------------------------------------------------------------
+            # Phase 2 — clean managed Ray Serve orphans BEFORE deployment.
+            # -----------------------------------------------------------------
+            desired = self._get_pending_deployments(db)
+            desired_names = {_deployment_name(dep.id) for dep in desired}
+
+            applications = self._get_serve_applications()
+            if applications is None:
+                return
+
+            orphan_names = {
+                name
+                for name in applications
+                if name.startswith("vllm_") and name not in desired_names
+            }
+
+            if orphan_names:
+                for name in sorted(orphan_names):
                     log.info("🧹 Orphaned Ray Serve deployment — deleting: %s", name)
                     self._delete_deployment(name)
 
-        except Exception as e:
-            log.error("Reconciliation error: %s", e)
+                # Never deploy in the same reconciliation pass that initiated
+                # orphan teardown. The next poll verifies runtime disappearance
+                # and GPU release before any new model can claim resources.
+                log.info(
+                    "⏳ Teardown barrier active — %d orphan(s) awaiting removal",
+                    len(orphan_names),
+                )
+                return
+
+            # -----------------------------------------------------------------
+            # Phase 3 — reconcile desired pending/active deployments.
+            # -----------------------------------------------------------------
+            applications = self._get_serve_applications()
+            if applications is None:
+                return
+
+            for dep in desired:
+                deployment_name = _deployment_name(dep.id)
+                application = applications.get(deployment_name)
+
+                if application is not None:
+                    app_status = self._application_status(application)
+
+                    if app_status == "RUNNING":
+                        if dep.status != StatusEnum.active:
+                            dep.status = StatusEnum.active
+                            log.info(
+                                "✅ Ray Serve deployment RUNNING: %s",
+                                deployment_name,
+                            )
+
+                        dep.last_seen = int(time.time())
+                        db.commit()
+                        self._active[dep.id] = deployment_name
+                        continue
+
+                    if app_status == "DEPLOY_FAILED":
+                        dep.status = StatusEnum.failed
+                        dep.last_seen = int(time.time())
+                        db.commit()
+                        self._active.pop(dep.id, None)
+                        log.error("❌ Ray Serve deployment failed: %s", deployment_name)
+                        continue
+
+                    log.info(
+                        "⏳ Deployment %s still transitioning in Ray: %s",
+                        deployment_name,
+                        app_status or "UNKNOWN",
+                    )
+                    continue
+
+                # DB can survive inference_worker restarts. If an ACTIVE row has
+                # lost its Ray application, move it back to pending so desired
+                # local intent can be reconciled rather than silently lying.
+                if dep.status == StatusEnum.active:
+                    log.warning(
+                        "🚨 Active deployment missing from Ray Serve — "
+                        "returning to pending: %s",
+                        deployment_name,
+                    )
+                    dep.status = StatusEnum.pending
+                    dep.last_seen = int(time.time())
+                    db.commit()
+
+                if not self._gpu_capacity_available(dep):
+                    continue
+
+                try:
+                    self._deploy(db, dep)
+                except Exception as exc:
+                    dep.status = StatusEnum.failed
+                    dep.last_seen = int(time.time())
+                    db.commit()
+                    self._active.pop(dep.id, None)
+                    log.exception(
+                        "Failed to submit deployment %s: %s",
+                        deployment_name,
+                        exc,
+                    )
+
+        except Exception as exc:
+            log.exception("Reconciliation error: %s", exc)
         finally:
             db.close()
 

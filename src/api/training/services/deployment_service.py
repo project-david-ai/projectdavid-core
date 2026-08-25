@@ -1,4 +1,3 @@
-# src/api/training/services/deployment_service.py
 import os
 import socket
 import time
@@ -32,99 +31,201 @@ class DeploymentService:
     def _get_ray_nodes(self) -> list:
         try:
             resp = httpx.get(
-                f"{RAY_DASHBOARD_URL}/api/v0/nodes?detail=True", timeout=5.0
+                f"{RAY_DASHBOARD_URL}/api/v0/nodes?detail=True",
+                timeout=5.0,
             )
             resp.raise_for_status()
             data = resp.json()
         except Exception as exc:
             logging_utility.warning("Ray dashboard unreachable: %s", exc)
             return []
+
         nodes = data.get("data", {}).get("result", {}).get("result", [])
         return [n for n in nodes if isinstance(n, dict) and n.get("state") == "ALIVE"]
 
     def _find_available_node(
-        self, required_vram: float = 4.0, tensor_parallel_size: int = 1
+        self,
+        required_vram: float = 4.0,
+        tensor_parallel_size: int = 1,
     ) -> str:
         nodes = self._get_ray_nodes()
+
         if not nodes:
-            default_node = os.getenv("DEFAULT_NODE_ID", f"node_{socket.gethostname()}")
+            default_node = os.getenv(
+                "DEFAULT_NODE_ID",
+                f"node_{socket.gethostname()}",
+            )
             logging_utility.warning(
-                "No Ray nodes visible — using default: %s", default_node
+                "No Ray nodes visible — using default: %s",
+                default_node,
             )
             return default_node
+
         nodes_sorted = sorted(
             nodes,
             key=lambda n: n.get("resources_total", {}).get("memory", 0.0),
             reverse=True,
         )
+
         for node in nodes_sorted:
             resources = node.get("resources_total", {})
+
             if resources.get("GPU", 0.0) < tensor_parallel_size:
                 continue
+
             if resources.get("memory", 0.0) / (1024**3) < required_vram:
                 continue
+
             node_id = node.get("node_id", "")
             if node_id:
                 return node_id
-        default_node = os.getenv("DEFAULT_NODE_ID", f"node_{socket.gethostname()}")
+
+        default_node = os.getenv(
+            "DEFAULT_NODE_ID",
+            f"node_{socket.gethostname()}",
+        )
         logging_utility.warning(
-            "No qualifying node found — using default: %s", default_node
+            "No qualifying node found — using default: %s",
+            default_node,
         )
         return default_node
 
-    def _check_node_capacity(self, node_id: str, tensor_parallel_size: int = 1) -> None:
+    def _check_node_capacity(
+        self,
+        node_id: str,
+        tensor_parallel_size: int = 1,
+    ) -> None:
         try:
             resp = httpx.get(
-                f"{RAY_DASHBOARD_URL}/api/v0/nodes?detail=True", timeout=5.0
+                f"{RAY_DASHBOARD_URL}/api/v0/nodes?detail=True",
+                timeout=5.0,
             )
             resp.raise_for_status()
             nodes = resp.json().get("data", {}).get("result", {}).get("result", [])
         except Exception:
             return
+
         for node in nodes:
             if node.get("node_id") != node_id:
                 continue
+
             resources_available = node.get("resources_available", {})
-            resources_total = node.get("resources_total", {})
             available_gpu = resources_available.get("GPU", 0.0)
-            total_gpu = resources_total.get("GPU", 0.0)
-            active_deployments = self.db.query(InferenceDeployment).count()
-            effective_gpu = available_gpu if active_deployments > 0 else total_gpu
-            if effective_gpu < tensor_parallel_size:
+
+            if available_gpu < tensor_parallel_size:
                 raise HTTPException(
                     status_code=507,
                     detail=(
                         f"Node {node_id[:16]}... has insufficient GPUs. "
-                        f"Required: {tensor_parallel_size}, Available: {effective_gpu:.0f}."
+                        f"Required: {tensor_parallel_size}, "
+                        f"Available: {available_gpu:.0f}."
                     ),
                 )
+
             return
 
     def _get_serve_route(self, deployment_id: str) -> str:
         name = f"vllm_{deployment_id.replace('-', '_')}"
         return f"{RAY_SERVE_URL}/{name}"
 
+    def _get_blocking_deployments(self) -> List[InferenceDeployment]:
+        return (
+            self.db.query(InferenceDeployment)
+            .filter(
+                InferenceDeployment.status.in_(
+                    [
+                        StatusEnum.pending,
+                        StatusEnum.active,
+                        StatusEnum.cancelling,
+                    ]
+                )
+            )
+            .all()
+        )
+
+    def _ensure_activation_allowed(self) -> None:
+        blocking = self._get_blocking_deployments()
+
+        if not blocking:
+            return
+
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": (
+                    "A local inference deployment is still active, pending, "
+                    "or cancelling. Wait for teardown to complete before "
+                    "activating another model."
+                ),
+                "deployments": [
+                    {
+                        "deployment_id": dep.id,
+                        "status": (
+                            dep.status.value
+                            if hasattr(dep.status, "value")
+                            else str(dep.status)
+                        ),
+                    }
+                    for dep in blocking
+                ],
+            },
+        )
+
+    def _mark_deployments_cancelling(self, query) -> List[str]:
+        deployments = query.filter(
+            InferenceDeployment.status.in_(
+                [
+                    StatusEnum.pending,
+                    StatusEnum.active,
+                    StatusEnum.cancelling,
+                ]
+            )
+        ).all()
+
+        now = int(time.time())
+
+        for deployment in deployments:
+            deployment.status = StatusEnum.cancelling
+            deployment.last_seen = now
+
+        self.db.commit()
+
+        return [deployment.id for deployment in deployments]
+
     def get_fine_tuned_model(
-        self, model_id: str, user_id: Optional[str] = None
+        self,
+        model_id: str,
+        user_id: Optional[str] = None,
     ) -> FineTunedModel:
         query = self.db.query(FineTunedModel).filter(
             FineTunedModel.id == model_id,
             FineTunedModel.deleted_at.is_(None),
         )
+
         if user_id:
             query = query.filter(FineTunedModel.user_id == user_id)
+
         model = query.first()
+
         if not model:
-            raise HTTPException(status_code=404, detail="Fine-tuned model not found.")
+            raise HTTPException(
+                status_code=404,
+                detail="Fine-tuned model not found.",
+            )
+
         return model
 
     def list_fine_tuned_models(
-        self, user_id: str, limit: int = 50, offset: int = 0
+        self,
+        user_id: str,
+        limit: int = 50,
+        offset: int = 0,
     ) -> List[FineTunedModel]:
         return (
             self.db.query(FineTunedModel)
             .filter(
-                FineTunedModel.user_id == user_id, FineTunedModel.deleted_at.is_(None)
+                FineTunedModel.user_id == user_id,
+                FineTunedModel.deleted_at.is_(None),
             )
             .order_by(FineTunedModel.created_at.desc())
             .offset(offset)
@@ -132,12 +233,20 @@ class DeploymentService:
             .all()
         )
 
-    def soft_delete_model(self, model_id: str, user_id: Optional[str] = None) -> dict:
+    def soft_delete_model(
+        self,
+        model_id: str,
+        user_id: Optional[str] = None,
+    ) -> dict:
         model = self.get_fine_tuned_model(model_id, user_id)
         model.deleted_at = int(time.time())
         model.is_active = False
         self.db.commit()
-        return {"status": "deleted", "model_id": model_id}
+
+        return {
+            "status": "deleted",
+            "model_id": model_id,
+        }
 
     def list_deployments(self) -> List[InferenceDeployment]:
         return (
@@ -146,53 +255,72 @@ class DeploymentService:
             .all()
         )
 
-    def _clear_all_deployments(self) -> None:
-        self.db.query(InferenceDeployment).delete(synchronize_session=False)
-        self.db.commit()
-
     def deactivate_all_for_user(self, user_id: str) -> dict:
         self.db.query(FineTunedModel).filter(
-            FineTunedModel.user_id == user_id, FineTunedModel.is_active
-        ).update({"is_active": False}, synchronize_session=False)
-        self._clear_all_deployments()
+            FineTunedModel.user_id == user_id,
+            FineTunedModel.is_active,
+        ).update(
+            {"is_active": False},
+            synchronize_session=False,
+        )
+
+        deployment_ids = self._mark_deployments_cancelling(
+            self.db.query(InferenceDeployment)
+        )
+
+        if not deployment_ids:
+            return {
+                "status": "cancelled",
+                "deployment_ids": [],
+                "message": "No active local deployments require teardown.",
+            }
+
         return {
-            "status": "deactivating",
+            "status": "cancelling",
+            "deployment_ids": deployment_ids,
             "message": (
-                f"Cluster resources scheduled for release. "
-                f"Unload completes on next reconciler poll (≤{_POLL_INTERVAL}s)."
+                "Local deployments are being removed from Ray Serve. "
+                "Project David will mark them cancelled only after runtime "
+                "teardown and GPU release are confirmed."
             ),
         }
 
-    def deactivate_model(self, model_id: str, user_id: Optional[str] = None) -> dict:
+    def deactivate_model(
+        self,
+        model_id: str,
+        user_id: Optional[str] = None,
+    ) -> dict:
         model = self.get_fine_tuned_model(model_id, user_id)
-        self.db.query(InferenceDeployment).filter(
-            InferenceDeployment.fine_tuned_model_id == model.id
-        ).delete(synchronize_session=False)
+
+        deployment_ids = self._mark_deployments_cancelling(
+            self.db.query(InferenceDeployment).filter(
+                InferenceDeployment.fine_tuned_model_id == model.id
+            )
+        )
+
         model.is_active = False
         self.db.commit()
+
         return {
-            "status": "deactivating",
+            "status": "cancelling" if deployment_ids else "cancelled",
             "model_id": model.id,
-            "next_step": (
-                f"InferenceReconciler will unload from Ray Serve on next poll "
-                f"(≤{_POLL_INTERVAL}s)."
-            ),
+            "deployment_ids": deployment_ids,
         }
 
     def deactivate_base_model(self, base_model_id: str) -> dict:
         base = self.registry.resolve(base_model_id)
-        self.db.query(InferenceDeployment).filter(
-            InferenceDeployment.base_model_id == base.id,
-            InferenceDeployment.fine_tuned_model_id.is_(None),
-        ).delete(synchronize_session=False)
-        self.db.commit()
+
+        deployment_ids = self._mark_deployments_cancelling(
+            self.db.query(InferenceDeployment).filter(
+                InferenceDeployment.base_model_id == base.id,
+                InferenceDeployment.fine_tuned_model_id.is_(None),
+            )
+        )
+
         return {
-            "status": "deactivating",
+            "status": "cancelling" if deployment_ids else "cancelled",
             "base_model_id": base.id,
-            "next_step": (
-                f"InferenceReconciler will unload from Ray Serve on next poll "
-                f"(≤{_POLL_INTERVAL}s)."
-            ),
+            "deployment_ids": deployment_ids,
         }
 
     def activate_base_model(
@@ -211,12 +339,18 @@ class DeploymentService:
         mm_processor_kwargs: Optional[Dict[str, Any]] = None,
     ) -> dict:
         base = self.registry.resolve(base_model_id)
-        self._clear_all_deployments()
+
+        self._ensure_activation_allowed()
 
         node_id = target_node_id or self._find_available_node(
-            required_vram=4.0, tensor_parallel_size=tensor_parallel_size
+            required_vram=4.0,
+            tensor_parallel_size=tensor_parallel_size,
         )
-        self._check_node_capacity(node_id, tensor_parallel_size=tensor_parallel_size)
+
+        self._check_node_capacity(
+            node_id,
+            tensor_parallel_size=tensor_parallel_size,
+        )
 
         deployment_id = IdentifierService.generate_prefixed_id("dep")
         serve_route = self._get_serve_route(deployment_id)
@@ -270,7 +404,9 @@ class DeploymentService:
             "quantization": quantization,
             "dtype": dtype,
             "serve_route": serve_route,
-            "next_step": "InferenceReconciler will deploy via Ray Serve on next poll.",
+            "next_step": (
+                "InferenceReconciler will deploy via Ray Serve " "on next poll."
+            ),
         }
 
     def activate_fine_tuned_model(
@@ -288,13 +424,20 @@ class DeploymentService:
         mm_processor_kwargs: Optional[Dict[str, Any]] = None,
     ) -> dict:
         model = self.get_fine_tuned_model(model_id)
-        self.deactivate_all_for_user(model.user_id)
+
+        self._ensure_activation_allowed()
+
         base = self.registry.resolve(model.base_model)
 
         node_id = target_node_id or self._find_available_node(
-            required_vram=5.0, tensor_parallel_size=tensor_parallel_size
+            required_vram=5.0,
+            tensor_parallel_size=tensor_parallel_size,
         )
-        self._check_node_capacity(node_id, tensor_parallel_size=tensor_parallel_size)
+
+        self._check_node_capacity(
+            node_id,
+            tensor_parallel_size=tensor_parallel_size,
+        )
 
         deployment_id = IdentifierService.generate_prefixed_id("dep")
         serve_route = self._get_serve_route(deployment_id)
@@ -344,29 +487,42 @@ class DeploymentService:
             "quantization": quantization,
             "dtype": dtype,
             "serve_route": serve_route,
-            "next_step": "InferenceReconciler will deploy via Ray Serve on next poll.",
+            "next_step": (
+                "InferenceReconciler will deploy via Ray Serve " "on next poll."
+            ),
         }
 
     def update_deployment(
-        self, deployment_id: str, update: "DeploymentUpdateRequest"
+        self,
+        deployment_id: str,
+        update: "DeploymentUpdateRequest",
     ) -> dict:
         dep = (
             self.db.query(InferenceDeployment)
             .filter(InferenceDeployment.id == deployment_id)
             .first()
         )
+
         if not dep:
-            raise HTTPException(status_code=404, detail="Deployment not found.")
+            raise HTTPException(
+                status_code=404,
+                detail="Deployment not found.",
+            )
+
         data = update.model_dump(exclude_unset=True)
+
         for field, value in data.items():
             setattr(dep, field, value)
+
         dep.last_seen = int(time.time())
         self.db.commit()
+
         logging_utility.info(
             "DeploymentService: deployment %s updated — fields=%s",
             deployment_id,
             list(data.keys()),
         )
+
         return {
             "status": "updated",
             "deployment_id": deployment_id,
