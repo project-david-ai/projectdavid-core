@@ -1,4 +1,3 @@
-# src/api/training/routers/deployments_router.py
 """
 deployments_router.py
 
@@ -14,15 +13,22 @@ Endpoints:
   POST   /v1/deployments/base                     Activate a base model          [admin]
   POST   /v1/deployments/fine-tuned               Activate a fine-tuned model    [admin]
   PATCH  /v1/deployments/{deployment_id}          Update deployment hyperparams  [admin]
-  GET    /v1/deployments                          List all active deployments     [admin]
+  GET    /v1/deployments                          List tracked deployments        [admin]
   DELETE /v1/deployments/base/{model_ref}         Deactivate a base model        [admin]
   DELETE /v1/deployments/fine-tuned/{model_id}    Deactivate a fine-tuned model  [admin]
   DELETE /v1/deployments                          Deactivate all deployments      [admin]
 
 Architecture note:
   Activation endpoints create an InferenceDeployment record with status=pending.
-  The InferenceReconciler (inference_worker.py) picks it up on its next poll
-  cycle and deploys the corresponding Ray Serve application.
+  The InferenceReconciler (inference_worker.py) submits the corresponding Ray
+  Serve application and promotes the DB row to active only after Ray reports the
+  application RUNNING.
+
+  Deactivation endpoints transition matching deployments to status=cancelling.
+  The InferenceReconciler removes the Ray Serve application, waits until the
+  application is absent and GPU capacity has returned, then marks the deployment
+  cancelled.
+
   These endpoints do NOT communicate with Ray Serve directly.
 
   The PATCH endpoint uses exclude_unset=True — only explicitly provided fields
@@ -75,9 +81,11 @@ def _require_admin(current_user_id: str, db: Session) -> None:
     description=(
         "Schedule a base model (no LoRA adapter) for inference deployment. "
         "Accepts either a `bm_...` prefixed ID or a raw HuggingFace model path. "
-        "Clears all existing deployments before creating the new one. "
+        "Activation is rejected while another local deployment is pending, "
+        "active, or cancelling. "
         "All vLLM hyperparam fields are optional — omit to use node-level env var defaults. "
-        "The InferenceReconciler deploys via Ray Serve on its next poll cycle. "
+        "The InferenceReconciler submits the Ray Serve application on its next poll "
+        "and marks the deployment active only after Ray reports RUNNING. "
         "**Admin only.**"
     ),
     status_code=202,
@@ -112,9 +120,11 @@ def activate_base_model(
     summary="Activate a fine-tuned model",
     description=(
         "Schedule a fine-tuned model (base + LoRA adapter) for inference deployment. "
-        "Deactivates all existing deployments for the model owner before creating the new one. "
+        "Activation is rejected while another local deployment is pending, "
+        "active, or cancelling. "
         "All vLLM hyperparam fields are optional — omit to use node-level env var defaults. "
-        "The InferenceReconciler deploys via Ray Serve on its next poll cycle. "
+        "The InferenceReconciler submits the Ray Serve application on its next poll "
+        "and marks the deployment active only after Ray reports RUNNING. "
         "**Admin only.**"
     ),
     status_code=202,
@@ -152,11 +162,10 @@ def activate_fine_tuned_model(
     "/{deployment_id}",
     summary="Update deployment hyperparams",
     description=(
-        "Partially update the vLLM engine hyperparams for a live deployment. "
+        "Partially update the vLLM engine hyperparams for a tracked deployment. "
         "Only fields explicitly provided in the request body are written — "
         "omitted fields retain their current DB values. "
-        "Changes are picked up by the InferenceReconciler on its next poll cycle, "
-        "which will redeploy the Ray Serve application with the new config. "
+        "Changes are picked up by the InferenceReconciler on its next poll cycle. "
         "**Admin only.**"
     ),
 )
@@ -179,11 +188,12 @@ def update_deployment(
 @router.get(
     "/",
     response_model=DeploymentListResponse,
-    summary="List active deployments",
+    summary="List tracked deployments",
     description=(
         "Return all InferenceDeployment records currently tracked by the system. "
-        "Includes status, node assignment, base model, hyperparam config, "
-        "and serve route for each deployment. "
+        "Records may be pending, active, cancelling, cancelled, failed, or another "
+        "supported lifecycle state. Includes node assignment, base model, hyperparam "
+        "config, and serve route where applicable. "
         "**Admin only.**"
     ),
 )
@@ -210,9 +220,10 @@ def list_deployments(
     response_model=DeploymentDeactivationResponse,
     summary="Deactivate a base model deployment",
     description=(
-        "Surgically remove the InferenceDeployment record for a base model. "
+        "Transition the matching base-model deployment to `cancelling`. "
         "Accepts either a `bm_...` prefixed ID or a raw HuggingFace model path. "
-        "The InferenceReconciler tears down the Ray Serve application on its next poll. "
+        "The InferenceReconciler removes the Ray Serve application and marks the "
+        "deployment `cancelled` only after teardown and GPU release are confirmed. "
         "**Admin only.**"
     ),
 )
@@ -232,8 +243,9 @@ def deactivate_base_model(
     response_model=DeploymentDeactivationResponse,
     summary="Deactivate a fine-tuned model deployment",
     description=(
-        "Surgically remove the InferenceDeployment record for a fine-tuned model. "
-        "The InferenceReconciler tears down the Ray Serve application on its next poll. "
+        "Transition the matching fine-tuned-model deployment to `cancelling`. "
+        "The InferenceReconciler removes the Ray Serve application and marks the "
+        "deployment `cancelled` only after teardown and GPU release are confirmed. "
         "**Admin only.**"
     ),
 )
@@ -253,9 +265,10 @@ def deactivate_fine_tuned_model(
     response_model=DeactivateAllResponse,
     summary="Deactivate all deployments",
     description=(
-        "Remove all InferenceDeployment records — full cluster clean slate. "
-        "The InferenceReconciler tears down all Ray Serve applications on its next poll, "
-        "releasing all GPU reservations back to the cluster. "
+        "Transition all active or pending local inference deployments to `cancelling`. "
+        "Deployment rows are preserved while the InferenceReconciler tears down Ray "
+        "Serve applications. Each deployment reaches `cancelled` only after runtime "
+        "removal and GPU release are confirmed. "
         "**Admin only.**"
     ),
 )
@@ -265,8 +278,8 @@ def deactivate_all(
 ) -> DeactivateAllResponse:
     _require_admin(current_user_id, db)
     service = DeploymentService(db)
-    service._clear_all_deployments()
+    result = service.deactivate_all()
     return DeactivateAllResponse(
-        status="success",
-        message="All deployments cleared. InferenceReconciler will release GPU resources on next poll.",
+        status=result["status"],
+        message=result["message"],
     )
