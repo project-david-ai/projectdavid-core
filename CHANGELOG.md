@@ -1,3 +1,11 @@
+## [1.43.2](https://github.com/project-david-ai/projectdavid-core/compare/v1.43.1...v1.43.2) (2026-08-25)
+
+
+### Bug Fixes
+
+* expose stateful deployment deactivation ([2a445b1](https://github.com/project-david-ai/projectdavid-core/commit/2a445b165e3d71bf558aceff1a6811eaa3d93f81))
+* make local inference teardown stateful ([7208de7](https://github.com/project-david-ai/projectdavid-core/commit/7208de7b317894bd82b65fce25b2d55bcd294cd1))
+
 ## [1.43.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.43.0...v1.43.1) (2026-08-22)
 
 
