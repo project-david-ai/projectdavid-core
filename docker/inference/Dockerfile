@@ -4,7 +4,7 @@
 # Sovereign Forge — Inference Worker
 # =============================================================================
 
-FROM vllm/vllm-openai:v0.8.5
+FROM vllm/vllm-openai:kimi-k3
 
 ENV PIP_NO_CACHE_DIR=1 \
     PYTHONUNBUFFERED=1 \
