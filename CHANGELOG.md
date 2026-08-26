@@ -1,3 +1,10 @@
+## [1.44.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.44.0...v1.44.1) (2026-08-26)
+
+
+### Bug Fixes
+
+* support newer Ray resource schema ([29f6209](https://github.com/project-david-ai/projectdavid-core/commit/29f620986de8e2490ecb5cf2d0c886fe7b1cdbb0))
+
 # [1.44.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.43.2...v1.44.0) (2026-08-26)
 
 
