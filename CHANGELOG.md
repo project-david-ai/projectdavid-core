@@ -1,3 +1,10 @@
+# [1.44.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.43.2...v1.44.0) (2026-08-26)
+
+
+### Features
+
+* upgrade inference runtime for Kimi K3 ([75e2bc2](https://github.com/project-david-ai/projectdavid-core/commit/75e2bc2cb5c9ebe6a0007e42e16f08ee7812c362))
+
 ## [1.43.2](https://github.com/project-david-ai/projectdavid-core/compare/v1.43.1...v1.43.2) (2026-08-25)
 
 
