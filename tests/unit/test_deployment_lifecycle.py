@@ -160,3 +160,48 @@ def test_node_capacity_uses_actual_available_gpu_not_total_gpu():
 
     assert exc_info.value.status_code == 507
     assert "Available: 0" in exc_info.value.detail
+
+
+@pytest.mark.parametrize(
+    "node_payload",
+    [
+        {
+            "node_id": "node_test",
+            "resources_total": {
+                "GPU": 1.0,
+            },
+        },
+        {
+            "node_id": "node_test",
+            "resources_total": {
+                "GPU": 1.0,
+            },
+            "resources_available": None,
+        },
+    ],
+)
+def test_node_capacity_fails_open_when_ray_omits_available_resources(
+    node_payload,
+):
+    service = _make_service()
+
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "data": {
+            "result": {
+                "result": [
+                    node_payload,
+                ]
+            }
+        }
+    }
+
+    with patch(
+        "src.api.training.services.deployment_service.httpx.get",
+        return_value=response,
+    ):
+        service._check_node_capacity(
+            "node_test",
+            tensor_parallel_size=1,
+        )

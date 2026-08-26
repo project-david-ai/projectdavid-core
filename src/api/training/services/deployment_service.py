@@ -113,7 +113,20 @@ class DeploymentService:
             if node.get("node_id") != node_id:
                 continue
 
-            resources_available = node.get("resources_available", {})
+            resources_available = node.get("resources_available")
+
+            # Newer Ray dashboard versions may omit resources_available entirely.
+            # The dashboard API is only an advisory preflight; when availability is
+            # unavailable, fail open and let the inference reconciler make the
+            # authoritative decision using ray.available_resources().
+            if not isinstance(resources_available, dict):
+                logging_utility.warning(
+                    "Ray dashboard did not expose available resources for node %s; "
+                    "skipping advisory GPU capacity check",
+                    node_id,
+                )
+                return
+
             available_gpu = resources_available.get("GPU", 0.0)
 
             if available_gpu < tensor_parallel_size:

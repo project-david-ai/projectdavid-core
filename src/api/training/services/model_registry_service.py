@@ -134,12 +134,19 @@ class ModelRegistryService:
         )
         return default_node
 
-    def _check_node_capacity(self, node_id: str, tensor_parallel_size: int = 1) -> None:
+    def _check_node_capacity(
+        self,
+        node_id: str,
+        tensor_parallel_size: int = 1,
+    ) -> None:
         """
-        Raises 507 if the target node cannot accommodate another deployment.
+        Raises 507 if the target node explicitly reports insufficient
+        available GPU capacity.
 
-        Fails open if Ray dashboard is unreachable — the InferenceReconciler
-        will handle deployment failure gracefully on its next poll cycle.
+        The Ray dashboard API is advisory only. Newer Ray versions may omit
+        resources_available entirely; in that case fail open and let the
+        InferenceReconciler make the authoritative scheduling decision using
+        ray.available_resources() inside the inference worker.
         """
         try:
             resp = httpx.get(
@@ -149,14 +156,25 @@ class ModelRegistryService:
             resp.raise_for_status()
             nodes = resp.json().get("data", {}).get("result", {}).get("result", [])
         except Exception:
-            # Fail open
+            # Dashboard unavailable — fail open.
             return
 
         for node in nodes:
             if node.get("node_id") != node_id:
                 continue
 
-            resources_available = node.get("resources_available", {})
+            resources_available = node.get("resources_available")
+
+            # Newer Ray dashboard versions may omit resources_available.
+            # Do not interpret missing availability data as zero capacity.
+            if not isinstance(resources_available, dict):
+                logging_utility.warning(
+                    "Ray dashboard did not expose available resources for node %s; "
+                    "skipping advisory GPU capacity check",
+                    node_id,
+                )
+                return
+
             available_gpu = resources_available.get("GPU", 0.0)
 
             if available_gpu < tensor_parallel_size:
@@ -169,6 +187,7 @@ class ModelRegistryService:
                         f"Active Ray Serve deployments may be holding GPU resources."
                     ),
                 )
+
             return
 
     def _get_serve_route(self, deployment_id: str) -> str:
