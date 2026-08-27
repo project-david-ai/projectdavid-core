@@ -1,3 +1,10 @@
+## [1.44.5](https://github.com/project-david-ai/projectdavid-core/compare/v1.44.4...v1.44.5) (2026-08-27)
+
+
+### Bug Fixes
+
+* allow nullable inference GPU memory utilization ([64c01b7](https://github.com/project-david-ai/projectdavid-core/commit/64c01b7fcfe9a6a3fb826c426eb5a56720e620d1))
+
 ## [1.44.4](https://github.com/project-david-ai/projectdavid-core/compare/v1.44.3...v1.44.4) (2026-08-27)
 
 
