@@ -253,3 +253,11 @@ def test_vllm_deployment_passes_explicit_dtype(monkeypatch):
 
     assert deployment.engine is fake_engine
     assert fake_engine.last_engine_args.kwargs["dtype"] == "bfloat16"
+
+
+def test_kimi_k3_family_enables_trust_remote_code(monkeypatch):
+    inference_worker, _ = _load_inference_worker_with_fakes(monkeypatch)
+
+    config = inference_worker._get_vision_family_config("tiny-random/kimi-k3")
+
+    assert config["trust_remote_code"] is True
