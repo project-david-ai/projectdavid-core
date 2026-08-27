@@ -155,6 +155,7 @@ def _load_inference_worker_with_fakes(monkeypatch):
     class FakeEngine:
         def __init__(self):
             self.last_lora_request = None
+            self.last_engine_args = None
 
         async def generate(
             self, engine_input, sampling_params, request_id, lora_request=None
@@ -166,7 +167,8 @@ def _load_inference_worker_with_fakes(monkeypatch):
 
     class FakeAsyncLLMEngine:
         @classmethod
-        def from_engine_args(cls, _engine_args):
+        def from_engine_args(cls, engine_args):
+            fake_engine.last_engine_args = engine_args
             return fake_engine
 
     class FakeSamplingParams:
@@ -227,3 +229,27 @@ def test_ftm_selector_builds_and_selects_explicit_lora_request(monkeypatch):
     )
     assert response["model"] == FINE_TUNED_MODEL_ID
     assert response["choices"][0]["text"] == "adapter output"
+
+
+def test_vllm_deployment_omits_dtype_when_not_explicitly_configured(monkeypatch):
+    inference_worker, fake_engine = _load_inference_worker_with_fakes(monkeypatch)
+
+    deployment = inference_worker.VLLMDeployment(
+        model_endpoint=HF_MODEL_ID,
+        dtype=None,
+    )
+
+    assert deployment.engine is fake_engine
+    assert "dtype" not in fake_engine.last_engine_args.kwargs
+
+
+def test_vllm_deployment_passes_explicit_dtype(monkeypatch):
+    inference_worker, fake_engine = _load_inference_worker_with_fakes(monkeypatch)
+
+    deployment = inference_worker.VLLMDeployment(
+        model_endpoint=HF_MODEL_ID,
+        dtype="bfloat16",
+    )
+
+    assert deployment.engine is fake_engine
+    assert fake_engine.last_engine_args.kwargs["dtype"] == "bfloat16"

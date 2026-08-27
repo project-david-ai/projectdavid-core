@@ -343,11 +343,14 @@ class VLLMDeployment:
             max_loras=max(1, len(self.lora_modules)),
             max_lora_rank=max_lora_rank,
             enforce_eager=enforce_eager,
-            # dtype: float16 is the safe explicit default for mixed-precision GPUs.
-            # None would let vLLM auto-select which can pick bfloat16 on some cards
-            # causing a cast warning — we prefer explicit control.
-            dtype=dtype if dtype is not None else "float16",
         )
+
+        # dtype: only pass when explicitly requested.
+        # When omitted, vLLM selects the dtype required by the model and its
+        # quantization method. This is essential for formats such as MXFP4,
+        # which may require bfloat16 and reject a forced float16 override.
+        if dtype is not None:
+            engine_kwargs["dtype"] = dtype
 
         # quantization: only pass when set — None means full precision and
         # passing it explicitly would override model config auto-detection.
