@@ -20,6 +20,7 @@ WORKDIR /install
 
 RUN pip install --upgrade pip setuptools wheel
 
+
 # === Stage 1: install ALL packages ==================================
 # Heavy ML deps (torch, unsloth, xformers, bitsandbytes) are pinned by
 # index URL and cannot carry hashes — they live in training_reqs_unhashed.txt.
@@ -53,8 +54,10 @@ RUN pip install \
     --retries=10 \
     -r training_reqs_hashed.txt
 
+
 # === Stage 2: runtime container =====================================
 FROM python:3.12-slim AS runtime
+
 WORKDIR /app
 
 # gcc/g++ MUST be present at runtime — Triton compiles CUDA kernels
@@ -69,7 +72,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /install/packages /usr/local
 
-# Resolve known version-collision packages after merge
+# Resolve known version-collision packages after merge.
 RUN pip install --force-reinstall --no-cache-dir charset-normalizer packaging
 
 ENV PATH="/usr/local/bin:$PATH" \
@@ -78,9 +81,22 @@ ENV PATH="/usr/local/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1
 
 # training-api and training-worker both use this image.
+#
+# Copy through a fresh staging location rather than directly into /app.
+# The explicit integrity checks prevent a corrupt Docker build/cache layer
+# from silently publishing an empty training application or worker entrypoint.
+COPY src/api/training /tmp/projectdavid-training-src
+
+RUN test -s /tmp/projectdavid-training-src/app.py \
+    && test -s /tmp/projectdavid-training-src/worker.py \
+    && mkdir -p /app/src/api/training \
+    && cp -R /tmp/projectdavid-training-src/. /app/src/api/training/ \
+    && test -s /app/src/api/training/app.py \
+    && test -s /app/src/api/training/worker.py \
+    && rm -rf /tmp/projectdavid-training-src
+
 # training-worker overrides CMD via docker-compose command:
 #   command: ["python", "src/api/training/worker.py"]
-COPY src/api/training /app/src/api/training
 
 # training-api port
 EXPOSE 9001
