@@ -1,3 +1,10 @@
+## [1.44.6](https://github.com/project-david-ai/projectdavid-core/compare/v1.44.5...v1.44.6) (2026-08-27)
+
+
+### Bug Fixes
+
+* validate migration config in API image ([1087376](https://github.com/project-david-ai/projectdavid-core/commit/1087376a501095c93e82d02c051df93ca8748f79))
+
 ## [1.44.5](https://github.com/project-david-ai/projectdavid-core/compare/v1.44.4...v1.44.5) (2026-08-27)
 
 
