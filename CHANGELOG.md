@@ -1,3 +1,10 @@
+## [1.44.4](https://github.com/project-david-ai/projectdavid-core/compare/v1.44.3...v1.44.4) (2026-08-27)
+
+
+### Bug Fixes
+
+* require nullable inference GPU memory ORM ([958b5e7](https://github.com/project-david-ai/projectdavid-core/commit/958b5e7e02a04b89a02500133a8f7359bde4206f))
+
 ## [1.44.3](https://github.com/project-david-ai/projectdavid-core/compare/v1.44.2...v1.44.3) (2026-08-27)
 
 
