@@ -1,3 +1,10 @@
+## [1.44.3](https://github.com/project-david-ai/projectdavid-core/compare/v1.44.2...v1.44.3) (2026-08-27)
+
+
+### Bug Fixes
+
+* enable trusted Kimi K3 model code ([1a9c59a](https://github.com/project-david-ai/projectdavid-core/commit/1a9c59aa2d74d496996ff1223d0075cb7b9c3995))
+
 ## [1.44.2](https://github.com/project-david-ai/projectdavid-core/compare/v1.44.1...v1.44.2) (2026-08-27)
 
 
