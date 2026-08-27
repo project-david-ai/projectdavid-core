@@ -1,3 +1,10 @@
+## [1.44.2](https://github.com/project-david-ai/projectdavid-core/compare/v1.44.1...v1.44.2) (2026-08-27)
+
+
+### Bug Fixes
+
+* defer inference dtype selection to vllm ([de091e2](https://github.com/project-david-ai/projectdavid-core/commit/de091e21ca7821b56f85fa344e19452ede89dfb2))
+
 ## [1.44.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.44.0...v1.44.1) (2026-08-26)
 
 
