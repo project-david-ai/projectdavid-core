@@ -36,7 +36,7 @@ RUN pip install --no-cache-dir \
     "pymysql>=1.1.0" \
     "sqlalchemy>=2.0.0" \
     "projectdavid-common" \
-    "projectdavid-orm" \
+    "projectdavid-orm>=1.8.1" \
     "passlib" \
     "python-dotenv" \
     "huggingface_hub[cli]>=0.21.0"
