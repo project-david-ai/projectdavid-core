@@ -129,8 +129,14 @@ COPY src /app/src
 COPY docker/api/init_and_run_api.sh /app/init_and_run_api.sh
 COPY docker/api/supervisord.conf    /etc/supervisor/conf.d/supervisord.conf
 
-COPY alembic.ini   /app/alembic.ini
-COPY migrations    /app/migrations
+# Copy migration assets through a fresh layer and verify them during build.
+COPY alembic.ini /tmp/alembic.ini
+COPY migrations /app/migrations
+
+RUN cp /tmp/alembic.ini /app/alembic.ini \
+    && grep -q '^\[alembic\]' /app/alembic.ini \
+    && test -s /app/alembic.ini \
+    && rm /tmp/alembic.ini
 
 RUN dos2unix /app/init_and_run_api.sh && chmod +x /app/init_and_run_api.sh
 
