@@ -1,3 +1,10 @@
+## [1.44.7](https://github.com/project-david-ai/projectdavid-core/compare/v1.44.6...v1.44.7) (2026-08-27)
+
+
+### Bug Fixes
+
+* validate training image application sources ([d05687d](https://github.com/project-david-ai/projectdavid-core/commit/d05687dcd88facc80eed3b550902a3b4a2594a20))
+
 ## [1.44.6](https://github.com/project-david-ai/projectdavid-core/compare/v1.44.5...v1.44.6) (2026-08-27)
 
 
