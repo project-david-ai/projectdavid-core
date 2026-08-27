@@ -154,6 +154,15 @@ _VISION_FAMILY_CONFIGS = {
     # Dynamic resolution model. Without pixel caps a single 128px image
     # produces 5000+ tokens. Caps to ~256 tokens per image at 64*28*28.
     # BASELINED ✅ — Qwen/Qwen2.5-VL-3B-Instruct-AWQ confirmed working.
+    # ── Kimi K3 ─────────────────────────────────────────────────────────
+    # Kimi K3 repositories may provide custom tokenizer/model code.
+    # Keep trust scoped to the explicitly ratified Kimi K3 family rather
+    # than enabling remote code globally for arbitrary Hugging Face models.
+    "kimi-k3": {
+        "mm_processor_kwargs": {},
+        "limit_mm_per_prompt": {"image": 1},
+        "trust_remote_code": True,
+    },
     "Qwen2.5-VL": {
         "mm_processor_kwargs": {
             "min_pixels": 28 * 28,  # 784
