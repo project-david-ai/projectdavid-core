@@ -67,6 +67,21 @@ def list_user_threads(
     )  # ← read-only, no user_id needed
 
 
+@router.get(
+    "/user/{user_id}/records",
+    response_model=list[ValidationInterface.ThreadRead],
+)
+def list_user_thread_records(
+    user_id: str,
+    db: Session = Depends(get_db),
+    auth_key: ApiKeyModel = Depends(get_api_key),
+):
+    logging_utility.info(
+        f"[{auth_key.user_id}] Listing thread records for user {user_id}"
+    )
+    return ThreadService().list_thread_records_by_user(user_id)
+
+
 @router.put(
     "/{thread_id}/metadata", response_model=ValidationInterface.ThreadReadDetailed
 )

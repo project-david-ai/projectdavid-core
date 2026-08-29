@@ -7,7 +7,7 @@ from entities_api.orchestration.handlers.hb_handler import HyperbolicHandler
 from entities_api.orchestration.handlers.ollama_handler import OllamaHandler
 from entities_api.orchestration.handlers.together_handler import TogetherAIHandler
 from entities_api.orchestration.handlers.vllm_handler import VllmHandler
-from projectdavid_common.constants.ai_model_map import MODEL_MAP
+from projectdavid_common.constants.ai_model_map import MODEL_MAP, translate_model_id
 from projectdavid_common.utilities.logging_service import LoggingUtility
 
 # TODO: Migrate workers to Mixin architecture
@@ -121,3 +121,9 @@ class InferenceProviderSelector:
             f"Handler selected: '{selected_general_class.__name__}' → Model: '{api_model_name}'"
         )
         return (provider_instance, api_model_name)
+
+    def select_provider_worker(self, model_id: str) -> tuple[Any, str]:
+        """Resolve the canonical provider and concrete worker for raw inference."""
+        provider, _ = self.select_provider(model_id)
+        worker = provider._get_specific_handler_instance(model_id)
+        return worker, translate_model_id(model_id)
