@@ -1,5 +1,6 @@
 import json
 import time
+from copy import deepcopy
 from typing import Any, Dict, List
 
 from fastapi import HTTPException
@@ -135,13 +136,14 @@ class ThreadService:
 
     def list_threads_by_user(self, user_id: str) -> List[str]:
         with SessionLocal() as db:
-            threads = (
-                db.query(Thread)
-                .join(Thread.participants)
-                .filter(User.id == user_id)
-                .all()
-            )
+            threads = self._threads_for_user(db, user_id)
             return [thread.id for thread in threads]
+
+    def list_thread_records_by_user(self, user_id: str) -> List[validator.ThreadRead]:
+        """Return ordinary thread records without serializing relationships."""
+        with SessionLocal() as db:
+            threads = self._threads_for_user(db, user_id)
+            return [self._create_thread_read(thread) for thread in threads]
 
     def update_thread_metadata(
         self,
@@ -155,7 +157,15 @@ class ThreadService:
             # ── Ownership check ──────────────────────────────────────────────
             self._assert_owner(db_thread, user_id)
 
-            db_thread.meta_data = json.dumps(new_metadata)
+            current_metadata = self._ensure_dict(db_thread.meta_data)
+            merged_metadata = self._merge_metadata(
+                current_metadata,
+                new_metadata,
+            )
+
+            # Thread.meta_data is a plain JSON column rather than MutableDict.
+            # Assign a fresh object so SQLAlchemy always observes the update.
+            db_thread.meta_data = merged_metadata
             db.commit()
             db.refresh(db_thread)
             return self._create_thread_read_detailed(db_thread)
@@ -201,6 +211,13 @@ class ThreadService:
     # Internal helpers
     # ──────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _threads_for_user(db: Session, user_id: str) -> List[Thread]:
+        """Canonical participant-filtered query shared by both list APIs."""
+        return (
+            db.query(Thread).join(Thread.participants).filter(User.id == user_id).all()
+        )
+
     def _get_thread_or_404(self, thread_id: str, db: Session) -> Thread:
         db_thread = db.query(Thread).filter(Thread.id == thread_id).first()
         if not db_thread:
@@ -219,6 +236,32 @@ class ThreadService:
             except (TypeError, ValueError):
                 return {}
         return {}
+
+    @classmethod
+    def _merge_metadata(
+        cls,
+        current: Dict[str, Any],
+        patch: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Recursively merge a metadata patch into a newly allocated mapping."""
+        merged = deepcopy(cls._ensure_dict(current))
+        for key, value in patch.items():
+            existing = merged.get(key)
+            if isinstance(existing, dict) and isinstance(value, dict):
+                merged[key] = cls._merge_metadata(existing, value)
+            else:
+                merged[key] = deepcopy(value)
+        return merged
+
+    def _create_thread_read(self, db_thread: Thread) -> validator.ThreadRead:
+        return validator.ThreadRead(
+            id=db_thread.id,
+            created_at=db_thread.created_at,
+            meta_data=self._ensure_dict(db_thread.meta_data),
+            object=db_thread.object,
+            tool_resources=self._ensure_dict(db_thread.tool_resources),
+            owner_id=db_thread.owner_id,
+        )
 
     def _create_thread_read_detailed(
         self, db_thread: Thread

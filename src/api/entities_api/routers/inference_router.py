@@ -1,13 +1,16 @@
 import json
 import time
+from typing import Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from projectdavid_common import ValidationInterface
 from projectdavid_common.utilities.logging_service import LoggingUtility
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from redis import Redis
 
-from src.api.entities_api.dependencies import get_redis
+from src.api.entities_api.db.database import SessionLocal
+from src.api.entities_api.dependencies import get_api_key, get_redis
 from src.api.entities_api.orchestration.engine.inference_arbiter import InferenceArbiter
 from src.api.entities_api.orchestration.engine.inference_provider_selector import (
     InferenceProviderSelector,
@@ -15,9 +18,78 @@ from src.api.entities_api.orchestration.engine.inference_provider_selector impor
 from src.api.entities_api.services.native_execution_service import (
     NativeExecutionService,
 )
+from src.api.entities_api.services.stateless_inference_service import (
+    StatelessInferenceService,
+)
 
 router = APIRouter()
 logging_utility = LoggingUtility()
+
+
+class StatelessCompletionMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["system", "user", "assistant"]
+    content: str = Field(min_length=1, max_length=16_000)
+
+    @field_validator("content")
+    @classmethod
+    def content_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("message content must not be blank")
+        return value
+
+
+class StatelessCompletionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+
+    model: str = Field(min_length=1, max_length=500)
+    prompt: Optional[str] = Field(default=None, min_length=1, max_length=16_000)
+    messages: Optional[List[StatelessCompletionMessage]] = Field(
+        default=None,
+        min_length=1,
+        max_length=32,
+    )
+    api_key: Optional[str] = None
+    max_tokens: int = Field(default=256, ge=1, le=4096)
+    temperature: float = Field(default=0.2, ge=0.0, le=2.0)
+    top_p: float = Field(default=1.0, gt=0.0, le=1.0)
+    stream: Literal[False] = False
+    stateless: Literal[True]
+
+    @field_validator("model", "prompt")
+    @classmethod
+    def strings_must_not_be_blank(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and not value.strip():
+            raise ValueError("value must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def exactly_one_input_shape(self):
+        if (self.prompt is None) == (self.messages is None):
+            raise ValueError("provide exactly one of prompt or messages")
+        return self
+
+    def inference_messages(self) -> List[Dict[str, str]]:
+        if self.messages is not None:
+            return [message.model_dump() for message in self.messages]
+        return [{"role": "user", "content": self.prompt or ""}]
+
+
+class StatefulCompletionRequest(ValidationInterface.StreamRequest):
+    """Existing stateful contract plus an optional explicit false discriminator."""
+
+    stateless: Literal[False] = False
+
+
+CompletionRequest = StatelessCompletionRequest | StatefulCompletionRequest
+
+
+async def _authenticate_stateless_request(api_key_header: Optional[str]) -> None:
+    """Authenticate stateless calls without adding dependencies to stateful calls."""
+    with SessionLocal() as db:
+        await get_api_key(api_key_header=api_key_header, db=db)
+
 
 # ── Rust SSE framer (Phase 2 hot-path) ───────────────────────────────────────
 # frame_sse_chunk handles type dispatch, run_id injection, JSON serialisation,
@@ -59,9 +131,51 @@ except ImportError:
     response_description="SSE stream or single JSON object depending on stream flag",
 )
 async def completions(
-    stream_request: ValidationInterface.StreamRequest,
+    stream_request: CompletionRequest,
     redis: Redis = Depends(get_redis),
+    project_api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
 ):
+    if isinstance(stream_request, StatelessCompletionRequest):
+        await _authenticate_stateless_request(project_api_key)
+        logging_utility.info(
+            "Stateless completion called — model: %s, stream: false",
+            stream_request.model,
+        )
+        try:
+            completion = await StatelessInferenceService(redis=redis).create_completion(
+                model=stream_request.model,
+                messages=stream_request.inference_messages(),
+                provider_api_key=stream_request.api_key,
+                max_tokens=stream_request.max_tokens,
+                temperature=stream_request.temperature,
+                top_p=stream_request.top_p,
+            )
+        except Exception as exc:
+            logging_utility.error(
+                "Stateless completion failed: %s",
+                exc,
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Stateless completion failed: {exc}",
+            ) from exc
+
+        return JSONResponse(
+            content={
+                "object": "text_completion",
+                "created": int(time.time()),
+                "model": stream_request.model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "text": completion,
+                        "finish_reason": "stop",
+                    }
+                ],
+            }
+        )
+
     logging_utility.info(
         "Completions endpoint called — model: %s, run: %s, stream: %s",
         stream_request.model,
