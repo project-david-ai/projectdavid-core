@@ -1,3 +1,10 @@
+# [1.46.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.45.0...v1.46.0) (2026-08-30)
+
+
+### Features
+
+* serialize run creation per thread ([f0b6a70](https://github.com/project-david-ai/projectdavid-core/commit/f0b6a70088ca060234ac0f25b8f69c316db1f8e6))
+
 # [1.45.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.44.7...v1.45.0) (2026-08-29)
 
 
