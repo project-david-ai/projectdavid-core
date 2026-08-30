@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 from fastapi import HTTPException
 from projectdavid_common import UtilsInterface, ValidationInterface
 from projectdavid_common.utilities.logging_service import LoggingUtility
+from sqlalchemy import exists
 from sqlalchemy.orm import Session
 
 from src.api.entities_api.db.database import SessionLocal
@@ -140,10 +141,31 @@ class ThreadService:
             return [thread.id for thread in threads]
 
     def list_thread_records_by_user(self, user_id: str) -> List[validator.ThreadRead]:
-        """Return ordinary thread records without serializing relationships."""
+        """Return thread records with durable conversation materialization state."""
         with SessionLocal() as db:
-            threads = self._threads_for_user(db, user_id)
-            return [self._create_thread_read(thread) for thread in threads]
+            materialized_exists = (
+                exists()
+                .where(Message.thread_id == Thread.id)
+                .where(Message.role == "user")
+            )
+
+            rows = (
+                db.query(
+                    Thread,
+                    materialized_exists.label("materialized"),
+                )
+                .join(Thread.participants)
+                .filter(User.id == user_id)
+                .all()
+            )
+
+            return [
+                self._create_thread_read(
+                    thread,
+                    materialized=bool(materialized),
+                )
+                for thread, materialized in rows
+            ]
 
     def update_thread_metadata(
         self,
@@ -253,7 +275,12 @@ class ThreadService:
                 merged[key] = deepcopy(value)
         return merged
 
-    def _create_thread_read(self, db_thread: Thread) -> validator.ThreadRead:
+    def _create_thread_read(
+        self,
+        db_thread: Thread,
+        *,
+        materialized: bool | None = None,
+    ) -> validator.ThreadRead:
         return validator.ThreadRead(
             id=db_thread.id,
             created_at=db_thread.created_at,
@@ -261,6 +288,7 @@ class ThreadService:
             object=db_thread.object,
             tool_resources=self._ensure_dict(db_thread.tool_resources),
             owner_id=db_thread.owner_id,
+            materialized=materialized,
         )
 
     def _create_thread_read_detailed(

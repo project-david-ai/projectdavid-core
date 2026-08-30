@@ -41,6 +41,10 @@ def _session_for_threads(threads):
     return db, context
 
 
+def _session_for_thread_records(records):
+    return _session_for_threads(records)
+
+
 def test_existing_id_list_contract_and_order_are_unchanged():
     threads = [
         _thread("thread_second", created_at=2),
@@ -76,7 +80,12 @@ def test_thread_records_include_metadata_and_retain_query_order():
         ),
         _thread("thread_first", created_at=1, meta_data={"foo": 1}),
     ]
-    _, context = _session_for_threads(threads)
+    _, context = _session_for_thread_records(
+        [
+            (threads[0], True),
+            (threads[1], False),
+        ]
+    )
 
     with patch(
         "src.api.entities_api.services.threads_service.SessionLocal",
@@ -90,12 +99,18 @@ def test_thread_records_include_metadata_and_retain_query_order():
     ]
     assert result[0].meta_data == {"q": {"title": "Second"}}
     assert result[1].meta_data == {"foo": 1}
+    assert result[0].materialized is True
+    assert result[1].materialized is False
     assert all(type(record) is validator.ThreadRead for record in result)
 
 
 def test_both_list_methods_share_the_participant_filtered_query():
     threads = [_thread("thread_authorized", created_at=1)]
-    db, context = _session_for_threads(threads)
+    db, context = _session_for_thread_records(
+        [
+            (threads[0], True),
+        ]
+    )
 
     with patch(
         "src.api.entities_api.services.threads_service.SessionLocal",
@@ -106,6 +121,17 @@ def test_both_list_methods_share_the_participant_filtered_query():
     assert [record.id for record in records] == ["thread_authorized"]
     db.query.return_value.join.assert_called_once()
     db.query.return_value.filter.assert_called_once()
+
+
+def test_thread_read_materialization_defaults_to_unknown_outside_record_list():
+    record = ThreadService()._create_thread_read(
+        _thread(
+            "thread_unknown",
+            created_at=1,
+        )
+    )
+
+    assert record.materialized is None
 
 
 def test_metadata_patch_preserves_top_level_and_nested_q_metadata():
