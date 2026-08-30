@@ -1,3 +1,10 @@
+# [1.47.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.46.0...v1.47.0) (2026-08-30)
+
+
+### Features
+
+* expose thread materialization state ([cd88928](https://github.com/project-david-ai/projectdavid-core/commit/cd889282428eeef7067edb8eb68f0ba037861b3d))
+
 # [1.46.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.45.0...v1.46.0) (2026-08-30)
 
 
