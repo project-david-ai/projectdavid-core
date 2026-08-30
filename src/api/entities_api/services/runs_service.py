@@ -11,7 +11,7 @@ from projectdavid_common.validation import StatusEnum
 from sqlalchemy.orm import Session
 
 from src.api.entities_api.db.database import SessionLocal
-from src.api.entities_api.models.models import Assistant, Run
+from src.api.entities_api.models.models import Assistant, Run, Thread
 
 validator = ValidationInterface()
 
@@ -34,6 +34,13 @@ MUTABLE_RUN_FIELDS = {
 # schema was locked. Anything outside this set is coerced to None in
 # _to_read_model to prevent Pydantic ValidationErrors on list endpoints.
 _VALID_TRUNCATION = {"auto", "disabled"}
+
+TERMINAL_RUN_STATUSES = (
+    StatusEnum.completed,
+    StatusEnum.failed,
+    StatusEnum.cancelled,
+    StatusEnum.expired,
+)
 
 
 class RunService:
@@ -170,10 +177,56 @@ class RunService:
     # CRUD
     # ──────────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _lock_thread_for_run_creation(
+        db: Session,
+        thread_id: str,
+    ) -> None:
+        # Serialize competing run creation only for this thread.
+        # Different thread rows remain independently concurrent.
+        thread = (
+            db.query(Thread).filter(Thread.id == thread_id).with_for_update().first()
+        )
+
+        if not thread:
+            raise HTTPException(
+                status_code=404,
+                detail="Thread not found",
+            )
+
+        # The Thread row above is the per-thread mutex.
+        #
+        # Do not lock the runs query. A locking range scan can
+        # block unrelated thread IDs on MySQL/InnoDB.
+        active_run = (
+            db.query(Run)
+            .filter(
+                Run.thread_id == thread_id,
+                Run.status.notin_(TERMINAL_RUN_STATUSES),
+            )
+            .order_by(Run.created_at.desc())
+            .first()
+        )
+
+        if active_run:
+            raise HTTPException(
+                status_code=409,
+                detail=("Thread already has a " "non-terminal run."),
+            )
+
     def create_run(
         self, run_data: validator.RunCreate, *, user_id: str
     ) -> validator.Run:
         with SessionLocal() as db:
+            # Acquire the per-thread mutex before any consistent
+            # read in this transaction. A waiter therefore creates
+            # its read snapshot only after the previous creator
+            # commits and releases the Thread row.
+            self._lock_thread_for_run_creation(
+                db,
+                run_data.thread_id,
+            )
+
             assistant = (
                 db.query(Assistant)
                 .filter(Assistant.id == run_data.assistant_id)
