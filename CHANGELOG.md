@@ -1,3 +1,10 @@
+## [1.47.2](https://github.com/project-david-ai/projectdavid-core/compare/v1.47.1...v1.47.2) (2026-08-31)
+
+
+### Bug Fixes
+
+* expose core health readiness endpoint ([a4c6ae0](https://github.com/project-david-ai/projectdavid-core/commit/a4c6ae00a0d891830bd0140c633341b6e6b338cf))
+
 ## [1.47.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.47.0...v1.47.1) (2026-08-31)
 
 
