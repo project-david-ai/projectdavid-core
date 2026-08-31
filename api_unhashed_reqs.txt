@@ -24,6 +24,8 @@ projectdavid[text-embeddings]>=1.96.5
 projectdavid-orm>=1.8.1
 # <--Depends on projectdavid-orm
 projectdavid-services>=1.2.0
+projectdavid_common>=0.73.0
+
 
 # web search tools
 html2text>=2024.2.26
