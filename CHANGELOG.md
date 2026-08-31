@@ -1,3 +1,10 @@
+## [1.47.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.47.0...v1.47.1) (2026-08-31)
+
+
+### Bug Fixes
+
+* declare common schema dependency ([7e3a514](https://github.com/project-david-ai/projectdavid-core/commit/7e3a51445be1d0b1bc9a9fa44839321e3dbf9ab4))
+
 # [1.47.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.46.0...v1.47.0) (2026-08-30)
 
 
