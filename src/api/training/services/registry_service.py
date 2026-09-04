@@ -22,6 +22,8 @@ Usage:
     print(model.endpoint) # unsloth/qwen2.5-1.5b-instruct-unsloth-bnb-4bit
 """
 
+import os
+import posixpath
 import time
 from typing import List, Optional
 
@@ -33,6 +35,92 @@ from sqlalchemy.orm import Session
 from src.api.training.models.models import BaseModel
 
 logger = LoggingUtility()
+
+DEFAULT_MODEL_HUB_RUNTIME_ROOT = "/opt/projectdavid/model-hub/models"
+
+
+def _model_hub_runtime_root() -> str:
+    configured = os.getenv(
+        "MODEL_HUB_RUNTIME_ROOT",
+        DEFAULT_MODEL_HUB_RUNTIME_ROOT,
+    ).strip()
+
+    if (
+        not configured
+        or not configured.startswith("/")
+        or configured.startswith("//")
+        or "\\" in configured
+        or "\x00" in configured
+    ):
+        raise RuntimeError(
+            "MODEL_HUB_RUNTIME_ROOT must be a canonical " "absolute POSIX path."
+        )
+
+    normalized = posixpath.normpath(configured)
+
+    if normalized != configured or normalized == "/":
+        raise RuntimeError(
+            "MODEL_HUB_RUNTIME_ROOT must be a canonical " "non-root POSIX path."
+        )
+
+    return normalized
+
+
+def normalize_local_model_endpoint(
+    model_endpoint: str,
+) -> str:
+    if not isinstance(
+        model_endpoint,
+        str,
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="model_endpoint must be a string.",
+        )
+
+    endpoint = model_endpoint.strip()
+
+    if (
+        not endpoint
+        or not endpoint.startswith("/")
+        or endpoint.startswith("//")
+        or "\\" in endpoint
+        or "\x00" in endpoint
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=("model_endpoint must be a canonical " "absolute POSIX path."),
+        )
+
+    normalized = posixpath.normpath(endpoint)
+
+    if normalized != endpoint:
+        raise HTTPException(
+            status_code=422,
+            detail=("model_endpoint must already be canonical."),
+        )
+
+    runtime_root = _model_hub_runtime_root()
+
+    relative = posixpath.relpath(
+        endpoint,
+        runtime_root,
+    )
+
+    if (
+        relative == "."
+        or relative == ".."
+        or relative.startswith("../")
+        or relative.startswith("/")
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "model_endpoint is outside the configured " "Model Hub runtime root."
+            ),
+        )
+
+    return endpoint
 
 
 class RegistryService:
@@ -110,6 +198,61 @@ class RegistryService:
             base.id,
             base.endpoint,
         )
+        return base
+
+    def register_local_base_model(
+        self,
+        model_endpoint: str,
+        name: str,
+        family: Optional[str] = None,
+        parameter_count: Optional[str] = None,
+        is_multimodal: bool = False,
+    ) -> BaseModel:
+        """
+        Register a pre-installed Model Hub runtime endpoint.
+
+        This path is distinct from Hugging Face registration. The
+        endpoint must already be canonical and must live beneath the
+        configured read-only Model Hub runtime root.
+        """
+        endpoint = normalize_local_model_endpoint(model_endpoint)
+
+        existing = (
+            self.db.query(BaseModel).filter(BaseModel.endpoint == endpoint).first()
+        )
+
+        if existing:
+            logger.info(
+                "RegistryService: local base model already "
+                "registered. id=%s endpoint=%s",
+                existing.id,
+                existing.endpoint,
+            )
+            return existing
+
+        model_id = IdentifierService.generate_prefixed_id("bm")
+
+        base = BaseModel(
+            id=model_id,
+            name=name,
+            family=family,
+            parameter_count=parameter_count,
+            is_multimodal=is_multimodal,
+            endpoint=endpoint,
+            created_at=int(time.time()),
+        )
+
+        self.db.add(base)
+
+        self.db.commit()
+        self.db.refresh(base)
+
+        logger.info(
+            "RegistryService: registered local base model. " "id=%s endpoint=%s",
+            base.id,
+            base.endpoint,
+        )
+
         return base
 
     # ------------------------------------------------------------------
