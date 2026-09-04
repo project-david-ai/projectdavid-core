@@ -1,3 +1,10 @@
+# [1.50.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.49.0...v1.50.0) (2026-09-04)
+
+
+### Features
+
+* register trusted local model endpoints ([69f3774](https://github.com/project-david-ai/projectdavid-core/commit/69f37741057aa9faeec0450a3f6d2ee7c4f697d9))
+
 # [1.49.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.48.0...v1.49.0) (2026-09-04)
 
 
