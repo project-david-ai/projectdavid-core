@@ -21,6 +21,7 @@ from projectdavid_common.schemas.registry_schemas import (
     BaseModelRegisterRequest,
 )
 from projectdavid_common.utilities.check_admin_status import _is_admin
+from pydantic import BaseModel as PydanticBaseModel
 from sqlalchemy.orm import Session
 
 from src.api.training.db.database import get_db
@@ -28,6 +29,14 @@ from src.api.training.dependencies import get_current_user_id
 from src.api.training.services.registry_service import RegistryService
 
 router = APIRouter()
+
+
+class LocalBaseModelRegisterRequest(PydanticBaseModel):
+    model_endpoint: str
+    name: str
+    family: str | None = None
+    parameter_count: str | None = None
+    is_multimodal: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +87,40 @@ def register_base_model(
         parameter_count=payload.parameter_count,
         is_multimodal=payload.is_multimodal,
     )
+    return BaseModelRead.model_validate(model)
+
+
+@router.post(
+    "/base-models/local",
+    response_model=BaseModelRead,
+    summary="Register an installed local base model",
+    description=(
+        "Register a pre-installed Model Hub runtime endpoint. "
+        "The endpoint must be beneath the configured read-only "
+        "Model Hub runtime root. **Admin only.**"
+    ),
+    status_code=201,
+)
+def register_local_base_model(
+    payload: LocalBaseModelRegisterRequest,
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_id),
+) -> BaseModelRead:
+    _require_admin(
+        current_user_id,
+        db,
+    )
+
+    service = RegistryService(db)
+
+    model = service.register_local_base_model(
+        model_endpoint=payload.model_endpoint,
+        name=payload.name,
+        family=payload.family,
+        parameter_count=payload.parameter_count,
+        is_multimodal=payload.is_multimodal,
+    )
+
     return BaseModelRead.model_validate(model)
 
 
