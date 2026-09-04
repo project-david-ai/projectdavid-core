@@ -66,6 +66,21 @@ def _model_hub_runtime_root() -> str:
     return normalized
 
 
+def is_model_hub_runtime_endpoint(
+    model_endpoint: str,
+) -> bool:
+    if not isinstance(
+        model_endpoint,
+        str,
+    ):
+        return False
+
+    endpoint = model_endpoint.strip()
+    runtime_root = _model_hub_runtime_root()
+
+    return endpoint == runtime_root or endpoint.startswith(f"{runtime_root}/")
+
+
 def normalize_local_model_endpoint(
     model_endpoint: str,
 ) -> str:
