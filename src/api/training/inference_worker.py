@@ -44,14 +44,18 @@ NODE_IP notes:
         RAY_ADDRESS=ray://<head-tailscale-ip>:10001
 """
 
+import json
 import logging
 import os
 import socket
 import time
+from importlib import metadata
 
 import ray
 from ray import serve
 from sqlalchemy.orm import Session
+
+from src.api.training.runtime_capabilities import capture_runtime_capabilities
 
 log = logging.getLogger("projectdavid.inference_worker")
 
@@ -65,6 +69,10 @@ HF_CACHE_PATH = os.getenv("HF_CACHE_PATH", "/root/.cache/huggingface")
 SHARED_PATH = os.getenv("SHARED_PATH", "/mnt/training_data")
 NODE_ID = os.getenv("NODE_ID", f"node_{socket.gethostname()}")
 SERVE_HTTP_PORT = int(os.getenv("SERVE_HTTP_PORT", "8000"))
+
+_RUNTIME_CAPABILITIES_APP = "runtime_capabilities"
+_RUNTIME_CAPABILITIES_ROUTE = "/runtime-capabilities"
+_PROJECT_DAVID_DISTRIBUTION = "entities_api"
 
 # Tailscale / overlay network IP for this node.
 # When set, Ray advertises this IP instead of auto-detecting the interface.
@@ -276,6 +284,36 @@ def _get_vision_family_config(model_endpoint: str) -> dict:
 # ---------------------------------------------------------------------------
 # Ray Serve deployment — vLLM wrapped as a serve application
 # ---------------------------------------------------------------------------
+
+
+def _capture_runtime_capability_snapshot() -> dict:
+    """
+    Capture runtime truth in the inference-worker driver process.
+
+    The snapshot is collected before capability/model actors are created so
+    CUDA visibility is not distorted by Ray actor resource isolation.
+    """
+    project_david_version = metadata.version(_PROJECT_DAVID_DISTRIBUTION)
+
+    return capture_runtime_capabilities(project_david_version=project_david_version)
+
+
+@serve.deployment(
+    name=_RUNTIME_CAPABILITIES_APP,
+    ray_actor_options={"num_cpus": 0.1},
+)
+class RuntimeCapabilitiesDeployment:
+    """Serve an immutable driver-captured runtime capability snapshot."""
+
+    def __init__(self, snapshot: dict):
+        self._snapshot_json = json.dumps(
+            snapshot,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    async def __call__(self):
+        return json.loads(self._snapshot_json)
 
 
 @serve.deployment(
@@ -1144,6 +1182,23 @@ def main():
         log.info("🔵 Ray resources: %s", ray.cluster_resources())
 
     # ── Phase 2: Start Ray Serve ──────────────────────────────────────────
+    runtime_capability_snapshot = None
+
+    try:
+        runtime_capability_snapshot = _capture_runtime_capability_snapshot()
+        log.info(
+            "Runtime capability snapshot captured " "(schema=%s, backend=%s)",
+            runtime_capability_snapshot.get("schema_version"),
+            runtime_capability_snapshot.get("backend", {}).get("id"),
+        )
+    except Exception as exc:
+        # Model Hub capability discovery is additive. Failure here must not
+        # prevent the existing inference service from starting.
+        log.exception(
+            "Runtime capability snapshot unavailable: %s",
+            exc,
+        )
+
     serve.start(
         detached=True,
         http_options={"host": "0.0.0.0", "port": SERVE_HTTP_PORT},  # nosec B104
@@ -1151,6 +1206,21 @@ def main():
     log.info("🎯 Ray Serve started on port %d", SERVE_HTTP_PORT)
 
     # ── Phase 3: Reconciliation loop ──────────────────────────────────────
+    if runtime_capability_snapshot is not None:
+        capability_app = RuntimeCapabilitiesDeployment.bind(runtime_capability_snapshot)
+
+        serve.run(
+            capability_app,
+            name=_RUNTIME_CAPABILITIES_APP,
+            route_prefix=_RUNTIME_CAPABILITIES_ROUTE,
+            blocking=False,
+        )
+
+        log.info(
+            "Runtime capabilities available at %s",
+            _RUNTIME_CAPABILITIES_ROUTE,
+        )
+
     reconciler = InferenceReconciler()
     log.info("👀 InferenceReconciler active — polling every %ds", POLL_INTERVAL)
 

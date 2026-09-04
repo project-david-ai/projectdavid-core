@@ -181,6 +181,30 @@ def update_deployment(
 
 
 # ---------------------------------------------------------------------------
+# Runtime capabilities                                           [admin only]
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/runtime-capabilities",
+    summary="Get inference runtime capabilities",
+    description=(
+        "Return the capability snapshot captured inside the inference-worker "
+        "runtime. This reports the actual Project David/vLLM/PyTorch "
+        "environment used for local inference rather than API-host metadata. "
+        "**Admin only.**"
+    ),
+)
+def get_runtime_capabilities(
+    db: Session = Depends(get_db),
+    current_user_id: str = Depends(get_current_user_id),
+) -> dict:
+    _require_admin(current_user_id, db)
+    service = DeploymentService(db)
+    return service.get_runtime_capabilities()
+
+
+# ---------------------------------------------------------------------------
 # Listing                                                        [admin only]
 # ---------------------------------------------------------------------------
 

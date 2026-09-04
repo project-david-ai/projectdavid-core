@@ -272,6 +272,45 @@ class DeploymentService:
             .all()
         )
 
+    def get_runtime_capabilities(self) -> dict:
+        """
+        Return the inference-worker runtime capability snapshot.
+
+        The snapshot is captured inside the inference-worker environment,
+        not inferred from the API container or Ray dashboard.
+
+        A missing/unreachable capability application is reported as 503.
+        A non-object response is treated as an invalid upstream contract.
+        """
+        try:
+            response = httpx.get(
+                f"{RAY_SERVE_URL}/runtime-capabilities",
+                timeout=5.0,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except Exception as exc:
+            logging_utility.warning(
+                "Inference runtime capabilities unavailable: %s",
+                exc,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Inference runtime capabilities unavailable.",
+            ) from exc
+
+        if not isinstance(payload, dict):
+            logging_utility.error(
+                "Inference runtime capability endpoint returned "
+                "a non-object payload."
+            )
+            raise HTTPException(
+                status_code=502,
+                detail="Inference runtime capability response is invalid.",
+            )
+
+        return payload
+
     def deactivate_all(self) -> dict:
         deployment_ids = self._mark_deployments_cancelling(
             self.db.query(InferenceDeployment)
