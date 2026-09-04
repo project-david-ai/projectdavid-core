@@ -56,6 +56,7 @@ from ray import serve
 from sqlalchemy.orm import Session
 
 from src.api.training.runtime_capabilities import capture_runtime_capabilities
+from src.api.training.services.registry_service import is_model_hub_runtime_endpoint
 
 log = logging.getLogger("projectdavid.inference_worker")
 
@@ -441,9 +442,19 @@ class VLLMDeployment:
                 vision_config["limit_mm_per_prompt"],
             )
 
-        if vision_config.get("trust_remote_code"):
+        if is_model_hub_runtime_endpoint(model_endpoint):
+            engine_kwargs["trust_remote_code"] = False
+            log.info(
+                "trust_remote_code=False forced for Model Hub local model %s",
+                model_endpoint,
+            )
+
+        elif vision_config.get("trust_remote_code"):
             engine_kwargs["trust_remote_code"] = True
-            log.info("🔭 trust_remote_code=True applied for %s", model_endpoint)
+            log.info(
+                "trust_remote_code=True applied for %s",
+                model_endpoint,
+            )
 
         if (
             vision_config.get("max_model_len")

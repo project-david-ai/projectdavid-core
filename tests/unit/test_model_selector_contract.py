@@ -261,3 +261,42 @@ def test_kimi_k3_family_enables_trust_remote_code(monkeypatch):
     config = inference_worker._get_vision_family_config("tiny-random/kimi-k3")
 
     assert config["trust_remote_code"] is True
+
+
+def test_hf_kimi_k3_deployment_preserves_trust_remote_code(monkeypatch):
+    inference_worker, fake_engine = _load_inference_worker_with_fakes(monkeypatch)
+
+    deployment = inference_worker.VLLMDeployment(
+        model_endpoint="tiny-random/kimi-k3",
+    )
+
+    assert deployment.engine is fake_engine
+    assert fake_engine.last_engine_args.kwargs["trust_remote_code"] is True
+
+
+def test_model_hub_local_kimi_k3_forces_trust_remote_code_false(monkeypatch):
+    inference_worker, fake_engine = _load_inference_worker_with_fakes(monkeypatch)
+
+    model_endpoint = "/opt/projectdavid/model-hub/models/" "model-a/kimi-k3/revision-a"
+
+    deployment = inference_worker.VLLMDeployment(
+        model_endpoint=model_endpoint,
+    )
+
+    assert deployment.engine is fake_engine
+    assert fake_engine.last_engine_args.kwargs["trust_remote_code"] is False
+
+
+def test_model_hub_namespace_forces_false_even_for_noncanonical_descendant(
+    monkeypatch,
+):
+    inference_worker, fake_engine = _load_inference_worker_with_fakes(monkeypatch)
+
+    model_endpoint = "/opt/projectdavid/model-hub/models/" "../kimi-k3"
+
+    deployment = inference_worker.VLLMDeployment(
+        model_endpoint=model_endpoint,
+    )
+
+    assert deployment.engine is fake_engine
+    assert fake_engine.last_engine_args.kwargs["trust_remote_code"] is False

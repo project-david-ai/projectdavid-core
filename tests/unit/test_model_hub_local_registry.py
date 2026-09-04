@@ -5,6 +5,7 @@ from fastapi import HTTPException
 
 from src.api.training.services.registry_service import (
     RegistryService,
+    is_model_hub_runtime_endpoint,
     normalize_local_model_endpoint,
 )
 
@@ -126,3 +127,17 @@ def test_local_registration_preserves_locator_without_hf_reinterpretation():
     assert session.commits == 1
 
     assert session.refreshes == [result]
+
+
+def test_model_hub_runtime_namespace_classification():
+    assert is_model_hub_runtime_endpoint(RUNTIME_ENDPOINT)
+
+    assert is_model_hub_runtime_endpoint("/opt/projectdavid/model-hub/models")
+
+    assert is_model_hub_runtime_endpoint("/opt/projectdavid/model-hub/models/../unsafe")
+
+    assert not is_model_hub_runtime_endpoint(
+        "/opt/projectdavid/model-hub/models-extra/model"
+    )
+
+    assert not is_model_hub_runtime_endpoint("tiny-random/kimi-k3")
