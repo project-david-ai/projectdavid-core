@@ -1,3 +1,10 @@
+# [1.49.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.48.0...v1.49.0) (2026-09-04)
+
+
+### Features
+
+* expose supported inference execution modes ([1973815](https://github.com/project-david-ai/projectdavid-core/commit/19738158ff05282b7bd4e52be71622b3a98da174))
+
 # [1.48.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.47.2...v1.48.0) (2026-09-04)
 
 
