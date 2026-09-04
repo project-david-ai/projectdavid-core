@@ -1,3 +1,10 @@
+# [1.48.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.47.2...v1.48.0) (2026-09-04)
+
+
+### Features
+
+* expose inference runtime capabilities ([fc790da](https://github.com/project-david-ai/projectdavid-core/commit/fc790da96991423a6c623b7d2213bf4c2fb81854))
+
 ## [1.47.2](https://github.com/project-david-ai/projectdavid-core/compare/v1.47.1...v1.47.2) (2026-08-31)
 
 
