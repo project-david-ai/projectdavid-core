@@ -1,3 +1,10 @@
+## [1.50.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.50.0...v1.50.1) (2026-09-04)
+
+
+### Bug Fixes
+
+* enforce model hub runtime trust boundary ([f4577d3](https://github.com/project-david-ai/projectdavid-core/commit/f4577d32df306c9fcbdd54351005391287448cb2))
+
 # [1.50.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.49.0...v1.50.0) (2026-09-04)
 
 
