@@ -219,8 +219,10 @@ def capture_runtime_capabilities(
 
     torch_runtime = torch_module if torch_module is not None else _load_torch()
 
+    backend_id = "vllm"
+
     backend_version = _resolve_distribution_version(
-        "vllm",
+        backend_id,
         version_getter,
     )
 
@@ -270,13 +272,34 @@ def capture_runtime_capabilities(
         accelerator_api=accelerator_api,
     )
 
+    # accelerator_api records what this worker currently observes.
+    #
+    # supported_execution_modes is deliberately separate: it describes
+    # execution plans that this installed inference implementation can
+    # actually provide.
+    #
+    # The current VLLMDeployment always reserves GPU resources, so a
+    # CPU-only Torch observation must NOT be advertised as vLLM CPU
+    # execution support.
+    supported_execution_modes = (
+        []
+        if accelerator_api == "cpu"
+        else [
+            {
+                "backend_id": backend_id,
+                "accelerator_api": accelerator_api,
+            }
+        ]
+    )
+
     return {
         "schema_version": SCHEMA_VERSION,
         "project_david_version": project_version,
         "backend": {
-            "id": "vllm",
+            "id": backend_id,
             "version": backend_version,
         },
+        "supported_execution_modes": supported_execution_modes,
         "runtime": {
             "accelerator_api": accelerator_api,
             # Deliberately null until queried from the actual runtime API.

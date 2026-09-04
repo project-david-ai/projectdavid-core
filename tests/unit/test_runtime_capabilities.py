@@ -91,6 +91,12 @@ def test_cuda_runtime_snapshot():
             "id": "vllm",
             "version": "0.10.1",
         },
+        "supported_execution_modes": [
+            {
+                "backend_id": "vllm",
+                "accelerator_api": "cuda",
+            }
+        ],
         "runtime": {
             "accelerator_api": "cuda",
             "cuda_runtime_version": None,
@@ -130,6 +136,7 @@ def test_cpu_only_fallback():
     )
 
     assert result["runtime"]["accelerator_api"] == "cpu"
+    assert result["supported_execution_modes"] == []
     assert result["visible_accelerators"] == []
     assert result["frameworks"]["torch"]["cuda_version"] is None
     assert result["frameworks"]["torch"]["cudnn_version"] is None
@@ -158,6 +165,12 @@ def test_rocm_is_not_misreported_as_cuda():
     )
 
     assert result["runtime"]["accelerator_api"] == "rocm"
+    assert result["supported_execution_modes"] == [
+        {
+            "backend_id": "vllm",
+            "accelerator_api": "rocm",
+        }
+    ]
     assert result["runtime"]["rocm_runtime_version"] is None
     assert result["visible_accelerators"][0]["vendor"] == "amd"
     assert result["visible_accelerators"][0]["id"] == "rocm:0"
