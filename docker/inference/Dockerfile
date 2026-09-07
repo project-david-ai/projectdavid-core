@@ -42,6 +42,7 @@ RUN pip install --no-cache-dir \
     "huggingface_hub[cli]>=0.21.0"
 
 COPY src/api/training/inference_worker.py /app/inference_worker.py
+COPY src/api/training/runtime_capabilities.py /app/src/api/training/runtime_capabilities.py
 COPY src/api/training/models /app/src/api/training/models
 COPY src/api/training/db /app/src/api/training/db
 COPY docker/inference/entrypoint.sh /app/entrypoint.sh
