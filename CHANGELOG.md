@@ -1,3 +1,10 @@
+## [1.50.2](https://github.com/project-david-ai/projectdavid-core/compare/v1.50.1...v1.50.2) (2026-09-07)
+
+
+### Bug Fixes
+
+* package runtime capabilities in inference worker ([1b97dd5](https://github.com/project-david-ai/projectdavid-core/commit/1b97dd55b610a081a1432e98ba3008c071391639))
+
 ## [1.50.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.50.0...v1.50.1) (2026-09-04)
 
 
