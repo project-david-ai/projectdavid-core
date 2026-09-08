@@ -45,6 +45,8 @@ COPY src/api/training/inference_worker.py /app/inference_worker.py
 COPY src/api/training/runtime_capabilities.py /app/src/api/training/runtime_capabilities.py
 COPY src/api/training/models /app/src/api/training/models
 COPY src/api/training/db /app/src/api/training/db
+COPY src/api/training/services /app/src/api/training/services
+COPY src/api/training/services /app/src/api/training/services
 COPY docker/inference/entrypoint.sh /app/entrypoint.sh
 
 RUN chmod +x /app/entrypoint.sh
