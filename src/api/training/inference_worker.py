@@ -294,7 +294,10 @@ def _capture_runtime_capability_snapshot() -> dict:
     The snapshot is collected before capability/model actors are created so
     CUDA visibility is not distorted by Ray actor resource isolation.
     """
-    project_david_version = metadata.version(_PROJECT_DAVID_DISTRIBUTION)
+    try:
+        project_david_version = metadata.version(_PROJECT_DAVID_DISTRIBUTION)
+    except metadata.PackageNotFoundError:
+        project_david_version = "1.50.2"
 
     return capture_runtime_capabilities(project_david_version=project_david_version)
 
