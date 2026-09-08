@@ -1,3 +1,11 @@
+## [1.50.3](https://github.com/project-david-ai/projectdavid-core/compare/v1.50.2...v1.50.3) (2026-09-08)
+
+
+### Bug Fixes
+
+* harden local inference runtime deployment ([5427e6e](https://github.com/project-david-ai/projectdavid-core/commit/5427e6e98cc8eb3e0ebe1a2d4380c120a6ce947f))
+* harden local model routing and context admission ([b13c4d5](https://github.com/project-david-ai/projectdavid-core/commit/b13c4d527c08a6b6dfcf8c17221f174397c983a9))
+
 ## [1.50.2](https://github.com/project-david-ai/projectdavid-core/compare/v1.50.1...v1.50.2) (2026-09-07)
 
 
