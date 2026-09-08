@@ -112,6 +112,7 @@ class VLLMDefaultBaseWorker(
 
         self.model_name = extra.get("model_name", "Qwen/Qwen2.5-3B-Instruct")
         self.max_context_window = extra.get("max_context_window", 128_000)
+        self._configured_max_context_window = self.max_context_window
         self.threshold_percentage = extra.get("threshold_percentage", 0.8)
 
         self.setup_services()
@@ -123,6 +124,365 @@ class VLLMDefaultBaseWorker(
             self.set_tool_response_state = lambda x: None
 
         LOG.debug("VLLMDefaultBaseWorker ready (assistant=%s)", assistant_id)
+
+    @staticmethod
+    def _compact_json_schema(value: Any) -> Any:
+        """Remove prose-only schema metadata while preserving call validity."""
+        if isinstance(value, dict):
+            return {
+                key: VLLMDefaultBaseWorker._compact_json_schema(item)
+                for key, item in value.items()
+                if key
+                not in {
+                    "description",
+                    "title",
+                    "examples",
+                    "example",
+                }
+            }
+        if isinstance(value, list):
+            return [VLLMDefaultBaseWorker._compact_json_schema(item) for item in value]
+        return value
+
+    @classmethod
+    def _compact_tool_schema(cls, tool: Dict[str, Any]) -> Dict[str, Any]:
+        """Keep tool name/argument contract while dropping token-heavy prose."""
+        if not isinstance(tool, dict):
+            return tool
+
+        compact = cls._compact_json_schema(tool)
+        function = compact.get("function")
+        source_function = tool.get("function")
+        if isinstance(function, dict) and isinstance(source_function, dict):
+            description = source_function.get("description")
+            if isinstance(description, str) and description.strip():
+                first_line = description.strip().splitlines()[0].strip()
+                first_sentence = first_line.split(". ", 1)[0].rstrip(".")
+                if first_sentence:
+                    function["description"] = first_sentence[:160] + "."
+        return compact
+
+    def _compact_local_tool_context(
+        self,
+        messages: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Replace embedded full tool prose with compact schemas for small contexts."""
+        extractor = getattr(self, "prepare_native_tool_context", None)
+        if not callable(extractor):
+            return messages
+
+        try:
+            stripped_messages, native_tools = extractor(messages)
+        except Exception as exc:
+            LOG.warning("LOCAL CONTEXT TOOLS ▸ extraction failed: %s", exc)
+            return messages
+
+        if not native_tools:
+            return messages
+
+        compact_tools = [self._compact_tool_schema(tool) for tool in native_tools]
+        compact_json = json.dumps(
+            compact_tools,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        suffix = "\n\nAvailable tools (compact JSON schemas):\n" + compact_json
+
+        result = [dict(message) for message in stripped_messages]
+        system_index = next(
+            (
+                index
+                for index, message in enumerate(result)
+                if message.get("role") == "system"
+                and isinstance(message.get("content"), str)
+            ),
+            None,
+        )
+        if system_index is None:
+            result.insert(0, {"role": "system", "content": suffix.lstrip()})
+        else:
+            result[system_index]["content"] = (
+                result[system_index].get("content", "").rstrip() + suffix
+            )
+
+        LOG.info(
+            "LOCAL CONTEXT TOOLS ▸ compacted %d tool schema(s) to %d chars",
+            len(compact_tools),
+            len(compact_json),
+        )
+        return result
+
+    @staticmethod
+    def _estimate_local_prompt_tokens(messages: List[Dict[str, Any]]) -> int:
+        """Conservative offline estimate when the deployment tokenizer is unavailable."""
+        estimate = 0
+        for message in messages:
+            content = message.get("content", "")
+            if isinstance(content, str):
+                rendered = content
+            else:
+                rendered = json.dumps(
+                    content,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            estimate += max(1, (len(rendered) + 2) // 3) + 16
+        return estimate
+
+    @staticmethod
+    def _local_completion_limit(
+        configured: Any,
+        context_window: int,
+    ) -> int:
+        """Cap requested output for constrained local deployments."""
+        try:
+            requested = int(configured) if configured is not None else 2_048
+        except (TypeError, ValueError):
+            requested = 2_048
+
+        requested = max(1, requested)
+
+        if context_window <= 2_048:
+            capacity_cap = 256
+        elif context_window <= 4_096:
+            capacity_cap = 512
+        else:
+            capacity_cap = min(
+                2_048,
+                max(
+                    512,
+                    context_window // 4,
+                ),
+            )
+
+        return min(
+            requested,
+            capacity_cap,
+        )
+
+    @classmethod
+    def _admit_local_context(
+        cls,
+        messages: List[Dict[str, Any]],
+        *,
+        context_window: int,
+        completion_tokens: int,
+        safety_tokens: int = 64,
+        minimum_completion_tokens: int = 32,
+    ) -> tuple[List[Dict[str, Any]], int]:
+        """Protect the current turn and elastically allocate completion capacity."""
+        try:
+            completion_tokens = int(completion_tokens)
+        except (TypeError, ValueError):
+            completion_tokens = 256
+
+        completion_tokens = max(
+            1,
+            completion_tokens,
+        )
+
+        safety_tokens = max(
+            0,
+            int(safety_tokens),
+        )
+
+        minimum_completion_tokens = max(
+            1,
+            int(minimum_completion_tokens),
+        )
+
+        usable_window = context_window - safety_tokens
+
+        if usable_window <= minimum_completion_tokens:
+            raise ValueError(
+                "LOCAL_CONTEXT_CAPACITY_EXCEEDED: "
+                "deployment leaves insufficient capacity "
+                "after the local safety reserve"
+            )
+
+        system_indexes = {
+            index
+            for index, message in enumerate(messages)
+            if message.get("role") == "system"
+        }
+
+        latest_user_index = next(
+            (
+                index
+                for index in range(
+                    len(messages) - 1,
+                    -1,
+                    -1,
+                )
+                if (messages[index].get("role") == "user")
+            ),
+            None,
+        )
+
+        required_indexes = set(system_indexes)
+
+        if latest_user_index is not None:
+            # Preserve the complete current turn, including anything
+            # occurring after the latest user message.
+            required_indexes.update(
+                range(
+                    latest_user_index,
+                    len(messages),
+                )
+            )
+        else:
+            latest_non_system = next(
+                (
+                    index
+                    for index in range(
+                        len(messages) - 1,
+                        -1,
+                        -1,
+                    )
+                    if index not in system_indexes
+                ),
+                None,
+            )
+
+            if latest_non_system is not None:
+                required_indexes.update(
+                    range(
+                        latest_non_system,
+                        len(messages),
+                    )
+                )
+
+        protected = [
+            message
+            for index, message in enumerate(messages)
+            if index in required_indexes
+        ]
+
+        protected_tokens = cls._estimate_local_prompt_tokens(protected)
+
+        protected_completion_room = usable_window - protected_tokens
+
+        if protected_completion_room < minimum_completion_tokens:
+            raise ValueError(
+                "LOCAL_CONTEXT_CAPACITY_EXCEEDED: "
+                "protected system/tool context requires "
+                f"approximately {protected_tokens} input tokens; "
+                f"deployment window {context_window} leaves only "
+                f"{max(0, protected_completion_room)} "
+                "completion tokens after "
+                f"a {safety_tokens}-token safety reserve"
+            )
+
+        # This is the important V3 behaviour:
+        # shrink the completion reservation instead of rejecting
+        # a protected prompt that otherwise fits.
+        completion_tokens = min(
+            completion_tokens,
+            protected_completion_room,
+        )
+
+        input_budget = usable_window - completion_tokens
+
+        full_tokens = cls._estimate_local_prompt_tokens(messages)
+
+        if full_tokens <= input_budget:
+            admitted = list(messages)
+
+        else:
+            chosen = set(required_indexes)
+
+            history_end = (
+                latest_user_index
+                if latest_user_index is not None
+                else min(
+                    required_indexes,
+                    default=len(messages),
+                )
+            )
+
+            history_indexes = [
+                index for index in range(history_end) if index not in system_indexes
+            ]
+
+            # Keep complete historical conversational turns rather
+            # than arbitrary isolated messages.
+            groups: List[List[int]] = []
+            group: List[int] = []
+
+            for index in history_indexes:
+                role = messages[index].get("role")
+
+                if role == "user" and group:
+                    groups.append(group)
+                    group = []
+
+                group.append(index)
+
+            if group:
+                groups.append(group)
+
+            for history_group in reversed(groups):
+                candidate_indexes = chosen | set(history_group)
+
+                candidate = [
+                    message
+                    for index, message in enumerate(messages)
+                    if index in candidate_indexes
+                ]
+
+                candidate_tokens = cls._estimate_local_prompt_tokens(candidate)
+
+                if candidate_tokens > input_budget:
+                    break
+
+                chosen.update(history_group)
+
+            admitted = [
+                message for index, message in enumerate(messages) if index in chosen
+            ]
+
+        estimated_input = cls._estimate_local_prompt_tokens(admitted)
+
+        available_completion = usable_window - estimated_input
+
+        completion_tokens = min(
+            completion_tokens,
+            available_completion,
+        )
+
+        if completion_tokens < minimum_completion_tokens:
+            raise ValueError(
+                "LOCAL_CONTEXT_CAPACITY_EXCEEDED: "
+                "admitted local context leaves only "
+                f"{max(0, completion_tokens)} completion tokens "
+                f"after a {safety_tokens}-token safety reserve"
+            )
+
+        LOG.info(
+            "LOCAL CONTEXT BUDGET ? "
+            "admitted=%d/%d "
+            "estimated_input=%d "
+            "completion=%d "
+            "requested_cap=%d "
+            "safety=%d "
+            "window=%d",
+            len(admitted),
+            len(messages),
+            estimated_input,
+            completion_tokens,
+            min(
+                completion_tokens,
+                (
+                    256
+                    if context_window <= 2_048
+                    else (512 if context_window <= 4_096 else completion_tokens)
+                ),
+            ),
+            safety_tokens,
+            context_window,
+        )
+
+        return admitted, completion_tokens
 
     async def stream(
         self,
@@ -155,6 +515,7 @@ class VLLMDefaultBaseWorker(
         decision_buffer: str = ""
         current_block: str | None = None
         pre_mapped_model = model
+        local_max_model_len: Optional[int] = None
 
         try:
             if hasattr(self, "_get_model_map") and (
@@ -184,20 +545,44 @@ class VLLMDefaultBaseWorker(
             if not custom_vllm_url:
                 db_session = SessionLocal()
                 try:
-                    mesh_resolved_url = InferenceResolver.resolve_vllm_url(
-                        db_session, model
+                    mesh_route = InferenceResolver.resolve_vllm_route(db_session, model)
+                    mesh_resolved_url = mesh_route.get("url") if mesh_route else None
+                    local_max_model_len = (
+                        mesh_route.get("max_model_len") if mesh_route else None
                     )
                     if mesh_resolved_url:
                         LOG.info("🌐 Mesh Resolver: %s -> %s", model, mesh_resolved_url)
+                    if local_max_model_len:
+                        LOG.info(
+                            "LOCAL CONTEXT CAPACITY ▸ model=%s max_model_len=%d",
+                            model,
+                            local_max_model_len,
+                        )
                 except Exception as e:
                     LOG.error("❌ Mesh Resolution Error: %s", e)
+                    if InferenceResolver.requires_registered_route(model):
+                        raise
                 finally:
                     db_session.close()
+
+            if (
+                not custom_vllm_url
+                and not mesh_resolved_url
+                and InferenceResolver.requires_registered_route(model)
+            ):
+                raise ValueError(
+                    "MODEL_ROUTE_UNAVAILABLE: no active registered endpoint "
+                    "for the requested model; activate it before sending"
+                )
 
             # Final Target Logic: 1. Kwargs | 2. Mesh Ledger | 3. Hardcoded Env
             target_url = custom_vllm_url or mesh_resolved_url or self.base_url
 
             # ── Context Setup ────────────────────────────────────────────
+            self.max_context_window = (
+                local_max_model_len or self._configured_max_context_window
+            )
+
             await self._handle_role_based_identity_swap(
                 requested_model=pre_mapped_model
             )
@@ -211,8 +596,6 @@ class VLLMDefaultBaseWorker(
                 force_refresh=force_refresh,
             )
 
-            yield json.dumps({"type": "status", "status": "started", "run_id": run_id})
-
             # ── Inference parameters from assistant cache ─────────────────
             _max_tokens = self.assistant_config.get("max_tokens", None)
             _temperature = self.assistant_config.get(
@@ -220,12 +603,36 @@ class VLLMDefaultBaseWorker(
             )
             _top_p = self.assistant_config.get("top_p", None)
 
+            if local_max_model_len:
+                # LOCAL_CONTEXT_ADMISSION_V2
+                ctx = self._compact_local_tool_context(ctx)
+
+                _max_tokens = self._local_completion_limit(
+                    _max_tokens,
+                    local_max_model_len,
+                )
+
+                ctx, _max_tokens = self._admit_local_context(
+                    ctx,
+                    context_window=local_max_model_len,
+                    completion_tokens=_max_tokens,
+                )
+
+                LOG.info(
+                    "LOCAL CONTEXT BUDGET ? " "max_model_len=%d max_tokens=%d",
+                    local_max_model_len,
+                    _max_tokens,
+                )
+
             LOG.info(
                 "INFERENCE PARAMS ▸ max_tokens=%s | temperature=%s | top_p=%s",
                 _max_tokens,
                 _temperature,
                 _top_p,
             )
+
+            # Admission happens before the Ray Serve SSE request is opened.
+            yield json.dumps({"type": "status", "status": "started", "run_id": run_id})
 
             # ── The Stream Cycle ─────────────────────────────────────────
             async for chunk in DeltaNormalizer.async_iter_deltas(
@@ -319,6 +726,7 @@ class VLLMDefaultBaseWorker(
         finally:
             stop_event.set()
             self.assistant_id = _original_assistant_id
+            self.max_context_window = self._configured_max_context_window
 
     # ─────────────────────────────────────────────────────────────────────
     # Synchronous wrapper — identical to Ollama worker
