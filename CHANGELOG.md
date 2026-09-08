@@ -1,3 +1,10 @@
+## [1.50.4](https://github.com/project-david-ai/projectdavid-core/compare/v1.50.3...v1.50.4) (2026-09-08)
+
+
+### Bug Fixes
+
+* trigger Core CI build ([57149b5](https://github.com/project-david-ai/projectdavid-core/commit/57149b5a8eecde6816dba2911de8919ac5669f8f))
+
 ## [1.50.3](https://github.com/project-david-ai/projectdavid-core/compare/v1.50.2...v1.50.3) (2026-09-08)
 
 
