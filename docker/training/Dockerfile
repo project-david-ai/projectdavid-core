@@ -73,7 +73,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /install/packages /usr/local
 
 # Resolve known version-collision packages after merge.
-RUN pip install --force-reinstall --no-cache-dir charset-normalizer packaging
+RUN pip install --force-reinstall --no-cache-dir charset-normalizer packaging typing_extensions==4.16.0
 
 ENV PATH="/usr/local/bin:$PATH" \
     PYTHONPATH=/app \
