@@ -1,3 +1,10 @@
+## [1.50.5](https://github.com/project-david-ai/projectdavid-core/compare/v1.50.4...v1.50.5) (2026-09-09)
+
+
+### Bug Fixes
+
+* pin typing extensions for training runtime ([9147da6](https://github.com/project-david-ai/projectdavid-core/commit/9147da635565b99ca42e9a55137c0e4e16cf8282))
+
 ## [1.50.4](https://github.com/project-david-ai/projectdavid-core/compare/v1.50.3...v1.50.4) (2026-09-08)
 
 
