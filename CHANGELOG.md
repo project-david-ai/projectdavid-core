@@ -1,3 +1,11 @@
+## [1.50.6](https://github.com/project-david-ai/projectdavid-core/compare/v1.50.5...v1.50.6) (2026-09-10)
+
+
+### Bug Fixes
+
+* ensure inference worker packages registry service ([c0f45e2](https://github.com/project-david-ai/projectdavid-core/commit/c0f45e2ff98c68af3c24585685a615de313a5844))
+* validate inference worker packaging ([d65034e](https://github.com/project-david-ai/projectdavid-core/commit/d65034e071faca8bd76b8219dc57805411159957))
+
 ## [1.50.5](https://github.com/project-david-ai/projectdavid-core/compare/v1.50.4...v1.50.5) (2026-09-09)
 
 
