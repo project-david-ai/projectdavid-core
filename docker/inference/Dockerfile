@@ -48,7 +48,9 @@ COPY src/api/training/db /app/src/api/training/db
 COPY src/api/training/services /app/src/api/training/services
 
 # Fail the image build if the inference worker import surface is incomplete.
-RUN test -s /app/src/api/training/services/registry_service.py
+RUN test -s /app/src/api/training/services/registry_service.py \
+    && python3 -c "from src.api.training.services.registry_service import is_model_hub_runtime_endpoint"
+
 COPY docker/inference/entrypoint.sh /app/entrypoint.sh
 
 RUN chmod +x /app/entrypoint.sh
