@@ -100,6 +100,46 @@ _GPU_MEM_UTIL_MAX = 0.95
 # Larger values consume more KV cache VRAM linearly.
 _DEFAULT_MAX_MODEL_LEN = int(os.getenv("VLLM_DEFAULT_MAX_MODEL_LEN", "4096"))
 
+# Trusted Model Hub fallback for constrained desktop GPUs.
+#
+# The legacy global 0.50 GPU-memory default intentionally remains unchanged:
+# it protects older/general inference paths from profile_run OOMs.
+#
+# Model Hub runtimes, however, are compatibility-gated before activation and
+# need enough of an 8 GiB GPU available for quantized model weights plus a
+# viable KV cache.  These values reproduce the accepted Qwen3-8B AWQ envelope
+# on the reference RTX 4060 Laptop 8 GiB machine.
+_MODEL_HUB_SMALL_GPU_MAX_MIB = 9216
+_MODEL_HUB_SMALL_GPU_MEM_UTIL = 0.77
+_MODEL_HUB_SMALL_GPU_MAX_MODEL_LEN = 2048
+_MODEL_HUB_SMALL_GPU_MAX_NUM_SEQS = 1
+_MODEL_HUB_SMALL_GPU_MAX_NUM_BATCHED_TOKENS = 512
+
+
+def _is_small_cuda_gpu() -> bool:
+    """Detect a <= ~8 GiB NVIDIA GPU through NVML without initialising CUDA."""
+    try:
+        import pynvml
+
+        pynvml.nvmlInit()
+
+        try:
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            memory = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            total_mib = int(memory.total // (1024 * 1024))
+        finally:
+            pynvml.nvmlShutdown()
+
+        return total_mib <= _MODEL_HUB_SMALL_GPU_MAX_MIB
+
+    except Exception as exc:
+        log.warning(
+            "Unable to detect GPU VRAM for Model Hub runtime tuning: %s",
+            exc,
+        )
+        return False
+
+
 # Maximum LoRA rank this vLLM instance will accept.
 # vLLM pre-allocates GPU buffers for the largest possible adapter at startup.
 # Setting this higher than needed costs a small amount of VRAM but no more
@@ -356,6 +396,8 @@ class VLLMDeployment:
         # --- Per-deployment vLLM engine hyperparam overrides ---
         # Read from InferenceDeployment DB columns at deploy time.
         # None values defer to vLLM's own defaults except where noted.
+        max_num_seqs: int = None,
+        max_num_batched_tokens: int = None,
         quantization: str = None,  # "awq", "awq_marlin", "gptq", "bitsandbytes", None = full precision
         dtype: str = None,  # "float16", "bfloat16", "auto", None → defaults to float16 below
         enforce_eager: bool = False,  # True = disable CUDA graphs (slower but useful for OOM debugging)
@@ -394,6 +436,18 @@ class VLLMDeployment:
             max_loras=max(1, len(self.lora_modules)),
             max_lora_rank=max_lora_rank,
             enforce_eager=enforce_eager,
+        )
+
+        if max_num_seqs is not None:
+            engine_kwargs["max_num_seqs"] = int(max_num_seqs)
+
+        if max_num_batched_tokens is not None:
+            engine_kwargs["max_num_batched_tokens"] = int(max_num_batched_tokens)
+
+        log.info(
+            "vLLM scheduler envelope — max_num_seqs=%s " "max_num_batched_tokens=%s",
+            max_num_seqs,
+            max_num_batched_tokens,
         )
 
         # dtype: only pass when explicitly requested.
@@ -813,6 +867,41 @@ class InferenceReconciler:
         # Max sequence length: DB column → VLLM_DEFAULT_MAX_MODEL_LEN env → 4096
         max_model_len = getattr(dep, "max_model_len", None) or _DEFAULT_MAX_MODEL_LEN
 
+        # Scheduler concurrency is persisted independently from context length.
+        max_num_seqs = getattr(dep, "max_num_seqs", None)
+        max_num_batched_tokens = None
+
+        # Trusted local Model Hub models have already passed Q's compatibility
+        # gate. On constrained desktop GPUs use the ratified small-GPU runtime
+        # envelope unless an explicit deployment/node override was supplied.
+        if is_model_hub_runtime_endpoint(model_endpoint) and _is_small_cuda_gpu():
+            if (
+                getattr(dep, "gpu_memory_utilization", None) is None
+                and "VLLM_DEFAULT_GPU_MEM_UTIL" not in os.environ
+            ):
+                gpu_mem_util = _MODEL_HUB_SMALL_GPU_MEM_UTIL
+
+            if (
+                getattr(dep, "max_model_len", None) is None
+                and "VLLM_DEFAULT_MAX_MODEL_LEN" not in os.environ
+            ):
+                max_model_len = _MODEL_HUB_SMALL_GPU_MAX_MODEL_LEN
+
+            if max_num_seqs is None:
+                max_num_seqs = _MODEL_HUB_SMALL_GPU_MAX_NUM_SEQS
+
+            max_num_batched_tokens = _MODEL_HUB_SMALL_GPU_MAX_NUM_BATCHED_TOKENS
+
+            log.info(
+                "Applying constrained Model Hub GPU envelope — "
+                "gpu_mem_util=%.2f max_model_len=%d "
+                "max_num_seqs=%d max_num_batched_tokens=%d",
+                gpu_mem_util,
+                max_model_len,
+                max_num_seqs,
+                max_num_batched_tokens,
+            )
+
         # Max LoRA rank: DB column → VLLM_DEFAULT_MAX_LORA_RANK env → 64
         # Must be >= the rank of every adapter loaded into this deployment.
         # vLLM refuses to load an adapter whose rank exceeds this value.
@@ -859,6 +948,8 @@ class InferenceReconciler:
             tensor_parallel_size=tp_size,
             max_model_len=max_model_len,
             gpu_memory_utilization=gpu_mem_util,
+            max_num_seqs=max_num_seqs,
+            max_num_batched_tokens=max_num_batched_tokens,
             lora_modules=lora_modules,
             max_lora_rank=max_lora_rank,
             quantization=quantization,
