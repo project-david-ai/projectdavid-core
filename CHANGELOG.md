@@ -1,3 +1,10 @@
+## [1.50.7](https://github.com/project-david-ai/projectdavid-core/compare/v1.50.6...v1.50.7) (2026-09-11)
+
+
+### Bug Fixes
+
+* tune model hub runtime envelope on small GPUs ([e9654bb](https://github.com/project-david-ai/projectdavid-core/commit/e9654bb6cf127f251011dca74d6343c5d9954d5c))
+
 ## [1.50.6](https://github.com/project-david-ai/projectdavid-core/compare/v1.50.5...v1.50.6) (2026-09-10)
 
 
