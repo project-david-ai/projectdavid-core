@@ -41,6 +41,9 @@ class StatelessInferenceService:
         temperature: float,
         top_p: float,
     ) -> str:
+        if model.strip().lower().startswith("deepseek-ai/"):
+            raise ValueError("Stateless DeepSeek inference is not yet enabled")
+
         worker, provider_model = self.selector.select_provider_worker(model)
         stream = self._open_provider_stream(
             worker=worker,

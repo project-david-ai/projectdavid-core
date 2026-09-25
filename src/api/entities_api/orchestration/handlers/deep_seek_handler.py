@@ -1,4 +1,4 @@
-from typing import Any, Generator, Optional, Type
+from typing import Any, AsyncGenerator, Generator, Optional, Type
 
 from projectdavid_common.utilities.logging_service import LoggingUtility
 
@@ -18,6 +18,7 @@ class DeepseekHandler:
 
     SUBMODEL_CLASS_MAP: dict[str, Type[Any]] = {
         "deepseek-chat": DeepSeekChatInference,
+        "deepseek-flash": DeepSeekChatInference,
         "DeepSeek-V3-0324": DeepSeekChatInference,
         "deepseek-reasoner": DeepSeekChatInference,
     }
@@ -68,7 +69,7 @@ class DeepseekHandler:
                 f"Handler resolution failed for model: {unified_model_id}"
             ) from e
 
-    def process_conversation(
+    async def process_conversation(
         self,
         thread_id,
         message_id,
@@ -78,19 +79,21 @@ class DeepseekHandler:
         stream_reasoning=False,
         api_key: Optional[str] = None,
         **kwargs,
-    ) -> Generator[str, None, None]:
-        LOG.debug(f"Dispatching process_conversation for: {model}")
+    ) -> AsyncGenerator[str, None]:
+        if str(model).strip().lower() != "deepseek-ai/deepseek-flash":
+            raise ValueError("Unsupported DeepSeek model identifier")
+
         handler = self._get_specific_handler_instance(model)
-        yield from handler.process_conversation(
+
+        async for chunk in handler.stream_flash(
             thread_id=thread_id,
             message_id=message_id,
             run_id=run_id,
             assistant_id=assistant_id,
             model=model,
-            stream_reasoning=stream_reasoning,
             api_key=api_key,
-            **kwargs,
-        )
+        ):
+            yield chunk
 
     def stream(
         self,
@@ -103,6 +106,11 @@ class DeepseekHandler:
         api_key: Optional[str] = None,
         **kwargs,
     ) -> Generator[str, None, None]:
+        if str(model).strip().lower() == "deepseek-ai/deepseek-flash":
+            raise RuntimeError(
+                "DeepSeek Flash requires the asynchronous chat-only path"
+            )
+
         LOG.debug(f"Dispatching stream for: {model}")
         handler = self._get_specific_handler_instance(model)
         yield from handler.stream(
