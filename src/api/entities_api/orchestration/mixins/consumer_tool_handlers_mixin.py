@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from projectdavid_common.validation import StatusEnum
 
 from src.api.entities_api.constants.platform import ERROR_NO_CONTENT
+from src.api.entities_api.orchestration.mcp_tool_executor import McpToolExecutor
 from src.api.entities_api.orchestration.tool_abi import (
     ToolCallEnvelope,
     ToolResultEnvelope,
@@ -159,6 +160,61 @@ class ConsumerToolHandlersMixin:
     # ------------------------------------------------------------------
     # ASYNC TOOL CALL PROCESSOR (Reactive Mode)
     # ------------------------------------------------------------------
+    _MCP_RESERVED_ROUTED_NAMES: frozenset[str] = frozenset(
+        {
+            "code_interpreter",
+            "computer",
+            "file_search",
+            "read_web_page",
+            "scroll_web_page",
+            "search_web_page",
+            "perform_web_search",
+            "delegate_research_task",
+            "delegate_engineer_task",
+            "read_scratchpad",
+            "update_scratchpad",
+            "append_scratchpad",
+        }
+    )
+
+    def _mcp_executor_registry(self) -> dict[str, McpToolExecutor]:
+        """Return ephemeral MCP bindings owned by this orchestrator instance."""
+
+        registry = self.__dict__.get("_mcp_tool_executors")
+        if registry is None:
+            registry = {}
+            self.__dict__["_mcp_tool_executors"] = registry
+        return registry
+
+    def bind_mcp_tool_executor(self, executor: McpToolExecutor) -> None:
+        """Bind one provider-visible MCP alias for this orchestrator instance."""
+
+        provider_name = executor.provider_name
+
+        if provider_name in self._MCP_RESERVED_ROUTED_NAMES:
+            raise ValueError(
+                f"MCP provider alias collides with an internal tool: {provider_name}"
+            )
+
+        registry = self._mcp_executor_registry()
+        existing = registry.get(provider_name)
+
+        if existing is not None and existing is not executor:
+            raise ValueError(f"MCP provider alias is already bound: {provider_name}")
+
+        registry[provider_name] = executor
+
+    def unbind_mcp_tool_executor(self, provider_name: str) -> bool:
+        """Remove one ephemeral MCP binding."""
+
+        return self._mcp_executor_registry().pop(provider_name, None) is not None
+
+    def _get_mcp_tool_executor(
+        self,
+        provider_name: str,
+    ) -> McpToolExecutor | None:
+        return self._mcp_executor_registry().get(provider_name)
+
     async def _handover_to_consumer(
         self,
         thread_id: str,
@@ -171,8 +227,8 @@ class ConsumerToolHandlersMixin:
         **kwargs,
     ) -> AsyncGenerator[str, None]:
         """
-        Reactive Mode: Records the intent as an Action and yields a manifest.
-        The SDK catches this manifest and manages the Turn 1 -> Turn 2 recursion.
+        Record the tool intent and either execute a bound MCP tool inside Core
+        or preserve the existing SDK-managed consumer-tool handoff.
         """
         call = ToolCallEnvelope.from_legacy_call(
             content,
@@ -182,8 +238,6 @@ class ConsumerToolHandlersMixin:
             tool_call_id=tool_call_id,
         )
 
-        # 1. Record the intent to call a tool in the DB
-        # ── REPLACED: was self.project_david_client.actions.create_action(...)
         action = await self._native_exec.create_action(
             tool_name=call.name,
             run_id=call.run_id,
@@ -192,7 +246,27 @@ class ConsumerToolHandlersMixin:
             decision=decision,
         )
 
-        # 2. Yield the tool_call_manifest to the SDK
+        mcp_executor = self._get_mcp_tool_executor(call.name)
+
+        if mcp_executor is not None:
+            await self._native_exec.update_run_status(
+                call.run_id,
+                StatusEnum.pending_action.value,
+            )
+
+            result = await mcp_executor.execute(call)
+
+            await self.submit_tool_output(
+                thread_id=call.thread_id,
+                assistant_id=call.assistant_id,
+                tool_call_id=call.tool_call_id,
+                content=result.content,
+                action=action,
+                is_error=result.is_error,
+            )
+            return
+
+        # Existing SDK-managed consumer-tool behavior.
         if action and action.id:
             yield json.dumps(
                 {
@@ -205,10 +279,9 @@ class ConsumerToolHandlersMixin:
                 }
             )
 
-        # 3. Pause the run state. SDK loop will resume by initiating a new turn.
-        # ── REPLACED: was self.project_david_client.runs.update_run_status(...)
         await self._native_exec.update_run_status(
-            call.run_id, StatusEnum.pending_action.value
+            call.run_id,
+            StatusEnum.pending_action.value,
         )
         return
 
