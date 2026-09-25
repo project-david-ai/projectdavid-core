@@ -17,10 +17,11 @@ cryptography
 exceptiongroup
 fastapi
 greenlet
-h11
+h11>=0.16
 httpcore
 httpx
-idna
+mcp>=2.2,<3
+idna>=3.18,<4
 iniconfig
 jinja2
 mypy
@@ -36,7 +37,7 @@ python-multipart
 requests
 sniffio
 SQLAlchemy
-sse_starlette
+sse_starlette==3.0.3
 starlette
 sympy
 tenacity
@@ -48,7 +49,7 @@ redis
 
 # ------------------------------------------------------------------
 # Platform-specific tools
-pywin32==310 ; sys_platform == "win32"
+pywin32>=311 ; sys_platform == "win32"
 
 # ------------------------------------------------------------------
 # These have been removed because we no longer use third party clients

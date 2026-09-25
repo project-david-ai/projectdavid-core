@@ -16,13 +16,14 @@ license = { file = "LICENSE" }
 
 keywords = ["AI", "API", "Assistants", "LLM", "RAG", "Vector"]
 
-requires-python = ">=3.9"
+requires-python = ">=3.10,<3.14"
 
 dependencies = [
   "fastapi~=0.110.0",
   "SQLAlchemy",
   "pydantic>=2.10.3",
   "httpx>=0.24.1",
+  "mcp>=2.2,<3",
   "python-dotenv>=1.0",
   "aiofiles>=23.2.1",
   "qdrant-client~=1.13.3",
@@ -75,7 +76,7 @@ exclude = ["tests", "docs"]
 # ── Unified Formatting (SDK Parity) ───────────────────────────────────────
 [tool.black]
 line-length = 88
-target-version = ["py39", "py310", "py311", "py312"]
+target-version = ["py310", "py311", "py312"]
 
 [tool.isort]
 profile = "black"
