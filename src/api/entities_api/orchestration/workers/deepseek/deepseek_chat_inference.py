@@ -4,7 +4,7 @@ import json
 import os
 import re
 import time
-from typing import Any, Generator, Optional
+from typing import Any, AsyncGenerator, Generator, Optional
 
 from dotenv import load_dotenv
 from entities_api.clients.async_to_sync import async_to_sync_stream
@@ -115,7 +115,12 @@ class DeepSeekChatInference(_ProviderMixins, OrchestratorCore):
         self.start_cancellation_listener(run_id)
         redis = get_redis()
         stream_key = f"stream:{run_id}"
-        if mapped := self._get_model_map(model):
+        if model in (
+            "deepseek-ai/deepseek-flash",
+            "deepseek-flash",
+        ):
+            model = "deepseek-flash"
+        elif mapped := self._get_model_map(model):
             model = mapped
         messages = self._set_up_context_window(assistant_id, thread_id, trunk=True)
         api_key = api_key or self.api_key
@@ -299,6 +304,157 @@ class DeepSeekChatInference(_ProviderMixins, OrchestratorCore):
             self.project_david_client.runs.update_run_status(
                 run_id, ValidationInterface.StatusEnum.completed
             )
+
+    async def stream_flash(
+        self,
+        thread_id: str,
+        message_id: str,
+        run_id: str,
+        assistant_id: str,
+        model: Any,
+        *,
+        api_key: Optional[str] = None,
+    ) -> AsyncGenerator[str, None]:
+        if str(model).strip().lower() not in (
+            "deepseek-ai/deepseek-flash",
+            "deepseek-flash",
+        ):
+            raise ValueError("Unsupported DeepSeek Flash model")
+
+        key = api_key or self.api_key
+
+        if not key:
+            raise RuntimeError("DeepSeek API credential is not configured")
+
+        self.start_cancellation_listener(run_id)
+
+        # The existing Core context builder is asynchronous. Suppress
+        # generated tool instructions before any external API request.
+        context = await self._set_up_context_window(
+            assistant_id=assistant_id,
+            thread_id=thread_id,
+            trunk=True,
+            tools_enabled=False,
+        )
+
+        if not isinstance(context, list) or not context:
+            raise RuntimeError("DeepSeek context preparation failed")
+
+        messages = []
+
+        for item in context:
+            if not isinstance(item, dict):
+                raise RuntimeError("Invalid DeepSeek context message")
+
+            role = item.get("role")
+            content = item.get("content")
+
+            # No tool messages or multimodal content are silently
+            # forwarded through this initial chat-only adapter.
+            if role not in ("system", "user", "assistant") or not isinstance(
+                content, str
+            ):
+                raise RuntimeError(
+                    "DeepSeek Flash currently requires text-only chat context"
+                )
+
+            messages.append(
+                {
+                    "role": role,
+                    "content": content,
+                }
+            )
+
+        if self.check_cancellation_flag():
+            raise RuntimeError("Run cancelled")
+
+        redis = get_redis()
+        stream_key = f"stream:{run_id}"
+
+        client = AsyncDeepSeekClient(
+            api_key=key,
+            base_url=os.getenv(
+                "DEEPSEEK_BASE_URL",
+                "https://api.deepseek.com/v1",
+            ),
+            max_retries=1,
+        )
+
+        def publish(event):
+            self._shunt_to_redis_stream(
+                redis,
+                stream_key,
+                event,
+            )
+            return json.dumps(event)
+
+        response_parts = []
+
+        try:
+            yield publish(
+                {
+                    "type": "status",
+                    "status": "started",
+                    "run_id": run_id,
+                }
+            )
+
+            async for token in client.stream_chat_completion(
+                prompt_or_messages=messages,
+                model="deepseek-flash",
+                temperature=0.6,
+                top_p=0.9,
+            ):
+                if self.check_cancellation_flag():
+                    raise RuntimeError("Run cancelled")
+
+                if not isinstance(token, str):
+                    raise RuntimeError("Invalid DeepSeek streaming response")
+
+                if not token:
+                    continue
+
+                response_parts.append(token)
+
+                yield publish(
+                    {
+                        "type": "content",
+                        "content": token,
+                    }
+                )
+
+            if self.check_cancellation_flag():
+                raise RuntimeError("Run cancelled")
+
+            reply = "".join(response_parts)
+
+            if reply:
+                self.finalize_conversation(
+                    reply,
+                    thread_id,
+                    assistant_id,
+                    run_id,
+                )
+
+            # Never parse function calls or transition to pending_action.
+            self.project_david_client.runs.update_run_status(
+                run_id,
+                ValidationInterface.StatusEnum.completed,
+            )
+
+            yield publish(
+                {
+                    "type": "status",
+                    "status": "complete",
+                    "run_id": run_id,
+                }
+            )
+
+        finally:
+            try:
+                await client.aclose()
+            except Exception:
+                LOG.warning("DeepSeek client cleanup failed")
 
     def process_conversation(
         self,

@@ -3,6 +3,7 @@ import threading
 from typing import Any, Type
 
 from entities_api.orchestration.engine.inference_arbiter import InferenceArbiter
+from entities_api.orchestration.handlers.deep_seek_handler import DeepseekHandler
 from entities_api.orchestration.handlers.hb_handler import HyperbolicHandler
 from entities_api.orchestration.handlers.ollama_handler import OllamaHandler
 from entities_api.orchestration.handlers.together_handler import TogetherAIHandler
@@ -28,7 +29,7 @@ TOP_LEVEL_ROUTING_MAP: dict[str, Type[Any]] = {
     "together-ai/": TogetherAIHandler,
     "ollama/": OllamaHandler,
     "vllm/": VllmHandler,
-    # "deepseek-ai/": DeepseekHandler,
+    "deepseek-ai/": DeepseekHandler,
     # "azure/": AzureHandler,
     # "groq": GroqHandler,
     # "local": LocalHandler,
@@ -86,7 +87,18 @@ class InferenceProviderSelector:
         based on the incoming model_id string.
         """
         model_id_lookup = model_id.lower().strip()
-        api_model_name = self.MODEL_MAP.get(model_id, model_id)
+
+        if (
+            model_id_lookup.startswith("deepseek-ai/")
+            and model_id_lookup != "deepseek-ai/deepseek-flash"
+        ):
+            raise ValueError("Unsupported DeepSeek model identifier")
+
+        api_model_name = (
+            "deepseek-flash"
+            if model_id_lookup == "deepseek-ai/deepseek-flash"
+            else self.MODEL_MAP.get(model_id, model_id)
+        )
         selected_general_class: Type[Any] | None = None
         for prefix in self._sorted_routing_keys:
             if model_id_lookup.startswith(prefix):
