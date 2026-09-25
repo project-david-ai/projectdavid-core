@@ -1,3 +1,11 @@
+# [1.51.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.50.7...v1.51.0) (2026-09-25)
+
+
+### Features
+
+* add guarded DeepSeek Flash provider plumbing ([33db8c1](https://github.com/project-david-ai/projectdavid-core/commit/33db8c1a7929059ebec50291c41355e07e3d5409))
+* harden local model tool capability gates ([7af7daa](https://github.com/project-david-ai/projectdavid-core/commit/7af7daa1fec71725c0b3afd7b64ac16c30a69693))
+
 ## [1.50.7](https://github.com/project-david-ai/projectdavid-core/compare/v1.50.6...v1.50.7) (2026-09-11)
 
 
