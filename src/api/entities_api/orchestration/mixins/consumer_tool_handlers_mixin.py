@@ -10,6 +10,10 @@ from dotenv import load_dotenv
 from projectdavid_common.validation import StatusEnum
 
 from src.api.entities_api.constants.platform import ERROR_NO_CONTENT
+from src.api.entities_api.orchestration.tool_abi import (
+    ToolCallEnvelope,
+    ToolResultEnvelope,
+)
 from src.api.entities_api.services.logging_service import LoggingUtility
 
 load_dotenv()
@@ -79,7 +83,8 @@ class ConsumerToolHandlersMixin:
         if not content:
             content = ERROR_NO_CONTENT
 
-        final_status = StatusEnum.failed if is_error else StatusEnum.completed
+        result = ToolResultEnvelope.from_legacy_result(content, is_error=is_error)
+        final_status = StatusEnum.failed if result.is_error else StatusEnum.completed
         action_id = getattr(action, "id", None)
 
         try:
@@ -89,9 +94,9 @@ class ConsumerToolHandlersMixin:
                 thread_id=thread_id,
                 assistant_id=assistant_id,
                 tool_call_id=tool_call_id,
-                content=content,
+                content=result.content,
                 action_id=action_id,
-                is_error=is_error,
+                is_error=result.is_error,
             )
 
             # 2. Mark the specific Action as finished — only if we have one.
@@ -169,16 +174,21 @@ class ConsumerToolHandlersMixin:
         Reactive Mode: Records the intent as an Action and yields a manifest.
         The SDK catches this manifest and manages the Turn 1 -> Turn 2 recursion.
         """
-        tool_name = content.get("name") or content.get("tool_name")
-        tool_args = content.get("arguments") or content.get("args") or {}
+        call = ToolCallEnvelope.from_legacy_call(
+            content,
+            run_id=run_id,
+            thread_id=thread_id,
+            assistant_id=assistant_id,
+            tool_call_id=tool_call_id,
+        )
 
         # 1. Record the intent to call a tool in the DB
         # ── REPLACED: was self.project_david_client.actions.create_action(...)
         action = await self._native_exec.create_action(
-            tool_name=tool_name,
-            run_id=run_id,
-            tool_call_id=tool_call_id,
-            function_args=tool_args,
+            tool_name=call.name,
+            run_id=call.run_id,
+            tool_call_id=call.tool_call_id,
+            function_args=call.arguments,
             decision=decision,
         )
 
@@ -187,18 +197,18 @@ class ConsumerToolHandlersMixin:
             yield json.dumps(
                 {
                     "type": "tool_call_manifest",
-                    "run_id": run_id,
+                    "run_id": call.run_id,
                     "action_id": action.id,
-                    "tool_call_id": tool_call_id,
-                    "tool": tool_name,
-                    "args": tool_args,
+                    "tool_call_id": call.tool_call_id,
+                    "tool": call.name,
+                    "args": call.arguments,
                 }
             )
 
         # 3. Pause the run state. SDK loop will resume by initiating a new turn.
         # ── REPLACED: was self.project_david_client.runs.update_run_status(...)
         await self._native_exec.update_run_status(
-            run_id, StatusEnum.pending_action.value
+            call.run_id, StatusEnum.pending_action.value
         )
         return
 
