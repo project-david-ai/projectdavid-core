@@ -546,10 +546,18 @@ class ContextMixin:
         engineer: bool = False,
         research_worker: bool = False,
         junior_engineer: bool = False,
+        tools_enabled: Optional[bool] = None,
     ) -> List[Dict]:
 
         # 1. Build the System Message  ← UNCHANGED
-        if engineer:
+        if tools_enabled is False:
+            from .local_tool_capability import build_tool_free_system_message
+
+            cache = self.get_assistant_cache()
+            config = await cache.retrieve(assistant_id) or {}
+
+            system_msg = build_tool_free_system_message(config)
+        elif engineer:
             system_msg = await self._build_senior_engineer_message(
                 assistant_id=assistant_id,
                 decision_telemetry=decision_telemetry,

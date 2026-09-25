@@ -527,20 +527,32 @@ class VLLMDefaultBaseWorker(
             await self._ensure_config_loaded()
 
             # ── Model Config / Metadata ──────────────────────────────────
-            request_meta = kwargs.get("meta_data", {})
+            request_meta = kwargs.get("meta_data", {}) or {}
             custom_vllm_url = request_meta.get("vllm_base_url")
+            run_metadata = {}
 
             try:
                 run = await self._native_exec.retrieve_run(run_id)
                 self._run_user_id = run.user_id
                 meta = run.meta_data or {}
+                run_metadata = meta
                 if not custom_vllm_url:
                     custom_vllm_url = meta.get("vllm_base_url")
             except Exception as exc:
                 self._run_user_id = None
+                run_metadata = {"_q_local_model_capabilities": None}
                 LOG.warning("STREAM ▸ Could not resolve run_user_id: %s", exc)
 
             # ── Stage 6: Dynamic Mesh Resolution ─────────────────────────
+            from src.api.entities_api.orchestration.mixins.local_tool_capability import (
+                resolve_q_tool_mode,
+            )
+
+            tool_mode = resolve_q_tool_mode(
+                run_metadata,
+                pre_mapped_model,
+            )
+
             mesh_resolved_url = None
             if not custom_vllm_url:
                 db_session = SessionLocal()
@@ -594,6 +606,7 @@ class VLLMDefaultBaseWorker(
                 thread_id=thread_id,
                 trunk=True,
                 force_refresh=force_refresh,
+                tools_enabled=tool_mode,
             )
 
             # ── Inference parameters from assistant cache ─────────────────
@@ -644,6 +657,7 @@ class VLLMDefaultBaseWorker(
                     **({"top_p": _top_p} if _top_p is not None else {}),
                     think=kwargs.get("think", False),
                     base_url=target_url,
+                    tools=[] if tool_mode is False else None,
                 ),
                 run_id,
             ):
