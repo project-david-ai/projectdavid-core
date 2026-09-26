@@ -1,3 +1,10 @@
+# [1.54.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.53.0...v1.54.0) (2026-09-26)
+
+
+### Features
+
+* harden long-running MCP execution ([2ca78ed](https://github.com/project-david-ai/projectdavid-core/commit/2ca78ed238cdf251b150e273112c44990a220f7b))
+
 # [1.53.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.52.0...v1.53.0) (2026-09-26)
 
 

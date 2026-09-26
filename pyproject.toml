@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "entities_api"
-version = "1.53.0"
+version = "1.54.0"
 description = "Unified multi vendor AI inference API"
 readme = "README.md"
 
