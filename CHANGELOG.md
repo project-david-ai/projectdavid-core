@@ -1,3 +1,22 @@
+# [1.52.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.51.0...v1.52.0) (2026-09-26)
+
+
+### Bug Fixes
+
+* align Pydantic with MCP 2.2 ([3b09ed9](https://github.com/project-david-ai/projectdavid-core/commit/3b09ed95a570988fbab5f9ba6930a33c679b4782))
+* align sandbox Pydantic with MCP runtime ([d711e5a](https://github.com/project-david-ai/projectdavid-core/commit/d711e5ad613a867bccb01fa8e91c3e0c5b371388))
+* remove global PyTorch index from API lock ([8ec6b0b](https://github.com/project-david-ai/projectdavid-core/commit/8ec6b0bb1bb1bf80a7b7959c6a508d00e635ae32))
+
+
+### Features
+
+* adapt MCP tool discovery into internal tool ABI ([2bc9930](https://github.com/project-david-ai/projectdavid-core/commit/2bc993058014a7423179b517dda072f2e2b4b95f))
+* add durable MCP registration service ([5eae7df](https://github.com/project-david-ai/projectdavid-core/commit/5eae7df9c3ef36367eaa3716382c1ab086fe7dfb))
+* add MCP registration persistence foundation ([be41bef](https://github.com/project-david-ai/projectdavid-core/commit/be41bef8b4a46624e3448c9c0284c833be52da0f))
+* add MCP tool ABI and remote client transport ([3466a67](https://github.com/project-david-ai/projectdavid-core/commit/3466a674ab4de7866f613749bfcd4c31f6626dd9))
+* integrate MCP tool execution ([71f27f6](https://github.com/project-david-ai/projectdavid-core/commit/71f27f636b405ba4cd9bc5417ff57cb46aa6d07e))
+* preserve rich MCP tool results ([986ca31](https://github.com/project-david-ai/projectdavid-core/commit/986ca31f433e67579b85b0be4fbc6d80e94aa579))
+
 # [1.51.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.50.7...v1.51.0) (2026-09-25)
 
 
