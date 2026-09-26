@@ -423,3 +423,163 @@ def test_registration_and_assistant_are_user_scoped(
         )
 
     assert getattr(exc_info.value, "status_code", None) in {403, 404}
+
+
+def test_management_update_preserves_stable_registration_identity_and_alias(
+    session_factory: sessionmaker,
+) -> None:
+    service, invalidator = _service(session_factory)
+
+    registration = service.register_server(
+        validator.McpServerRegistrationCreate(
+            name="GitHub",
+            url="https://mcp.example.test/mcp",
+        ),
+        user_id="user_1",
+    )
+
+    attached = asyncio.run(
+        service.attach_tools(
+            assistant_id="asst_1",
+            attachment=validator.AssistantMcpToolsAttach(
+                server_id=registration.id,
+                tools=["search_issues"],
+            ),
+            user_id="user_1",
+        )
+    )
+
+    original_alias = attached[0].provider_name
+
+    fetched = service.get_server(
+        server_id=registration.id,
+        user_id="user_1",
+    )
+
+    assert fetched.id == registration.id
+
+    updated = service.update_server(
+        server_id=registration.id,
+        registration=validator.McpServerRegistrationUpdate(
+            name="GitHub Renamed",
+            timeout_seconds=12.5,
+            enabled=False,
+        ),
+        user_id="user_1",
+    )
+
+    assert updated.id == registration.id
+    assert updated.name == "GitHub Renamed"
+    assert updated.timeout_seconds == 12.5
+    assert updated.enabled is False
+
+    with session_factory() as db:
+        row = db.get(
+            McpServerRegistration,
+            registration.id,
+        )
+
+        assert row is not None
+        assert row.id == registration.id
+        assert row.url == "https://mcp.example.test/mcp"
+        assert row.transport == "streamable_http"
+
+        attachment = (
+            db.query(AssistantMcpTool)
+            .filter(
+                AssistantMcpTool.registration_id == registration.id,
+                AssistantMcpTool.remote_name == "search_issues",
+            )
+            .one()
+        )
+
+        assert attachment.provider_name == original_alias
+        assert attachment.enabled is True
+
+        assistant = db.get(
+            Assistant,
+            "asst_1",
+        )
+
+        assert assistant is not None
+
+        names = {
+            name
+            for tool in assistant.tool_configs
+            if (name := function_tool_name(tool)) is not None
+        }
+
+        assert original_alias in names
+
+    assert invalidator.invalidated == [
+        "asst_1",
+        "asst_1",
+    ]
+
+
+def test_management_delete_removes_registration_provenance_and_capability(
+    session_factory: sessionmaker,
+) -> None:
+    service, invalidator = _service(session_factory)
+
+    registration = service.register_server(
+        validator.McpServerRegistrationCreate(
+            name="GitHub",
+            url="https://mcp.example.test/mcp",
+        ),
+        user_id="user_1",
+    )
+
+    attached = asyncio.run(
+        service.attach_tools(
+            assistant_id="asst_1",
+            attachment=validator.AssistantMcpToolsAttach(
+                server_id=registration.id,
+                tools=["search_issues"],
+            ),
+            user_id="user_1",
+        )
+    )
+
+    provider_name = attached[0].provider_name
+
+    service.delete_server(
+        server_id=registration.id,
+        user_id="user_1",
+    )
+
+    with session_factory() as db:
+        assert (
+            db.query(McpServerRegistration)
+            .filter(McpServerRegistration.id == registration.id)
+            .count()
+            == 0
+        )
+
+        assert (
+            db.query(AssistantMcpTool)
+            .filter(AssistantMcpTool.registration_id == registration.id)
+            .count()
+            == 0
+        )
+
+        assistant = db.get(
+            Assistant,
+            "asst_1",
+        )
+
+        assert assistant is not None
+
+        names = {
+            name
+            for tool in assistant.tool_configs
+            if (name := function_tool_name(tool)) is not None
+        }
+
+        assert "consumer_search" in names
+        assert provider_name not in names
+
+    assert invalidator.invalidated == [
+        "asst_1",
+        "asst_1",
+    ]
