@@ -241,6 +241,152 @@ class ConsumerToolHandlersMixin:
     ) -> McpToolExecutor | None:
         return self._mcp_executor_registry().get(provider_name)
 
+    _MCP_CANCEL_POLL_SECONDS = 0.5
+
+    async def _execute_mcp_tool_with_run_cancellation(
+        self,
+        *,
+        executor: McpToolExecutor,
+        call: ToolCallEnvelope,
+        action: Any,
+    ) -> ToolResultEnvelope | None:
+        """Run MCP tools while Project David remains lifecycle authority.
+
+        The remote request executes in its own asyncio Task. While it is alive,
+        Core polls the authoritative Run record. API cancellation therefore
+        interrupts a blocked/long-running tools/call rather than waiting for the
+        remote server to finish.
+
+        ``None`` means the Project David Run was cancelled and no synthetic tool
+        result should be persisted into the conversation.
+        """
+
+        action_id = getattr(action, "id", None)
+
+        async def progress_callback(
+            progress: float,
+            total: float | None,
+            message: str | None,
+        ) -> None:
+            LOG.debug(
+                "MCP progress ▸ run=%s action=%s tool=%s progress=%s total=%s message=%s",
+                call.run_id,
+                action_id,
+                call.name,
+                progress,
+                total,
+                message,
+            )
+
+        task = asyncio.create_task(
+            executor.execute(
+                call,
+                progress_callback=progress_callback,
+            )
+        )
+
+        try:
+            while True:
+                done, _ = await asyncio.wait(
+                    {task},
+                    timeout=self._MCP_CANCEL_POLL_SECONDS,
+                )
+
+                if task in done:
+                    result = await task
+
+                    # Completion and cancellation may race. Re-read the
+                    # authoritative Project David Run before accepting the
+                    # remote result. If cancellation was already committed,
+                    # cancellation wins and no synthetic tool result is saved.
+                    try:
+                        run = await self._native_exec.retrieve_run(call.run_id)
+                    except Exception as exc:  # noqa: BLE001
+                        LOG.warning(
+                            "MCP completion-state check failed for run %s: %s",
+                            call.run_id,
+                            exc,
+                        )
+                    else:
+                        if getattr(run, "status", None) == StatusEnum.cancelled.value:
+                            LOG.info(
+                                "Discarding completed MCP result because "
+                                "Project David run %s is already cancelled "
+                                "(action=%s, tool=%s)",
+                                call.run_id,
+                                action_id,
+                                call.name,
+                            )
+
+                            if action_id:
+                                await self._native_exec.update_action_status(
+                                    action_id,
+                                    StatusEnum.cancelled.value,
+                                )
+
+                            return None
+
+                    return result
+
+                try:
+                    run = await self._native_exec.retrieve_run(call.run_id)
+                except Exception as exc:  # noqa: BLE001
+                    LOG.warning(
+                        "MCP cancellation poll failed for run %s: %s",
+                        call.run_id,
+                        exc,
+                    )
+                    continue
+
+                if getattr(run, "status", None) != StatusEnum.cancelled.value:
+                    continue
+
+                LOG.info(
+                    "MCP execution cancelled by Project David run %s "
+                    "(action=%s, tool=%s)",
+                    call.run_id,
+                    action_id,
+                    call.name,
+                )
+
+                task.cancel()
+
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                except Exception as exc:  # noqa: BLE001
+                    LOG.debug(
+                        "MCP cancellation cleanup raised for run %s: %s",
+                        call.run_id,
+                        exc,
+                    )
+
+                if action_id:
+                    await self._native_exec.update_action_status(
+                        action_id,
+                        StatusEnum.cancelled.value,
+                    )
+
+                return None
+
+        except asyncio.CancelledError:
+            task.cancel()
+
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:  # noqa: BLE001
+                LOG.debug(
+                    "MCP task cleanup raised during parent cancellation "
+                    "for run %s: %s",
+                    call.run_id,
+                    exc,
+                )
+
+            raise
+
     async def _handover_to_consumer(
         self,
         thread_id: str,
@@ -280,7 +426,14 @@ class ConsumerToolHandlersMixin:
                 StatusEnum.pending_action.value,
             )
 
-            result = await mcp_executor.execute(call)
+            result = await self._execute_mcp_tool_with_run_cancellation(
+                executor=mcp_executor,
+                call=call,
+                action=action,
+            )
+
+            if result is None:
+                return
 
             await self.submit_tool_result(
                 thread_id=call.thread_id,

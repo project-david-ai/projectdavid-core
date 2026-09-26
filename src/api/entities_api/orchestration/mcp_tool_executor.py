@@ -1,4 +1,4 @@
-﻿"""Execute discovered MCP tools through Project David's Tool ABI.
+"""Execute discovered MCP tools through Project David's Tool ABI.
 
 The MCP adapter preserves rich protocol results inside ToolResultEnvelope while
 also providing the legacy string projection required by Core's current durable
@@ -37,6 +37,29 @@ class McpToolExecutor:
     @property
     def provider_name(self) -> str:
         return self._tool.provider_name
+
+    @staticmethod
+    def _is_timeout_error(exc: BaseException) -> bool:
+        """Recognise timeout failures across SDK/transport exception wrappers."""
+
+        current: BaseException | None = exc
+        seen: set[int] = set()
+
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+
+            name = type(current).__name__.lower()
+
+            if isinstance(current, TimeoutError) or "timeout" in name:
+                return True
+
+            current = (
+                current.__cause__
+                if current.__cause__ is not None
+                else current.__context__
+            )
+
+        return False
 
     @staticmethod
     def _serialize_content_blocks(
@@ -111,8 +134,17 @@ class McpToolExecutor:
             is_error=result.is_error,
         )
 
-    async def execute(self, call: ToolCallEnvelope) -> ToolResultEnvelope:
-        """Execute the mapped remote MCP tool."""
+    async def execute(
+        self,
+        call: ToolCallEnvelope,
+        *,
+        progress_callback: Any | None = None,
+    ) -> ToolResultEnvelope:
+        """Execute the mapped remote MCP tool.
+
+        asyncio cancellation deliberately escapes this fault boundary so the
+        Project David Run lifecycle can cancel the in-flight MCP request.
+        """
 
         if call.name != self.provider_name:
             raise ValueError(
@@ -124,11 +156,22 @@ class McpToolExecutor:
                 result = await client.call_tool(
                     self._tool.remote_name,
                     dict(call.arguments),
+                    progress_callback=progress_callback,
                 )
         # Remote MCP execution is a fault boundary: transport, protocol, and
-        # server failures must become tool failures rather than escape into the
-        # Project David orchestration loop.
+        # server failures become tool failures. asyncio.CancelledError derives
+        # from BaseException and therefore remains an orchestration signal.
         except Exception as exc:  # noqa: BLE001
+            if self._is_timeout_error(exc):
+                return ToolResultEnvelope(
+                    content=(f"ERROR: MCP tool '{self.provider_name}' timed out"),
+                    metadata={
+                        "mcp_timeout": True,
+                        "exception_type": type(exc).__name__,
+                    },
+                    is_error=True,
+                )
+
             return ToolResultEnvelope(
                 content=(
                     f"ERROR: MCP tool '{self.provider_name}' failed: "
