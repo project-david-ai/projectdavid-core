@@ -193,3 +193,16 @@ def test_list_tools_page_preserves_cursor_and_adapts_tools():
     assert page.next_cursor == "cursor_2"
     assert len(page.tools) == 1
     assert page.tools[0].canonical_id == "mcp:github:search"
+
+
+def test_provider_namespace_is_separate_from_canonical_server_identity():
+    (tool,) = adapt_mcp_tools(
+        "mcpreg_abc123",
+        [_tool("search_issues")],
+        provider_namespace="github",
+    )
+
+    assert tool.server_id == "mcpreg_abc123"
+    assert tool.canonical_id == "mcp:mcpreg_abc123:search_issues"
+    assert tool.provider_name == "github__search_issues"
+    assert tool.definition.name == "github__search_issues"

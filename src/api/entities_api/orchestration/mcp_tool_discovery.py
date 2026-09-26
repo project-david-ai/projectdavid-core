@@ -99,7 +99,11 @@ def _hashed_provider_name(
     return f"{prefix}{suffix}"
 
 
-def _pending_tool(server_id: str, tool: Tool) -> _PendingTool:
+def _pending_tool(
+    server_id: str,
+    provider_namespace: str,
+    tool: Tool,
+) -> _PendingTool:
     remote_name = tool.name
     if not isinstance(remote_name, str) or not remote_name:
         raise ValueError("MCP tool name must be a non-empty string")
@@ -110,7 +114,7 @@ def _pending_tool(server_id: str, tool: Tool) -> _PendingTool:
         server_id=server_id,
         remote_name=remote_name,
         canonical_id=_canonical_id(server_id, remote_name),
-        provider_base=_provider_base(server_id, remote_name),
+        provider_base=_provider_base(provider_namespace, remote_name),
         description=description,
         input_schema=deepcopy(tool.input_schema),
     )
@@ -120,6 +124,7 @@ def adapt_mcp_tools(
     server_id: str,
     tools: Iterable[Tool],
     *,
+    provider_namespace: str | None = None,
     reserved_provider_names: Iterable[str] = (),
 ) -> tuple[McpDiscoveredTool, ...]:
     """Map MCP tools into stable identities and provider-safe definitions.
@@ -131,7 +136,20 @@ def adapt_mcp_tools(
     """
 
     server_id = _validate_server_id(server_id)
-    pending = tuple(_pending_tool(server_id, tool) for tool in tools)
+
+    if provider_namespace is None:
+        provider_namespace = server_id
+    elif not isinstance(provider_namespace, str) or not provider_namespace.strip():
+        raise ValueError("MCP provider_namespace must be a non-empty string")
+
+    pending = tuple(
+        _pending_tool(
+            server_id,
+            provider_namespace,
+            tool,
+        )
+        for tool in tools
+    )
 
     remote_names = [tool.remote_name for tool in pending]
     if len(remote_names) != len(set(remote_names)):
@@ -196,6 +214,7 @@ def adapt_mcp_list_tools_result(
     server_id: str,
     result: ListToolsResult,
     *,
+    provider_namespace: str | None = None,
     reserved_provider_names: Iterable[str] = (),
 ) -> McpToolDiscoveryPage:
     """Adapt one raw MCP ``tools/list`` result without losing pagination."""
@@ -204,6 +223,7 @@ def adapt_mcp_list_tools_result(
         tools=adapt_mcp_tools(
             server_id,
             result.tools,
+            provider_namespace=provider_namespace,
             reserved_provider_names=reserved_provider_names,
         ),
         next_cursor=result.next_cursor,
