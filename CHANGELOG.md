@@ -1,3 +1,10 @@
+# [1.53.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.52.0...v1.53.0) (2026-09-26)
+
+
+### Features
+
+* expose MCP registration management API ([c3c0219](https://github.com/project-david-ai/projectdavid-core/commit/c3c0219a07b91035426d40c3e701effe73ba54c9))
+
 # [1.52.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.51.0...v1.52.0) (2026-09-26)
 
 
