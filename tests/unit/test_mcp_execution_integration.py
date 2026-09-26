@@ -193,6 +193,11 @@ def test_executor_flattens_structured_result_when_no_text_is_available():
         "count": 3,
         "items": ["a", "b", "c"],
     }
+    assert result.structured_content == {
+        "count": 3,
+        "items": ["a", "b", "c"],
+    }
+    assert result.content_blocks == ()
 
 
 def test_executor_rejects_call_for_different_alias():
@@ -428,3 +433,58 @@ def test_mcp_binding_can_be_removed():
 
     assert harness.unbind_mcp_tool_executor(tool.provider_name) is True
     assert harness.unbind_mcp_tool_executor(tool.provider_name) is False
+
+
+def test_executor_preserves_non_text_blocks_and_mcp_metadata():
+    tool = discovered_tool()
+
+    client = FakeMcpClient(
+        CallToolResult.model_validate(
+            {
+                "content": [
+                    {
+                        "type": "image",
+                        "data": "YWJjZA==",
+                        "mimeType": "image/png",
+                    }
+                ],
+                "_meta": {
+                    "trace": "abc",
+                },
+                "resultType": "input_required",
+            }
+        )
+    )
+
+    result = asyncio.run(
+        McpToolExecutor(tool, lambda: client).execute(
+            ToolCallEnvelope(
+                name=tool.provider_name,
+                arguments={},
+                run_id="run_1",
+                thread_id="thread_1",
+                assistant_id="assistant_1",
+            )
+        )
+    )
+
+    assert result.content_blocks == (
+        {
+            "type": "image",
+            "data": "YWJjZA==",
+            "mimeType": "image/png",
+        },
+    )
+    assert json.loads(result.content) == [
+        {
+            "type": "image",
+            "data": "YWJjZA==",
+            "mimeType": "image/png",
+        }
+    ]
+    assert result.metadata == {
+        "mcp_meta": {
+            "trace": "abc",
+        },
+        "mcp_result_type": "input_required",
+    }

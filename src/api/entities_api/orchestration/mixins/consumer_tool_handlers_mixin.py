@@ -122,6 +122,32 @@ class ConsumerToolHandlersMixin:
                 action=action,
             )
 
+    async def submit_tool_result(
+        self,
+        *,
+        thread_id: str,
+        assistant_id: str,
+        result: ToolResultEnvelope,
+        action: Any,
+        tool_call_id: Optional[str] = None,
+    ) -> None:
+        """Submit a typed result through Core's current legacy persistence path.
+
+        Rich fields remain available on ToolResultEnvelope at the orchestration
+        boundary. Durable storage is still string-based, so only the legacy
+        projection is persisted until a future storage schema explicitly grows
+        rich tool-result columns.
+        """
+
+        await self.submit_tool_output(
+            thread_id=thread_id,
+            assistant_id=assistant_id,
+            tool_call_id=tool_call_id,
+            content=result.content,
+            action=action,
+            is_error=result.is_error,
+        )
+
     async def _submit_fallback_error(
         self,
         thread_id: str,
@@ -256,13 +282,12 @@ class ConsumerToolHandlersMixin:
 
             result = await mcp_executor.execute(call)
 
-            await self.submit_tool_output(
+            await self.submit_tool_result(
                 thread_id=call.thread_id,
                 assistant_id=call.assistant_id,
                 tool_call_id=call.tool_call_id,
-                content=result.content,
+                result=result,
                 action=action,
-                is_error=result.is_error,
             )
             return
 

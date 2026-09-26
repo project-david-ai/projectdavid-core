@@ -107,10 +107,42 @@ class ToolCallEnvelope:
 
 @dataclass(frozen=True)
 class ToolResultEnvelope:
-    """The string result contract Core persists today."""
+    """Transport-neutral tool result with a legacy string projection."""
 
     content: str
     is_error: bool = False
+    structured_content: Any = None
+    content_blocks: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.content, str):
+            raise TypeError("Tool result content must be a string")
+
+        normalized_blocks = []
+        for block in self.content_blocks:
+            if not isinstance(block, Mapping):
+                raise TypeError("Tool result content blocks must be objects")
+            normalized_blocks.append(deepcopy(dict(block)))
+
+        if not isinstance(self.metadata, Mapping):
+            raise TypeError("Tool result metadata must be an object")
+
+        object.__setattr__(
+            self,
+            "structured_content",
+            deepcopy(self.structured_content),
+        )
+        object.__setattr__(
+            self,
+            "content_blocks",
+            tuple(normalized_blocks),
+        )
+        object.__setattr__(
+            self,
+            "metadata",
+            deepcopy(dict(self.metadata)),
+        )
 
     @classmethod
     def from_legacy_result(
@@ -121,6 +153,8 @@ class ToolResultEnvelope:
         return cls(content=content, is_error=is_error)
 
     def to_legacy_result(self) -> dict[str, Any]:
+        """Project this result onto Core's existing persistence contract."""
+
         return {"content": self.content, "is_error": self.is_error}
 
 
