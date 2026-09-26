@@ -6,10 +6,14 @@ from typing import Any, List
 from fastapi import HTTPException
 from projectdavid import Entity
 from projectdavid_common import UtilsInterface, ValidationInterface
+from projectdavid_orm.projectdavid_orm.models import AssistantMcpTool
 
 from src.api.entities_api.db.database import SessionLocal
 from src.api.entities_api.models.models import Assistant, User, VectorStore
 from src.api.entities_api.services.logging_service import LoggingUtility
+from src.api.entities_api.services.mcp_tool_config import (
+    merge_user_tools_preserving_managed,
+)
 from src.api.entities_api.utilities.cache_utils import get_sync_invalidator
 
 logging_utility = LoggingUtility()
@@ -196,7 +200,29 @@ class AssistantService:
                     setattr(db_asst, key, val)
 
             if "tools" in data:
-                db_asst.tool_configs = data["tools"]
+                managed_names = {
+                    provider_name
+                    for (provider_name,) in (
+                        db.query(AssistantMcpTool.provider_name)
+                        .filter(
+                            AssistantMcpTool.assistant_id == assistant_id,
+                            AssistantMcpTool.enabled.is_(True),
+                        )
+                        .all()
+                    )
+                }
+
+                try:
+                    db_asst.tool_configs = merge_user_tools_preserving_managed(
+                        list(db_asst.tool_configs or []),
+                        data["tools"],
+                        managed_names,
+                    )
+                except ValueError as exc:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=str(exc),
+                    ) from exc
 
             if "users" in data:
                 db_asst.users = (
