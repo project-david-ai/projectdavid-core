@@ -12,7 +12,7 @@ python-dotenv
 aiofiles
 httpx
 redis
-pydantic
+pydantic>=2.12,<3
 
 # --- Data Science Stack (Stable / Non-Problematic Pins) ---
 # We pin these specifically to prevent the '_spropack' binary crash.
