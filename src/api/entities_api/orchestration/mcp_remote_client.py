@@ -155,7 +155,18 @@ class RemoteMcpClient:
         self,
         name: str,
         arguments: dict[str, Any] | None = None,
+        *,
+        progress_callback: Any | None = None,
     ) -> CallToolResult:
-        """Return the raw result of a ``tools/call`` request."""
+        """Return the raw result of a ``tools/call`` request.
 
-        return await self._active_client().call_tool(name, arguments)
+        ``progress_callback`` is passed directly to the official MCP SDK.
+        The callback remains an ephemeral execution concern; Project David
+        does not persist protocol progress notifications as tool results.
+        """
+
+        return await self._active_client().call_tool(
+            name,
+            arguments,
+            progress_callback=progress_callback,
+        )

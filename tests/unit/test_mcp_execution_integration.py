@@ -1,4 +1,4 @@
-﻿"""MCP-3 execution integration tests."""
+"""MCP-3 execution integration tests."""
 
 from __future__ import annotations
 
@@ -36,6 +36,8 @@ class FakeMcpClient:
         self,
         name: str,
         arguments: dict | None = None,
+        *,
+        progress_callback=None,
     ) -> CallToolResult:
         self.calls.append((name, arguments))
         return self.result
