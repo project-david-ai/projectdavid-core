@@ -87,3 +87,51 @@ def test_tool_executor_protocol_matches_async_adapter_shape():
 
     assert isinstance(executor, ToolExecutor)
     assert asyncio.run(executor.execute(call)) == ToolResultEnvelope(content="echo")
+
+
+def test_tool_result_preserves_rich_fields_without_changing_legacy_projection():
+    structured = {"answer": 42, "nested": {"ok": True}}
+    blocks = [
+        {
+            "type": "image",
+            "data": "YWJjZA==",
+            "mimeType": "image/png",
+        }
+    ]
+    metadata = {
+        "mcp_result_type": "complete",
+        "mcp_meta": {"trace": "abc"},
+    }
+
+    result = ToolResultEnvelope(
+        content='{"answer": 42}',
+        structured_content=structured,
+        content_blocks=tuple(blocks),
+        metadata=metadata,
+        is_error=False,
+    )
+
+    structured["answer"] = 99
+    blocks[0]["mimeType"] = "image/jpeg"
+    metadata["mcp_result_type"] = "input_required"
+
+    assert result.structured_content == {
+        "answer": 42,
+        "nested": {"ok": True},
+    }
+    assert result.content_blocks == (
+        {
+            "type": "image",
+            "data": "YWJjZA==",
+            "mimeType": "image/png",
+        },
+    )
+    assert result.metadata == {
+        "mcp_result_type": "complete",
+        "mcp_meta": {"trace": "abc"},
+    }
+
+    assert result.to_legacy_result() == {
+        "content": '{"answer": 42}',
+        "is_error": False,
+    }

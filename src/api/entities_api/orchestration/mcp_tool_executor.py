@@ -1,14 +1,18 @@
 ﻿"""Execute discovered MCP tools through Project David's Tool ABI.
 
-This adapter owns the remote MCP tools/call boundary only. Durable Run/Action
-lifecycle, persistence, routing policy, and assistant capability policy remain
-owned by Project David's orchestration layer.
+The MCP adapter preserves rich protocol results inside ToolResultEnvelope while
+also providing the legacy string projection required by Core's current durable
+tool-output persistence path.
 """
 
 from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from copy import deepcopy
+from typing import Any
+
+from mcp.types import CallToolResult, TextContent
 
 from .mcp_remote_client import RemoteMcpClient
 from .mcp_tool_discovery import McpDiscoveredTool
@@ -35,59 +39,77 @@ class McpToolExecutor:
         return self._tool.provider_name
 
     @staticmethod
-    def _legacy_content(result: object) -> str:
-        """Flatten an MCP result into Core's current string result contract.
+    def _serialize_content_blocks(
+        result: CallToolResult,
+    ) -> tuple[dict[str, Any], ...]:
+        """Convert MCP SDK content models into transport-neutral dictionaries."""
 
-        Rich structured/content-block preservation belongs to MCP-4. MCP-3
-        prefers textual MCP content and uses structured JSON only when no text
-        representation is available.
-        """
+        return tuple(
+            block.model_dump(
+                mode="json",
+                by_alias=True,
+                exclude_none=True,
+            )
+            for block in result.content
+        )
 
-        content_blocks = getattr(result, "content", None) or []
+    @classmethod
+    def _legacy_content(
+        cls,
+        result: CallToolResult,
+        content_blocks: tuple[dict[str, Any], ...],
+    ) -> str:
+        """Produce the string projection consumed by today's persistence path."""
 
         text_parts = [
-            text
-            for block in content_blocks
-            if isinstance((text := getattr(block, "text", None)), str)
+            block.text for block in result.content if isinstance(block, TextContent)
         ]
 
         if text_parts:
             return "\n".join(text_parts)
 
-        structured = getattr(result, "structured_content", None)
-        if structured is not None:
+        if result.structured_content is not None:
             return json.dumps(
-                structured,
+                result.structured_content,
                 ensure_ascii=False,
                 sort_keys=True,
                 default=str,
             )
 
         if content_blocks:
-            serializable = []
-
-            for block in content_blocks:
-                model_dump = getattr(block, "model_dump", None)
-
-                if callable(model_dump):
-                    serializable.append(
-                        model_dump(
-                            mode="json",
-                            by_alias=True,
-                            exclude_none=True,
-                        )
-                    )
-                else:
-                    serializable.append(str(block))
-
             return json.dumps(
-                serializable,
+                content_blocks,
                 ensure_ascii=False,
                 sort_keys=True,
                 default=str,
             )
 
         return ""
+
+    @classmethod
+    def _adapt_result(
+        cls,
+        result: CallToolResult,
+    ) -> ToolResultEnvelope:
+        """Preserve the rich MCP result while retaining legacy compatibility."""
+
+        content_blocks = cls._serialize_content_blocks(result)
+
+        metadata: dict[str, Any] = {}
+
+        if result.meta is not None:
+            metadata["mcp_meta"] = deepcopy(result.meta)
+
+        if result.result_type is not None:
+            metadata["mcp_result_type"] = result.result_type
+
+        return ToolResultEnvelope(
+            content=cls._legacy_content(result, content_blocks),
+            structured_content=deepcopy(result.structured_content),
+            content_blocks=content_blocks,
+            metadata=metadata,
+            is_error=result.is_error,
+        )
 
     async def execute(self, call: ToolCallEnvelope) -> ToolResultEnvelope:
         """Execute the mapped remote MCP tool."""
@@ -115,10 +137,7 @@ class McpToolExecutor:
                 is_error=True,
             )
 
-        return ToolResultEnvelope(
-            content=self._legacy_content(result),
-            is_error=bool(getattr(result, "is_error", False)),
-        )
+        return self._adapt_result(result)
 
 
 __all__ = ["McpToolExecutor"]
