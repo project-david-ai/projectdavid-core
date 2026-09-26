@@ -304,6 +304,159 @@ class McpRegistrationService:
 
             return [self._registration_read(row) for row in rows]
 
+    def get_server(
+        self,
+        *,
+        server_id: str,
+        user_id: str,
+    ) -> validator.McpServerRegistrationRead:
+        """Return one registration owned by the authenticated user."""
+
+        with self._session_factory() as db:
+            row = self._owned_registration(
+                db,
+                server_id=server_id,
+                user_id=user_id,
+            )
+
+            return self._registration_read(row)
+
+    def update_server(
+        self,
+        *,
+        server_id: str,
+        registration: validator.McpServerRegistrationUpdate,
+        user_id: str,
+    ) -> validator.McpServerRegistrationRead:
+        """Update mutable registration configuration."""
+
+        data = registration.model_dump(
+            exclude_unset=True,
+            exclude_none=True,
+        )
+
+        if not data:
+            return self.get_server(
+                server_id=server_id,
+                user_id=user_id,
+            )
+
+        unexpected = set(data) - {
+            "name",
+            "timeout_seconds",
+            "enabled",
+        }
+
+        if unexpected:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Unsupported MCP registration update fields: "
+                    + ", ".join(sorted(unexpected))
+                ),
+            )
+
+        assistant_ids: set[str] = set()
+
+        with self._session_factory() as db:
+            row = self._owned_registration(
+                db,
+                server_id=server_id,
+                user_id=user_id,
+            )
+
+            attachments = (
+                db.query(AssistantMcpTool)
+                .filter(AssistantMcpTool.registration_id == row.id)
+                .all()
+            )
+
+            assistant_ids = {attachment.assistant_id for attachment in attachments}
+
+            for field in (
+                "name",
+                "timeout_seconds",
+                "enabled",
+            ):
+                if field in data:
+                    setattr(
+                        row,
+                        field,
+                        data[field],
+                    )
+
+            db.commit()
+            db.refresh(row)
+
+            result = self._registration_read(row)
+
+        # Persisted attachment provider aliases are deliberately
+        # durable. Renaming a registration changes the namespace
+        # used by future discovery/new attachments only.
+        for assistant_id in assistant_ids:
+            self._invalidate_assistant_cache(assistant_id)
+
+        return result
+
+    def delete_server(
+        self,
+        *,
+        server_id: str,
+        user_id: str,
+    ) -> None:
+        """Delete a registration and its assistant-facing capabilities."""
+
+        assistant_ids: set[str] = set()
+
+        with self._session_factory() as db:
+            registration = self._owned_registration(
+                db,
+                server_id=server_id,
+                user_id=user_id,
+            )
+
+            attachments = (
+                db.query(AssistantMcpTool)
+                .filter(AssistantMcpTool.registration_id == registration.id)
+                .all()
+            )
+
+            aliases_by_assistant: dict[
+                str,
+                set[str],
+            ] = {}
+
+            for attachment in attachments:
+                assistant_ids.add(attachment.assistant_id)
+
+                aliases_by_assistant.setdefault(
+                    attachment.assistant_id,
+                    set(),
+                ).add(attachment.provider_name)
+
+            for (
+                assistant_id,
+                provider_names,
+            ) in aliases_by_assistant.items():
+                assistant = (
+                    db.query(Assistant).filter(Assistant.id == assistant_id).first()
+                )
+
+                if assistant is not None:
+                    assistant.tool_configs = remove_function_tools(
+                        list(assistant.tool_configs or []),
+                        provider_names,
+                    )
+
+            for attachment in attachments:
+                db.delete(attachment)
+
+            db.delete(registration)
+            db.commit()
+
+        for assistant_id in assistant_ids:
+            self._invalidate_assistant_cache(assistant_id)
+
     async def discover_tools(
         self,
         *,
