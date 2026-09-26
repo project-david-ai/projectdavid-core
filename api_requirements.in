@@ -1,9 +1,4 @@
 # ------------------------------------------------------------------
-# Extra index for PyTorch CUDA 12.1 wheels
---extra-index-url https://download.pytorch.org/whl/cu121
-#
-
-# ------------------------------------------------------------------
 # Core libraries
 PyYAML
 alembic
