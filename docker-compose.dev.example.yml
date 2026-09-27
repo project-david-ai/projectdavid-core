@@ -125,6 +125,7 @@ services:
       - .env
     environment:
       - DATABASE_URL=mysql+pymysql://api_user:REPLACE_ME@db:3306/entities_db
+      - PROJECT_DAVID_CREDENTIAL_KEY=REPLACE_WITH_FERNET_KEY
       - AUTO_MIGRATE=1
       - SANDBOX_SERVER_URL=http://sandbox:8000
       - QDRANT_URL=http://qdrant:6333

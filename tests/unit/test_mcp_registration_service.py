@@ -12,6 +12,7 @@ from projectdavid_orm.projectdavid_orm.base import Base
 from projectdavid_orm.projectdavid_orm.models import (
     Assistant,
     AssistantMcpTool,
+    Credential,
     McpServerRegistration,
     User,
 )
@@ -76,6 +77,7 @@ def session_factory() -> Iterator[sessionmaker]:
         engine,
         tables=[
             User.__table__,
+            Credential.__table__,
             Assistant.__table__,
             McpServerRegistration.__table__,
             AssistantMcpTool.__table__,

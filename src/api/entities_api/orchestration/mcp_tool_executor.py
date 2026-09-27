@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from copy import deepcopy
-from typing import Any
+from typing import Any, AsyncContextManager
 
 from mcp.types import CallToolResult, TextContent
 
@@ -25,7 +25,7 @@ class McpToolExecutor:
     def __init__(
         self,
         tool: McpDiscoveredTool,
-        client_factory: Callable[[], RemoteMcpClient],
+        client_factory: Callable[[], AsyncContextManager[RemoteMcpClient]],
     ) -> None:
         self._tool = tool
         self._client_factory = client_factory

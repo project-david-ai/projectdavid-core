@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable, Iterable
+from collections.abc import AsyncIterator, Callable, Iterable
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+import httpx2
 from fastapi import HTTPException
 from mcp.types import Tool
 from projectdavid_common import UtilsInterface, ValidationInterface
 from projectdavid_orm.projectdavid_orm.models import (
     AssistantMcpTool,
+    Credential,
     McpServerRegistration,
 )
 from sqlalchemy.exc import IntegrityError
@@ -28,6 +31,11 @@ from src.api.entities_api.orchestration.mcp_tool_discovery import (
 )
 from src.api.entities_api.orchestration.mcp_tool_executor import McpToolExecutor
 from src.api.entities_api.orchestration.tool_abi import ToolDefinition
+from src.api.entities_api.services.credential_service import (
+    CredentialConfigurationError,
+    CredentialResolutionError,
+    CredentialService,
+)
 from src.api.entities_api.services.logging_service import LoggingUtility
 from src.api.entities_api.services.mcp_tool_config import (
     function_tool_name,
@@ -51,10 +59,80 @@ class McpRegistrationService:
         session_factory: Callable[[], Any] = SessionLocal,
         client_factory: Callable[..., RemoteMcpClient] = RemoteMcpClient,
         cache_invalidator_factory: Callable[[], Any] = get_sync_invalidator,
+        credential_service: CredentialService | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._client_factory = client_factory
         self._cache_invalidator_factory = cache_invalidator_factory
+        self._credential_service = credential_service or CredentialService(
+            session_factory=session_factory,
+        )
+
+    @staticmethod
+    def _assert_auth_compatible(
+        registration: McpServerRegistration,
+        requested_auth_type: str,
+    ) -> None:
+        if registration.auth_type != requested_auth_type:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "MCP server registration already exists with a different "
+                    "authentication configuration"
+                ),
+            )
+
+    @asynccontextmanager
+    async def _remote_client_context(
+        self,
+        *,
+        url: str,
+        timeout_seconds: float,
+        owner_id: str,
+        auth_type: str,
+        credential_id: str | None,
+    ) -> AsyncIterator[RemoteMcpClient]:
+        http_client: httpx2.AsyncClient | None = None
+
+        if auth_type == "bearer":
+            if credential_id is None:
+                raise RuntimeError("MCP authentication configuration is invalid")
+
+            try:
+                payload = self._credential_service.resolve(
+                    credential_id=credential_id,
+                    user_id=owner_id,
+                    expected_kind="bearer",
+                )
+            except (
+                CredentialConfigurationError,
+                CredentialResolutionError,
+            ) as exc:
+                raise RuntimeError("MCP authentication is unavailable") from exc
+
+            token = payload.get("token")
+
+            if not isinstance(token, str) or not token:
+                raise RuntimeError("MCP authentication is unavailable")
+
+            http_client = httpx2.AsyncClient(
+                headers={
+                    "Authorization": f"Bearer {token}",
+                }
+            )
+        elif auth_type != "none":
+            raise RuntimeError("Unsupported MCP authentication configuration")
+
+        try:
+            async with self._client_factory(
+                url,
+                http_client=http_client,
+                read_timeout_seconds=timeout_seconds,
+            ) as client:
+                yield client
+        finally:
+            if http_client is not None:
+                await http_client.aclose()
 
     @staticmethod
     def _normalize_url(url: object) -> str:
@@ -237,6 +315,8 @@ class McpRegistrationService:
             normalized_url=normalized_url,
         )
 
+        requested_auth_type = registration.auth.type
+
         with self._session_factory() as db:
             existing = (
                 db.query(McpServerRegistration)
@@ -248,7 +328,40 @@ class McpRegistrationService:
             )
 
             if existing is not None:
+                self._assert_auth_compatible(
+                    existing,
+                    requested_auth_type,
+                )
                 return self._registration_read(existing)
+
+            credential_id: str | None = None
+
+            if requested_auth_type == "bearer":
+                token = registration.auth.token
+
+                if token is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Bearer authentication requires a token",
+                    )
+
+                try:
+                    credential = self._credential_service.create_in_session(
+                        db=db,
+                        user_id=user_id,
+                        kind="bearer",
+                        payload={
+                            "token": token.get_secret_value(),
+                        },
+                    )
+                except CredentialConfigurationError as exc:
+                    db.rollback()
+                    raise HTTPException(
+                        status_code=503,
+                        detail="MCP credential storage is unavailable",
+                    ) from exc
+
+                credential_id = credential.id
 
             row = McpServerRegistration(
                 id=UtilsInterface.IdentifierService.generate_prefixed_id("mcpreg"),
@@ -258,6 +371,8 @@ class McpRegistrationService:
                 normalized_url=normalized_url,
                 identity_key=identity_key,
                 transport=registration.transport,
+                auth_type=requested_auth_type,
+                credential_id=credential_id,
                 timeout_seconds=registration.timeout_seconds,
                 enabled=True,
             )
@@ -281,6 +396,10 @@ class McpRegistrationService:
                 if existing is None:
                     raise
 
+                self._assert_auth_compatible(
+                    existing,
+                    requested_auth_type,
+                )
                 return self._registration_read(existing)
 
             db.refresh(row)
@@ -417,6 +536,8 @@ class McpRegistrationService:
                 user_id=user_id,
             )
 
+            credential_id = registration.credential_id
+
             attachments = (
                 db.query(AssistantMcpTool)
                 .filter(AssistantMcpTool.registration_id == registration.id)
@@ -454,6 +575,28 @@ class McpRegistrationService:
                 db.delete(attachment)
 
             db.delete(registration)
+            db.flush()
+
+            if credential_id is not None:
+                remaining_references = (
+                    db.query(McpServerRegistration)
+                    .filter(McpServerRegistration.credential_id == credential_id)
+                    .count()
+                )
+
+                if remaining_references == 0:
+                    credential = (
+                        db.query(Credential)
+                        .filter(
+                            Credential.id == credential_id,
+                            Credential.owner_id == user_id,
+                        )
+                        .first()
+                    )
+
+                    if credential is not None:
+                        db.delete(credential)
+
             db.commit()
 
         for assistant_id in assistant_ids:
@@ -481,11 +624,17 @@ class McpRegistrationService:
             timeout_seconds = registration.timeout_seconds
             stable_server_id = registration.id
             provider_namespace = registration.name
+            owner_id = registration.owner_id
+            auth_type = registration.auth_type
+            credential_id = registration.credential_id
 
         try:
-            async with self._client_factory(
-                url,
-                read_timeout_seconds=timeout_seconds,
+            async with self._remote_client_context(
+                url=url,
+                timeout_seconds=timeout_seconds,
+                owner_id=owner_id,
+                auth_type=auth_type,
+                credential_id=credential_id,
             ) as client:
                 result = await client.list_tools(cursor=cursor)
         except HTTPException:
@@ -496,8 +645,6 @@ class McpRegistrationService:
                 detail=("Remote MCP tool discovery failed: " f"{type(exc).__name__}"),
             ) from exc
 
-        # The persistent registration id is deliberately used as MCP identity.
-        # Display names are mutable and therefore cannot be canonical identity.
         return adapt_mcp_list_tools_result(
             stable_server_id,
             result,
@@ -513,15 +660,21 @@ class McpRegistrationService:
         server_id: str,
         provider_namespace: str,
         reserved_provider_names: Iterable[str],
+        owner_id: str,
+        auth_type: str,
+        credential_id: str | None,
     ) -> tuple[McpDiscoveredTool, ...]:
         raw_tools: list[Tool] = []
         cursor: str | None = None
         seen_cursors: set[str] = set()
 
         try:
-            async with self._client_factory(
-                url,
-                read_timeout_seconds=timeout_seconds,
+            async with self._remote_client_context(
+                url=url,
+                timeout_seconds=timeout_seconds,
+                owner_id=owner_id,
+                auth_type=auth_type,
+                credential_id=credential_id,
             ) as client:
                 for _ in range(_MAX_DISCOVERY_PAGES):
                     result = await client.list_tools(cursor=cursor)
@@ -571,12 +724,7 @@ class McpRegistrationService:
         *,
         assistant_id: str,
     ) -> list[McpToolExecutor]:
-        """Rebuild ephemeral MCP executors from durable attachment state.
-
-        Runtime hydration deliberately does not rediscover the remote MCP
-        server. Attachment already established the durable remote identity,
-        provider alias, canonical id, and model-facing function schema.
-        """
+        """Rebuild ephemeral MCP executors from durable attachment state."""
 
         with self._session_factory() as db:
             assistant = (
@@ -590,7 +738,7 @@ class McpRegistrationService:
 
             if assistant is None:
                 raise RuntimeError(
-                    f"Cannot hydrate MCP runtime: assistant not found: "
+                    "Cannot hydrate MCP runtime: assistant not found: "
                     f"{assistant_id}"
                 )
 
@@ -660,17 +808,26 @@ class McpRegistrationService:
 
                 url = registration.url
                 timeout_seconds = registration.timeout_seconds
-                client_factory = self._client_factory
+                owner_id = registration.owner_id
+                auth_type = registration.auth_type
+                credential_id = registration.credential_id
+                service = self
 
                 def runtime_client_factory(
                     *,
                     _url=url,
                     _timeout=timeout_seconds,
-                    _factory=client_factory,
+                    _owner_id=owner_id,
+                    _auth_type=auth_type,
+                    _credential_id=credential_id,
+                    _service=service,
                 ):
-                    return _factory(
-                        _url,
-                        read_timeout_seconds=_timeout,
+                    return _service._remote_client_context(
+                        url=_url,
+                        timeout_seconds=_timeout,
+                        owner_id=_owner_id,
+                        auth_type=_auth_type,
+                        credential_id=_credential_id,
                     )
 
                 executors.append(
@@ -739,6 +896,9 @@ class McpRegistrationService:
             timeout_seconds = registration.timeout_seconds
             stable_server_id = registration.id
             provider_namespace = registration.name
+            registration_owner_id = registration.owner_id
+            registration_auth_type = registration.auth_type
+            registration_credential_id = registration.credential_id
 
         discovered = await self._discover_all_tools(
             url=registration_url,
@@ -746,6 +906,9 @@ class McpRegistrationService:
             server_id=stable_server_id,
             provider_namespace=provider_namespace,
             reserved_provider_names=reserved_names,
+            owner_id=registration_owner_id,
+            auth_type=registration_auth_type,
+            credential_id=registration_credential_id,
         )
 
         discovered_by_remote = {tool.remote_name: tool for tool in discovered}

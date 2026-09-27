@@ -19,6 +19,7 @@ from typing import Dict, List, Optional, Set
 from urllib.parse import quote_plus
 
 import typer
+from cryptography.fernet import Fernet
 
 # ---------------------------------------------------------------------------
 # Container guard
@@ -117,6 +118,7 @@ class DockerManager:
         "MYSQL_PASSWORD",
         "SECRET_KEY",
         "SANDBOX_AUTH_SECRET",
+        "PROJECT_DAVID_CREDENTIAL_KEY",
         "DEFAULT_SECRET_KEY",
         "SMBCLIENT_PASSWORD",
         "SEARXNG_SECRET_KEY",
@@ -241,6 +243,7 @@ class DockerManager:
             "CODE_EXECUTION_URL",
             "SIGNED_URL_SECRET",
             "SANDBOX_AUTH_SECRET",
+            "PROJECT_DAVID_CREDENTIAL_KEY",
             "SEARXNG_SECRET_KEY",
             "DISABLE_FIREJAIL",
             "SECRET_KEY",
@@ -480,7 +483,7 @@ class DockerManager:
                 generation_log[env_key] = f"From {self._DOCKER_COMPOSE_FILE}"
 
         for key in self._GENERATED_SECRETS:
-            env_values[key] = secrets.token_hex(16 if key == "API_KEY" else 32)
+            env_values[key] = self._generate_secret_value(key)
             generation_log[key] = "Generated new secret"
 
         for key in self._GENERATED_TOOL_IDS:
@@ -562,6 +565,89 @@ class DockerManager:
             os.path.expanduser("~"), ".cache", "huggingface"
         )
         os.environ["HF_CACHE_PATH"] = hf_path
+
+    @staticmethod
+    def _generate_secret_value(key: str) -> str:
+        """Generate a deployment secret in the format required by its consumer."""
+
+        if key == "PROJECT_DAVID_CREDENTIAL_KEY":
+            return Fernet.generate_key().decode("ascii")
+
+        return secrets.token_hex(16 if key == "API_KEY" else 32)
+
+    def _backfill_project_david_credential_key(self) -> None:
+        """Persist the new credential root key without rotating existing keys."""
+
+        env_name = "PROJECT_DAVID_CREDENTIAL_KEY"
+        env_path = Path(self._ENV_FILE)
+
+        current = os.environ.get(
+            env_name,
+            "",
+        ).strip()
+
+        if current:
+            try:
+                Fernet(current.encode("ascii"))
+            except (ValueError, TypeError) as exc:
+                self.log.error(
+                    "%s exists but is not a valid Fernet key.",
+                    env_name,
+                )
+                raise SystemExit(1) from exc
+
+            return
+
+        if not env_path.exists():
+            # Fresh .env creation is handled by _GENERATED_SECRETS.
+            return
+
+        content = env_path.read_text(encoding="utf-8")
+
+        existing: str | None = None
+
+        for line in content.splitlines():
+            if line.startswith(f"{env_name}="):
+                existing = line.split(
+                    "=",
+                    1,
+                )[1].strip()
+                break
+
+        if existing is not None:
+            if not existing:
+                self.log.error(
+                    "%s is declared but blank; refusing silent rotation.",
+                    env_name,
+                )
+                raise SystemExit(1)
+
+            try:
+                Fernet(existing.encode("ascii"))
+            except (ValueError, TypeError) as exc:
+                self.log.error(
+                    "%s is invalid; refusing silent replacement.",
+                    env_name,
+                )
+                raise SystemExit(1) from exc
+
+            os.environ[env_name] = existing
+            return
+
+        generated = self._generate_secret_value(env_name)
+
+        separator = "" if not content or content.endswith(("\n", "\r")) else "\n"
+
+        with env_path.open(
+            "a",
+            encoding="utf-8",
+            newline="",
+        ) as handle:
+            handle.write(f"{separator}{env_name}={generated}\n")
+
+        os.environ[env_name] = generated
+
+        self.log.info("Generated persistent Project David credential encryption key.")
 
     def _validate_secrets(self):
         failed = False
@@ -697,6 +783,7 @@ class DockerManager:
     # ------------------------------------------------------------------
 
     def _handle_up(self):
+        self._backfill_project_david_credential_key()
         self._validate_secrets()
 
         all_services = self.compose_config.get("services", {})
