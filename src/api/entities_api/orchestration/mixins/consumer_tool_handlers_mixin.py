@@ -16,6 +16,9 @@ from src.api.entities_api.orchestration.tool_abi import (
     ToolResultEnvelope,
 )
 from src.api.entities_api.services.logging_service import LoggingUtility
+from src.api.entities_api.services.mcp_registration_service import (
+    McpRegistrationService,
+)
 
 load_dotenv()
 LOG = LoggingUtility()
@@ -240,6 +243,28 @@ class ConsumerToolHandlersMixin:
         provider_name: str,
     ) -> McpToolExecutor | None:
         return self._mcp_executor_registry().get(provider_name)
+
+    def refresh_mcp_runtime_bindings(
+        self,
+        assistant_id: str,
+    ) -> None:
+        """Rebuild this orchestrator's MCP executor registry."""
+
+        executors = McpRegistrationService().build_runtime_executors(
+            assistant_id=assistant_id,
+        )
+
+        registry = self._mcp_executor_registry()
+        registry.clear()
+
+        for executor in executors:
+            self.bind_mcp_tool_executor(executor)
+
+        LOG.info(
+            "MCP-RUNTIME hydration complete: assistant=%s bindings=%d",
+            assistant_id,
+            len(executors),
+        )
 
     _MCP_CANCEL_POLL_SECONDS = 0.5
 

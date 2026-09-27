@@ -26,6 +26,8 @@ from src.api.entities_api.orchestration.mcp_tool_discovery import (
     adapt_mcp_list_tools_result,
     adapt_mcp_tools,
 )
+from src.api.entities_api.orchestration.mcp_tool_executor import McpToolExecutor
+from src.api.entities_api.orchestration.tool_abi import ToolDefinition
 from src.api.entities_api.services.logging_service import LoggingUtility
 from src.api.entities_api.services.mcp_tool_config import (
     function_tool_name,
@@ -563,6 +565,122 @@ class McpRegistrationService:
             provider_namespace=provider_namespace,
             reserved_provider_names=reserved_provider_names,
         )
+
+    def build_runtime_executors(
+        self,
+        *,
+        assistant_id: str,
+    ) -> list[McpToolExecutor]:
+        """Rebuild ephemeral MCP executors from durable attachment state.
+
+        Runtime hydration deliberately does not rediscover the remote MCP
+        server. Attachment already established the durable remote identity,
+        provider alias, canonical id, and model-facing function schema.
+        """
+
+        with self._session_factory() as db:
+            assistant = (
+                db.query(Assistant)
+                .filter(
+                    Assistant.id == assistant_id,
+                    Assistant.deleted_at.is_(None),
+                )
+                .first()
+            )
+
+            if assistant is None:
+                raise RuntimeError(
+                    f"Cannot hydrate MCP runtime: assistant not found: "
+                    f"{assistant_id}"
+                )
+
+            attachments = (
+                db.query(AssistantMcpTool)
+                .filter(
+                    AssistantMcpTool.assistant_id == assistant_id,
+                    AssistantMcpTool.enabled.is_(True),
+                )
+                .order_by(
+                    AssistantMcpTool.created_at,
+                    AssistantMcpTool.id,
+                )
+                .all()
+            )
+
+            if not attachments:
+                return []
+
+            tool_configs_by_name: dict[str, Any] = {}
+
+            for tool_config in list(assistant.tool_configs or []):
+                name = function_tool_name(tool_config)
+
+                if name is not None:
+                    tool_configs_by_name[name] = tool_config
+
+            executors: list[McpToolExecutor] = []
+
+            for attachment in attachments:
+                registration = (
+                    db.query(McpServerRegistration)
+                    .filter(McpServerRegistration.id == attachment.registration_id)
+                    .first()
+                )
+
+                if registration is None:
+                    raise RuntimeError(
+                        "Cannot hydrate MCP runtime: registration "
+                        f"{attachment.registration_id} is missing"
+                    )
+
+                if not registration.enabled:
+                    raise RuntimeError(
+                        "Cannot hydrate MCP runtime: registration "
+                        f"{registration.id} is disabled"
+                    )
+
+                function_tool = tool_configs_by_name.get(attachment.provider_name)
+
+                if function_tool is None:
+                    raise RuntimeError(
+                        "Cannot hydrate MCP runtime: attached provider alias "
+                        f"{attachment.provider_name!r} has no model-facing "
+                        "tool definition"
+                    )
+
+                definition = ToolDefinition.from_function_tool(function_tool)
+
+                discovered_tool = McpDiscoveredTool(
+                    server_id=registration.id,
+                    remote_name=attachment.remote_name,
+                    canonical_id=attachment.canonical_id,
+                    provider_name=attachment.provider_name,
+                    definition=definition,
+                )
+
+                url = registration.url
+                timeout_seconds = registration.timeout_seconds
+                client_factory = self._client_factory
+
+                def runtime_client_factory(
+                    *,
+                    _url=url,
+                    _timeout=timeout_seconds,
+                    _factory=client_factory,
+                ):
+                    return _factory(
+                        _url,
+                        read_timeout_seconds=_timeout,
+                    )
+
+                executors.append(
+                    McpToolExecutor(
+                        discovered_tool,
+                        runtime_client_factory,
+                    )
+                )
+
+            return executors
 
     async def attach_tools(
         self,

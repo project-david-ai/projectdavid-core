@@ -395,9 +395,12 @@ class OrchestratorCore(
             return
 
         try:
+            config_loaded = False
+
             cached_data = await self.assistant_cache.retrieve(self.assistant_id)
             if cached_data:
                 self.assistant_config = cached_data
+                config_loaded = True
                 LOG.info(
                     f"✅ Config Loaded for {self.assistant_id} | "
                     f"AgentMode: {self.assistant_config.get('agent_mode')}"
@@ -411,6 +414,7 @@ class OrchestratorCore(
                 )
                 if fresh_config:
                     self.assistant_config = fresh_config
+                    config_loaded = True
                     await self.assistant_cache.store(self.assistant_id, fresh_config)
                     LOG.info(f"✅ Config rehydrated from DB for {self.assistant_id}")
                 else:
@@ -420,6 +424,9 @@ class OrchestratorCore(
 
         except Exception as e:
             LOG.error(f"❌ Error loading assistant config: {e}")
+
+        if config_loaded:
+            self.refresh_mcp_runtime_bindings(self.assistant_id)
 
     def _build_tool_structure(self, batch):
         structure = []
@@ -577,7 +584,10 @@ class OrchestratorCore(
                         tool_name = call.get("name")
                         args = call.get("arguments", {})
 
-                    if tool_name not in PLATFORM_TOOLS:
+                    if (
+                        tool_name not in PLATFORM_TOOLS
+                        and self._get_mcp_tool_executor(tool_name) is None
+                    ):
                         has_sdk_user_tool = True
 
                     validation_event = tool_validator.validate_args(
