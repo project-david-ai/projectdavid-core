@@ -1,3 +1,10 @@
+## [1.54.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.54.0...v1.54.1) (2026-09-27)
+
+
+### Bug Fixes
+
+* hydrate MCP tools for internal runtime execution ([9e827aa](https://github.com/project-david-ai/projectdavid-core/commit/9e827aaab3948980b7d9037efda4a1fba82f6e78))
+
 # [1.54.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.53.0...v1.54.0) (2026-09-26)
 
 
