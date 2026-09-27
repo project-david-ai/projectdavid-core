@@ -1,3 +1,10 @@
+# [1.55.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.54.1...v1.55.0) (2026-09-27)
+
+
+### Features
+
+* add authenticated remote MCP servers ([2a25382](https://github.com/project-david-ai/projectdavid-core/commit/2a25382e0ec68d5ccafc5a8ff5d0e0077ca197cf))
+
 ## [1.54.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.54.0...v1.54.1) (2026-09-27)
 
 
