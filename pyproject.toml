@@ -24,6 +24,7 @@ dependencies = [
   "pydantic>=2.10.3",
   "httpx>=0.24.1",
   "mcp>=2.2,<3",
+  "cryptography>=44.0.2",
   "python-dotenv>=1.0",
   "aiofiles>=23.2.1",
   "qdrant-client~=1.13.3",

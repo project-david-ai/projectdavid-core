@@ -103,7 +103,10 @@ def delete_mcp_server(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/mcp/servers/{server_id}/tools")
+@router.get(
+    "/mcp/servers/{server_id}/tools",
+    response_model=validator.McpToolDiscoveryPageRead,
+)
 async def discover_mcp_server_tools(
     server_id: str,
     cursor: str | None = None,
@@ -118,19 +121,19 @@ async def discover_mcp_server_tools(
         cursor=cursor,
     )
 
-    return {
-        "tools": [
-            {
-                "server_id": tool.server_id,
-                "remote_name": tool.remote_name,
-                "canonical_id": tool.canonical_id,
-                "provider_name": tool.provider_name,
-                "definition": (tool.definition.to_function_tool()),
-            }
+    return validator.McpToolDiscoveryPageRead(
+        tools=[
+            validator.McpDiscoveredToolRead(
+                server_id=tool.server_id,
+                remote_name=tool.remote_name,
+                canonical_id=tool.canonical_id,
+                provider_name=tool.provider_name,
+                definition=tool.definition.to_function_tool(),
+            )
             for tool in page.tools
         ],
-        "next_cursor": page.next_cursor,
-    }
+        next_cursor=page.next_cursor,
+    )
 
 
 @router.get(
