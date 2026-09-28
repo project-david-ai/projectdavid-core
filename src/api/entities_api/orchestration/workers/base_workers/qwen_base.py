@@ -443,10 +443,17 @@ class QwenBaseWorker(
                 stream=True,
             )
 
+            structured_tool_calls: list[Dict[str, Any]] = []
+
             async for chunk in DeltaNormalizer.async_iter_deltas(raw_stream, run_id):
                 if stop_event.is_set():
                     break
                 LOG.debug("PRE_ACCUM chunk: %s", json.dumps(chunk)[:150])
+
+                if chunk.get("type") == "tool_call":
+                    structured_call = chunk.get("content")
+                    if isinstance(structured_call, dict):
+                        structured_tool_calls.append(structured_call)
 
                 (
                     current_block,
@@ -485,9 +492,17 @@ class QwenBaseWorker(
                         f"Failed to parse decision buffer: {decision_buffer[:50]}..."
                     )
 
-            tool_calls_batch = self.parse_and_set_function_calls(
-                accumulated, assistant_reply
-            )
+            tool_calls_batch = []
+
+            if structured_tool_calls:
+                tool_calls_batch = self.set_structured_function_calls(
+                    structured_tool_calls
+                )
+
+            if not tool_calls_batch:
+                tool_calls_batch = self.parse_and_set_function_calls(
+                    accumulated, assistant_reply
+                )
 
             message_to_save = assistant_reply
             final_status = StatusEnum.completed.value
