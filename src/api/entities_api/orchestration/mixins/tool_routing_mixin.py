@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import uuid
 from typing import AsyncGenerator, Dict, List, Optional, Union
 
 from src.api.entities_api.services.logging_service import LoggingUtility
@@ -110,6 +112,89 @@ class ToolRoutingMixin:
 
     def get_function_call_state(self) -> List[Dict]:
         return self._function_calls
+
+    def set_structured_function_calls(self, calls: List[Dict]) -> List[Dict]:
+        """Promote normalized provider tool calls directly into routing state.
+
+        Structured ``tool_call`` events are authoritative when a provider or
+        DeltaNormalizer has already identified the function call.  The legacy
+        Rust ``<fc>`` parser remains the fallback for text-only providers.
+
+        Duplicate payloads without call IDs are collapsed because some provider
+        streams expose the same logical call through both textual and native
+        tool-call representations. Calls carrying distinct IDs remain distinct.
+        """
+        normalized: List[Dict] = []
+        seen = set()
+
+        for raw in calls:
+            if not isinstance(raw, dict):
+                continue
+
+            name = raw.get("name")
+            arguments = raw.get("arguments", {})
+            call_id = raw.get("id")
+
+            if not isinstance(name, str) or not name:
+                continue
+
+            if isinstance(arguments, str):
+                if not arguments.strip():
+                    arguments = {}
+                else:
+                    try:
+                        arguments = json.loads(arguments)
+                    except json.JSONDecodeError:
+                        LOG.warning(
+                            "TOOL-ROUTER structured call %s has invalid JSON arguments",
+                            name,
+                        )
+                        continue
+
+            if not isinstance(arguments, dict):
+                LOG.warning(
+                    "TOOL-ROUTER structured call %s arguments must be an object",
+                    name,
+                )
+                continue
+
+            canonical_arguments = json.dumps(
+                arguments,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+
+            if isinstance(call_id, str) and call_id:
+                identity = ("id", call_id)
+            else:
+                identity = ("payload", name, canonical_arguments)
+
+            if identity in seen:
+                LOG.debug(
+                    "TOOL-ROUTER dropping duplicate structured call: %s",
+                    name,
+                )
+                continue
+
+            seen.add(identity)
+
+            if not isinstance(call_id, str) or not call_id:
+                call_id = f"call_{uuid.uuid4().hex[:8]}"
+
+            item = {
+                "id": call_id,
+                "name": name,
+                "arguments": arguments,
+            }
+
+            normalized.append(item)
+
+        if normalized:
+            self.set_tool_response_state(True)
+            self.set_function_call_state(normalized)
+
+        return normalized
 
     def reset_tools_called(self) -> None:
         self._tools_called = []

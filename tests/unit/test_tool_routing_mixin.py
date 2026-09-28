@@ -174,6 +174,72 @@ def test_set_function_call_state_single_dict_wrapped(router):
     assert router.get_function_call_state() == [{"name": "tool_a"}]
 
 
+def test_structured_function_call_normalised_and_promoted(router):
+    result = router.set_structured_function_calls(
+        [
+            {
+                "name": "github-auth-test__search_repositories",
+                "arguments": '{"query":"fastapi"}',
+            }
+        ]
+    )
+
+    assert len(result) == 1
+    assert result[0]["name"] == "github-auth-test__search_repositories"
+    assert result[0]["arguments"] == {"query": "fastapi"}
+    assert result[0]["id"].startswith("call_")
+    assert router.get_function_call_state() == result
+    assert router.get_tool_response_state() is True
+
+
+def test_duplicate_structured_payload_without_ids_executes_once(router):
+    result = router.set_structured_function_calls(
+        [
+            {
+                "name": "github-auth-test__search_repositories",
+                "arguments": '{"query": "fastapi"}',
+            },
+            {
+                "name": "github-auth-test__search_repositories",
+                "arguments": '{"query":"fastapi"}',
+            },
+        ]
+    )
+
+    assert len(result) == 1
+    assert result[0]["arguments"] == {"query": "fastapi"}
+    assert result[0]["id"].startswith("call_")
+
+
+def test_distinct_structured_call_ids_are_preserved(router):
+    result = router.set_structured_function_calls(
+        [
+            {
+                "id": "call_one",
+                "name": "tool_a",
+                "arguments": '{"value":1}',
+            },
+            {
+                "id": "call_two",
+                "name": "tool_a",
+                "arguments": '{"value":1}',
+            },
+        ]
+    )
+
+    assert [call["id"] for call in result] == ["call_one", "call_two"]
+
+
+def test_invalid_structured_call_does_not_set_tool_state(router):
+    result = router.set_structured_function_calls(
+        [{"name": "tool_a", "arguments": "{not-json"}]
+    )
+
+    assert result == []
+    assert router.get_function_call_state() == []
+    assert router.get_tool_response_state() is False
+
+
 # ---------------------------------------------------------------------------
 # JsonUtilsMixin guard
 # ---------------------------------------------------------------------------
