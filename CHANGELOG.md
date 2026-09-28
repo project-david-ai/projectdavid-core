@@ -1,3 +1,10 @@
+## [1.55.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.55.0...v1.55.1) (2026-09-28)
+
+
+### Bug Fixes
+
+* preserve structured tool calls through MCP execution ([44ba82c](https://github.com/project-david-ai/projectdavid-core/commit/44ba82cd0747f50b377ff6cedebe65a90dca5898))
+
 # [1.55.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.54.1...v1.55.0) (2026-09-27)
 
 
