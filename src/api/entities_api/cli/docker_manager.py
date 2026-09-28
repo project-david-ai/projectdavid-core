@@ -13,9 +13,11 @@ import socket
 import subprocess  # nosec B404
 import sys
 import time
+import traceback
+from enum import Enum
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Dict, List, Optional, Set
+from typing import Callable, Dict, List, Optional, Set
 from urllib.parse import quote_plus
 
 import typer
@@ -87,8 +89,22 @@ app = typer.Typer(
 )
 
 
+class DockerManagerMode(str, Enum):
+    """Docker Compose actions accepted by the CLI."""
+
+    UP = "up"
+    BUILD = "build"
+    BOTH = "both"
+    DOWN_ONLY = "down_only"
+    LOGS = "logs"
+
+
 class DockerManager:
     """Manages Docker Compose stack operations and env setup."""
+
+    _GENERATED_ENV_VALUES: dict[str, Callable[[], str]] = {
+        "PROJECT_DAVID_CREDENTIAL_KEY": (lambda: Fernet.generate_key().decode("ascii")),
+    }
 
     _ENV_FILE = ".env"
     _DOCKER_COMPOSE_FILE = BASE_COMPOSE_FILE
@@ -553,7 +569,9 @@ class DockerManager:
             self._generate_dot_env_file()
         else:
             self.log.info("'%s' exists. Loading.", self._ENV_FILE)
-            load_dotenv(dotenv_path=self._ENV_FILE, override=True)
+
+        self._ensure_env_values_present()
+        load_dotenv(dotenv_path=self._ENV_FILE, override=True)
 
     def _configure_shared_path(self):
         shared_path = os.environ.get("SHARED_PATH", os.path.abspath("./shared_data"))
@@ -568,12 +586,99 @@ class DockerManager:
 
     @staticmethod
     def _generate_secret_value(key: str) -> str:
-        """Generate a deployment secret in the format required by its consumer."""
-
         if key == "PROJECT_DAVID_CREDENTIAL_KEY":
             return Fernet.generate_key().decode("ascii")
 
         return secrets.token_hex(16 if key == "API_KEY" else 32)
+
+    @staticmethod
+    def _parse_env_assignments(path: Path) -> dict[str, str]:
+        """
+        Return KEY -> raw RHS from an env file.
+
+        The raw right-hand side is preserved so values copied from
+        .env.example retain their existing quoting/formatting.
+        """
+        assignments: dict[str, str] = {}
+
+        for raw_line in path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+
+            key, raw_value = raw_line.split("=", 1)
+            key = key.strip()
+
+            if key:
+                assignments[key] = raw_value
+
+        return assignments
+
+    def _ensure_env_values_present(self) -> tuple[str, ...]:
+        """
+        Backfill env values introduced after an existing clone was created.
+
+        Existing values are never replaced.
+
+        Missing generated secrets are created once.
+        Missing ordinary values are copied from .env.example.
+        """
+        env_path = Path(self._ENV_FILE)
+
+        if not env_path.exists():
+            return ()
+
+        example_path = env_path.with_name(".env.example")
+
+        if not example_path.exists():
+            raise RuntimeError(f"Environment template does not exist: {example_path}")
+
+        existing = self._parse_env_assignments(env_path)
+        expected = self._parse_env_assignments(example_path)
+
+        missing = [key for key in expected if key not in existing]
+
+        if not missing:
+            return ()
+
+        additions: list[str] = []
+
+        for key in missing:
+            generator = self._GENERATED_ENV_VALUES.get(key)
+
+            if generator is not None:
+                value = generator()
+            else:
+                value = expected[key]
+
+            additions.append(f"{key}={value}")
+
+        # Preserve the existing file's newline convention and avoid
+        # rewriting the file unnecessarily.
+        raw = env_path.read_bytes()
+
+        newline = b"\r\n" if b"\r\n" in raw else b"\n"
+
+        payload = newline.join(line.encode("utf-8") for line in additions)
+
+        with env_path.open("ab") as handle:
+            if raw and not raw.endswith((b"\n", b"\r")):
+                handle.write(newline)
+
+            handle.write(newline)
+            handle.write(b"# Added automatically by Project David")
+            handle.write(newline)
+            handle.write(payload)
+            handle.write(newline)
+
+        # Log names only. Never values.
+        log.info(
+            "Backfilled missing environment values: %s",
+            ", ".join(missing),
+        )
+
+        return tuple(missing)
 
     def _backfill_project_david_credential_key(self) -> None:
         """Persist the new credential root key without rotating existing keys."""
@@ -1045,8 +1150,10 @@ class DockerManager:
 @app.callback(invoke_without_command=True)
 def docker_manager(
     ctx: typer.Context,
-    mode: str = typer.Option(
-        "up", "--mode", help="Stack action: up | build | both | down_only | logs"
+    mode: DockerManagerMode = typer.Option(
+        DockerManagerMode.UP,
+        "--mode",
+        help="Stack action: up | build | both | down_only | logs",
     ),
     training: bool = typer.Option(
         False,
@@ -1113,7 +1220,7 @@ def docker_manager(
         down = True
 
     args = SimpleNamespace(
-        mode=mode,
+        mode=mode.value,
         training=training,
         ollama=ollama,
         services=services or [],
@@ -1138,14 +1245,14 @@ def docker_manager(
     )
 
     try:
-        from src.api.entities_api.cli.generate_docker_compose import (
-            generate_dev_docker_compose,
-        )
+        from .generate_docker_compose import generate_dev_docker_compose
 
         generate_dev_docker_compose()
         time.sleep(0.5)
     except Exception as exc:
         typer.echo(f"[error] Failed to generate docker-compose files: {exc}", err=True)
+        if verbose:
+            traceback.print_exc()
         raise SystemExit(1)
 
     try:
