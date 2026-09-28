@@ -1,3 +1,10 @@
+## [1.55.2](https://github.com/project-david-ai/projectdavid-core/compare/v1.55.1...v1.55.2) (2026-09-28)
+
+
+### Bug Fixes
+
+* harden docker manager mode handling ([c52d893](https://github.com/project-david-ai/projectdavid-core/commit/c52d89312edb03b55d0119ce7416d22b8fd5b45f))
+
 ## [1.55.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.55.0...v1.55.1) (2026-09-28)
 
 
