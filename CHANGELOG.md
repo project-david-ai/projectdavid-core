@@ -1,3 +1,11 @@
+# [1.57.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.56.0...v1.57.0) (2026-09-29)
+
+
+### Features
+
+* **scratchpads:** add tenant-scoped redis data plane ([7966ab4](https://github.com/project-david-ai/projectdavid-core/commit/7966ab48af926158c2fb8a4ecd710e81ca82c2cc))
+* **scratchpads:** converge first-class runtime facade ([83ab028](https://github.com/project-david-ai/projectdavid-core/commit/83ab02836cfd54cf0507b4404f0d08f91ce76656))
+
 # [1.56.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.55.3...v1.56.0) (2026-09-29)
 
 
