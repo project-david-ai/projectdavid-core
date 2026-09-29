@@ -1,3 +1,10 @@
+## [1.59.2](https://github.com/project-david-ai/projectdavid-core/compare/v1.59.1...v1.59.2) (2026-09-29)
+
+
+### Bug Fixes
+
+* **deep-research:** propagate caller auth and delegated model ([2243991](https://github.com/project-david-ai/projectdavid-core/commit/224399150de1f04e684da5bef72dc12983b78429))
+
 ## [1.59.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.59.0...v1.59.1) (2026-09-29)
 
 
