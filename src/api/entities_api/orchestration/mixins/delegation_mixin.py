@@ -66,7 +66,6 @@ class DelegationMixin:
 
     Instance state (set in __init__):
         self._delete_ephemeral_thread     — bool, controls thread cleanup
-        self._delegation_model            — model string for delegated inference
         self._research_worker_thread      — ephemeral thread id for research flow
         self._run_user_id                 — owner resolved from run at stream time
 
@@ -85,7 +84,6 @@ class DelegationMixin:
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._delete_ephemeral_thread = False
-        self._delegation_model = None
         self._research_worker_thread = None
         self._scratch_pad_thread = None
         self._run_user_id = None
@@ -453,14 +451,16 @@ class DelegationMixin:
             inference_api_key = (
                 run_obj.meta_data.get("api_key") if run_obj.meta_data else None
             )
-            delegated_model = (
-                run_obj.meta_data.get("delegated_model") if run_obj.meta_data else None
-            )
+            inference_model = getattr(self, "_inference_model", None)
 
             if not inference_api_key:
                 raise RuntimeError(
-                    f"DELEGATE ABORT: No api_key found in run {run_id} meta_data. "
-                    f"meta_data={run_obj.meta_data}"
+                    f"DELEGATE ABORT: No api_key found in run {run_id} meta_data."
+                )
+
+            if not inference_model:
+                raise RuntimeError(
+                    f"DELEGATE ABORT: Parent inference model is unavailable for run {run_id}."
                 )
 
             sync_stream = self.project_david_client.synchronous_inference_stream
@@ -477,7 +477,7 @@ class DelegationMixin:
                 ephemeral_worker.id,
                 ephemeral_thread.id,
                 ephemeral_run.id,
-                "together-ai/Qwen/Qwen3-Next-80B-A3B-Instruct-FP8",
+                inference_model,
             )
 
             captured_stream_content = ""
@@ -487,7 +487,7 @@ class DelegationMixin:
 
             async for event in self._stream_sync_generator(
                 sync_stream.stream_events,
-                model=delegated_model,
+                model=inference_model,
             ):
                 raw_event_count += 1
                 event_type = type(event).__name__

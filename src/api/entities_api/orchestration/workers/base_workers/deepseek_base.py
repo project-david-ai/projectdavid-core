@@ -13,9 +13,6 @@ from typing import Any, AsyncGenerator, Dict, Generator, List, Optional, Union
 from dotenv import load_dotenv
 from entities_api.cache.assistant_cache import AssistantCache
 from entities_api.clients.delta_normalizer import DeltaNormalizer
-from entities_api.platform_tools.delegated_model_map.delegation_model_map import (
-    get_delegated_model,
-)
 from projectdavid import StreamEvent
 from projectdavid_common.utilities.logging_service import LoggingUtility
 from projectdavid_common.validation import StatusEnum
@@ -171,6 +168,12 @@ class DeepSeekBaseWorker(
         state = StreamState()
 
         pre_mapped_model = model
+
+        # Preserve the Project David runtime model exactly as requested.
+
+        # Delegated research workers inherit this model unchanged.
+
+        self._inference_model = pre_mapped_model
         try:
             if hasattr(self, "_get_model_map") and (
                 mapped := self._get_model_map(model)
@@ -220,10 +223,9 @@ class DeepSeekBaseWorker(
                 web_access_setting = False
                 research_worker_setting = False
                 junior_engineer_setting = False
-                delegation_model = get_delegated_model(requested_model=pre_mapped_model)
                 await self._native_exec.update_run_fields(
                     run_id,
-                    meta_data={"api_key": api_key, "delegated_model": delegation_model},
+                    meta_data={"api_key": api_key},
                 )
 
             elif research_worker_setting:
