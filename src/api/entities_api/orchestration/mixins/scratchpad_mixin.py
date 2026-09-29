@@ -169,30 +169,53 @@ class ScratchpadMixin:
 
                 raise RuntimeError(f"Run {run_id} has no owning user.")
 
-            # 3. Operate against the first-class Scratchpad resource.
-
-            if operation_type == "read":
-
-                res = await self._native_exec.scratchpad_svc.get_formatted_view_for_thread(
+            # 3. Resolve the canonical Scratchpad resource.
+            #
+            # scratchpad_thread_id remains the compatibility locator for
+            # current Supervisor/Worker orchestration. The service resolves
+            # it to the tenant-owned first-class Scratchpad and performs any
+            # one-time legacy Redis migration before returning the resource.
+            scratchpad = (
+                await self._native_exec.scratchpad_svc.resolve_scratchpad_for_thread(
                     scratchpad_thread_id,
+                    user_id=user_id,
+                )
+            )
+
+            scratchpad_id = scratchpad.id
+
+            LOG.info(
+                "SCRATCHPAD ? resource id: %s",
+                scratchpad_id,
+            )
+
+            # 4. Execute against the first-class Scratchpad API by ID.
+            #
+            # Preserve the historical model-facing tool-output strings for
+            # update/append. Only the internal persistence path changes.
+            if operation_type == "read":
+                res = await self._native_exec.scratchpad_svc.get_formatted_view(
+                    scratchpad_id,
                     user_id=user_id,
                 )
 
             elif operation_type == "update":
-
-                res = await self._native_exec.scratchpad_svc.update_content(
-                    scratchpad_thread_id,
-                    arguments_dict.get("content"),
+                await self._native_exec.scratchpad_svc.set_content(
+                    scratchpad_id,
+                    arguments_dict["content"],
                     user_id=user_id,
                 )
+
+                res = "Scratchpad updated successfully."
 
             else:
-
-                res = await self._native_exec.scratchpad_svc.append_note(
-                    scratchpad_thread_id,
-                    arguments_dict.get("note"),
+                await self._native_exec.scratchpad_svc.append_entry(
+                    scratchpad_id,
+                    arguments_dict["note"],
                     user_id=user_id,
                 )
+
+                res = "Note appended successfully."
 
             # Determine entry text for the frontend scratchpad component
             if operation_type == "append":

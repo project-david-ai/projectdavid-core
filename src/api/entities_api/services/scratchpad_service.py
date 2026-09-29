@@ -384,7 +384,7 @@ class ScratchpadService:
     # Thread-based compatibility bridge
     # ------------------------------------------------------------------
 
-    async def _resolve_thread_compatibility(
+    async def resolve_scratchpad_for_thread(
         self,
         thread_id: str,
         *,
@@ -447,7 +447,7 @@ class ScratchpadService:
         *,
         user_id: str,
     ) -> str:
-        resource = await self._resolve_thread_compatibility(
+        resource = await self.resolve_scratchpad_for_thread(
             thread_id,
             user_id=user_id,
         )
@@ -464,7 +464,7 @@ class ScratchpadService:
         *,
         user_id: str,
     ) -> str:
-        resource = await self._resolve_thread_compatibility(
+        resource = await self.resolve_scratchpad_for_thread(
             thread_id,
             user_id=user_id,
         )
@@ -484,7 +484,7 @@ class ScratchpadService:
         *,
         user_id: str,
     ) -> str:
-        resource = await self._resolve_thread_compatibility(
+        resource = await self.resolve_scratchpad_for_thread(
             thread_id,
             user_id=user_id,
         )
@@ -503,7 +503,7 @@ class ScratchpadService:
         *,
         user_id: str,
     ) -> str:
-        resource = await self._resolve_thread_compatibility(
+        resource = await self.resolve_scratchpad_for_thread(
             thread_id,
             user_id=user_id,
         )
