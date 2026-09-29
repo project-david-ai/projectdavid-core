@@ -551,7 +551,8 @@ class QwenBaseWorker(
 
         except Exception as exc:
             LOG.error(f"Stream Exception: {exc}")
-            yield json.dumps({"type": "error", "content": str(exc), "run_id": run_id})
+            # OrchestratorCore owns run failure lifecycle.
+            raise
 
         finally:
             stop_event.set()

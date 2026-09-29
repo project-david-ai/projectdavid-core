@@ -381,6 +381,7 @@ class DelegationMixin:
         ephemeral_worker = None
         ephemeral_thread = None
         execution_had_error = False
+        worker_failure_reason = None
         ephemeral_run = None
 
         try:
@@ -530,21 +531,47 @@ class DelegationMixin:
                 if guard1_triggered:
                     # ---> CATCH INSTANT FAILURE AND READ DB ERROR <---
                     if getattr(event, "status", None) == "failed":
+                        execution_had_error = True
+
+                        event_message = getattr(event, "message", None)
+                        if (
+                            event_message
+                            and str(event_message).strip().lower() != "none"
+                        ):
+                            worker_failure_reason = str(event_message)
+
                         try:
                             failed_run_obj = await self._native_exec.retrieve_run(
                                 ephemeral_run.id
                             )
+
                             last_err = getattr(
-                                failed_run_obj, "last_error", "No error recorded in DB"
+                                failed_run_obj,
+                                "last_error",
+                                None,
                             )
-                            if hasattr(last_err, "model_dump"):  # Handle DB objects
+
+                            if hasattr(last_err, "model_dump"):
                                 last_err = last_err.model_dump()
+
+                            if last_err:
+                                worker_failure_reason = str(last_err)
+
                             LOG.critical(
-                                f"🚨 [FATAL RUN ERROR] Engine killed the worker! DB Reason: {last_err}"
+                                "FATAL RUN ERROR: worker=%s reason=%s",
+                                ephemeral_worker.id,
+                                worker_failure_reason,
                             )
-                        except Exception as e:
+
+                        except Exception as lifecycle_exc:
                             LOG.critical(
-                                f"🚨[FATAL RUN ERROR] Run failed, couldn't fetch reason: {e}"
+                                "Failed retrieving worker failure state: %s",
+                                lifecycle_exc,
+                            )
+
+                        if not worker_failure_reason:
+                            worker_failure_reason = (
+                                "Delegated worker inference stream failed."
                             )
                     continue
                 passed_guard1 += 1
@@ -613,31 +640,42 @@ class DelegationMixin:
                 "Worker stream finished. Finalizing payload...", "in_progress", run_id
             )
 
-            try:
-                await self._native_exec.update_run_status(
-                    ephemeral_run.id, StatusEnum.completed.value
-                )
-            except Exception as e:
-                LOG.warning(
-                    f"⚠️ Could not manually close worker run {ephemeral_run.id}: {e}"
-                )
-
             final_content = captured_stream_content.strip()
 
-            if not final_content:
+            if execution_had_error:
+                failure_reason = (
+                    worker_failure_reason
+                    or "Delegated worker failed before completing the task."
+                )
+
+                LOG.error(
+                    "[DELEGATE_FAILURE] worker=%s; discarding %d chars of partial stream content; reason=%s",
+                    ephemeral_worker.id,
+                    len(captured_stream_content),
+                    failure_reason,
+                )
+
+                final_content = (
+                    "Delegated worker failed before completing the task. "
+                    + f"Reason: {failure_reason}"
+                )
+
+            elif not final_content:
                 LOG.critical(
-                    "██████[DELEGATE_FALLBACK] Stream captured no text (raw_events=%d). "
-                    "Injecting synthetic fallback to unblock supervisor. ██████",
+                    "[DELEGATE_FALLBACK] Stream captured no text (raw_events=%d).",
                     raw_event_count,
                 )
                 final_content = (
-                    "SYSTEM STATUS: The delegated worker successfully executed its tools and finished its run, "
-                    "but failed to return a textual summary. Please read the shared scratchpad immediately "
-                    "to review the verified facts and data it appended, then continue your synthesis."
+                    "SYSTEM STATUS: The delegated worker successfully executed "
+                    "its tools and finished its run, but failed to return a "
+                    "textual summary. Please read the shared scratchpad "
+                    "immediately to review the verified facts and data it "
+                    "appended, then continue your synthesis."
                 )
+
             else:
                 LOG.critical(
-                    "██████ [DELEGATE_SUCCESS] Captured %d chars directly from worker stream. ██████",
+                    "[DELEGATE_SUCCESS] Captured %d chars directly from worker stream.",
                     len(final_content),
                 )
 
@@ -689,7 +727,11 @@ class DelegationMixin:
                 )
 
             yield self._research_status(
-                "Delegation complete.",
+                (
+                    "Delegation failed."
+                    if execution_had_error
+                    else "Delegation complete."
+                ),
                 "completed" if not execution_had_error else "error",
                 run_id,
             )

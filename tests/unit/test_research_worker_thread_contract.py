@@ -1,0 +1,168 @@
+import asyncio
+import inspect
+from types import SimpleNamespace
+
+from entities_api.platform_tools.tool_reigistry.research_worker import (
+    RESEARCH_WORKER_ASSISTANT_TOOLS,
+    RESEARCH_WORKER_MAX_TURNS,
+    WORKER_TOOLS,
+)
+from projectdavid_common.schemas.assistants_schema import AssistantCreate
+
+from src.api.entities_api.orchestration.mixins.scratchpad_mixin import ScratchpadMixin
+from src.api.entities_api.utilities.assistant_manager import AssistantManager
+
+
+class _ScratchpadService:
+    def __init__(self):
+        self.read_thread = None
+        self.append_thread = None
+
+    async def get_formatted_view(self, thread_id):
+        self.read_thread = thread_id
+        return "SHARED_STATE"
+
+    async def append_note(self, thread_id, note):
+        self.append_thread = thread_id
+        return note
+
+
+class _NativeExec:
+    def __init__(self):
+        self.scratchpad_svc = _ScratchpadService()
+        self.outputs = []
+
+    async def create_action(self, **kwargs):
+        return SimpleNamespace(id="act_test")
+
+    async def update_action_status(self, **kwargs):
+        return None
+
+    async def submit_tool_output(self, **kwargs):
+        self.outputs.append(kwargs)
+
+
+class _Harness(ScratchpadMixin):
+    def __init__(self):
+        self._native_exec = _NativeExec()
+        self._scratch_pad_thread = None
+
+
+def test_shared_read_uses_shared_data_but_worker_tool_result():
+    harness = _Harness()
+
+    async def exercise():
+        return [
+            event
+            async for event in harness.handle_read_scratchpad(
+                thread_id="thread_worker",
+                scratch_pad_thread="thread_shared",
+                run_id="run_test",
+                assistant_id="asst_worker",
+                arguments_dict={},
+                tool_call_id="call_read",
+                decision=None,
+            )
+        ]
+
+    asyncio.run(exercise())
+
+    assert harness._native_exec.scratchpad_svc.read_thread == "thread_shared"
+
+    output = harness._native_exec.outputs[0]
+    assert output["thread_id"] == "thread_worker"
+    assert output["tool_call_id"] == "call_read"
+
+
+def test_shared_append_uses_shared_data_but_worker_tool_result():
+    harness = _Harness()
+
+    async def exercise():
+        return [
+            event
+            async for event in harness.handle_append_scratchpad(
+                thread_id="thread_worker",
+                scratch_pad_thread="thread_shared",
+                run_id="run_test",
+                assistant_id="asst_worker",
+                arguments_dict={"note": "worker note"},
+                tool_call_id="call_append",
+                decision=None,
+            )
+        ]
+
+    asyncio.run(exercise())
+
+    assert harness._native_exec.scratchpad_svc.append_thread == "thread_shared"
+
+    output = harness._native_exec.outputs[0]
+    assert output["thread_id"] == "thread_worker"
+    assert output["tool_call_id"] == "call_append"
+
+
+def test_research_worker_assistant_declaration_passes_namespace_guard():
+    # This is the exact boundary that failed in integration.
+    model = AssistantCreate(
+        name="test-research-worker",
+        model="test-model",
+        tools=RESEARCH_WORKER_ASSISTANT_TOOLS,
+        web_access=True,
+    )
+
+    assert model.tools == RESEARCH_WORKER_ASSISTANT_TOOLS
+
+    assert {"type": "web_search"} in RESEARCH_WORKER_ASSISTANT_TOOLS
+
+    declared_function_names = {
+        tool["function"]["name"]
+        for tool in RESEARCH_WORKER_ASSISTANT_TOOLS
+        if isinstance(tool, dict) and isinstance(tool.get("function"), dict)
+    }
+
+    assert {
+        "read_scratchpad",
+        "append_scratchpad",
+    }.issubset(declared_function_names)
+
+    # Expanded platform function names must NOT cross the persisted
+    # AssistantCreate custom-function namespace.
+    assert not {
+        "perform_web_search",
+        "read_web_page",
+        "search_web_page",
+        "scroll_web_page",
+    }.intersection(declared_function_names)
+
+
+def test_runtime_worker_registry_still_contains_expanded_web_tools():
+    names = {
+        tool["function"]["name"]
+        for tool in WORKER_TOOLS
+        if isinstance(tool, dict) and isinstance(tool.get("function"), dict)
+    }
+
+    assert {
+        "perform_web_search",
+        "read_web_page",
+        "search_web_page",
+        "scroll_web_page",
+        "read_scratchpad",
+        "append_scratchpad",
+    }.issubset(names)
+
+
+def test_ephemeral_worker_uses_assistant_capability_declaration():
+    source = inspect.getsource(AssistantManager.create_ephemeral_worker_assistant)
+
+    assert "tools=RESEARCH_WORKER_ASSISTANT_TOOLS" in source
+    assert "tools=WORKER_TOOLS" not in source
+    assert "tools=JUNIOR_ENGINEER_TOOLS" not in source
+
+
+def test_research_worker_has_multi_turn_budget():
+    assert RESEARCH_WORKER_MAX_TURNS > 1
+    assert RESEARCH_WORKER_MAX_TURNS == 8
+
+    source = inspect.getsource(AssistantManager.create_ephemeral_worker_assistant)
+
+    assert "max_turns=RESEARCH_WORKER_MAX_TURNS" in source
