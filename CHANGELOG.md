@@ -1,3 +1,10 @@
+## [1.59.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.59.0...v1.59.1) (2026-09-29)
+
+
+### Bug Fixes
+
+* **core:** remove obsolete unit setup and repair delegated model import ([e9964b5](https://github.com/project-david-ai/projectdavid-core/commit/e9964b5571e98fb698380ca6b1b3b23f57dc3446))
+
 # [1.59.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.58.0...v1.59.0) (2026-09-29)
 
 
