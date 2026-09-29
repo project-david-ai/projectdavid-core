@@ -1,3 +1,10 @@
+## [1.55.4](https://github.com/project-david-ai/projectdavid-core/compare/v1.55.3...v1.55.4) (2026-09-29)
+
+
+### Bug Fixes
+
+* inherit parent inference model for research workers ([9986151](https://github.com/project-david-ai/projectdavid-core/commit/99861515bb8ad465a1cf5b514a0896dadb6c1abd))
+
 ## [1.55.3](https://github.com/project-david-ai/projectdavid-core/compare/v1.55.2...v1.55.3) (2026-09-29)
 
 
