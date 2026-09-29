@@ -73,10 +73,13 @@ class ScratchpadMixin:
         scratch_pad_thread: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
 
-        if scratch_pad_thread:
-            thread_id = scratch_pad_thread
+        # Keep provider/tool-call correlation on the originating
+        # conversation thread while scratchpad state may live on
+        # a separate shared data-plane thread.
+        conversation_thread_id = thread_id
+        scratchpad_thread_id = scratch_pad_thread or thread_id
 
-        LOG.info(f"SCRATCHPAD ▸ scratchpad thread id: {scratch_pad_thread}")
+        LOG.info(f"SCRATCHPAD ▸ scratchpad thread id: {scratchpad_thread_id}")
 
         # Injecting assistant_id into the human-readable logs
         # so you can easily track Worker vs Supervisor activity
@@ -133,7 +136,7 @@ class ScratchpadMixin:
                 await self._native_exec.submit_failed_tool_execution(
                     tool_name=tool_name,
                     run_id=run_id,
-                    thread_id=thread_id,
+                    thread_id=conversation_thread_id,
                     assistant_id=assistant_id,
                     tool_call_id=tool_call_id,
                     error_message=f"Error: {err}",
@@ -155,16 +158,16 @@ class ScratchpadMixin:
             # 2. Perform Data Plane operations via native ScratchpadService (Direct await, NO to_thread)
             if operation_type == "read":
                 res = await self._native_exec.scratchpad_svc.get_formatted_view(
-                    thread_id=thread_id,
+                    thread_id=scratchpad_thread_id,
                 )
             elif operation_type == "update":
                 res = await self._native_exec.scratchpad_svc.update_content(
-                    thread_id=thread_id,
+                    thread_id=scratchpad_thread_id,
                     content=arguments_dict.get("content"),
                 )
             else:
                 res = await self._native_exec.scratchpad_svc.append_note(
-                    thread_id=thread_id,
+                    thread_id=scratchpad_thread_id,
                     note=arguments_dict.get("note"),
                 )
 
@@ -207,7 +210,7 @@ class ScratchpadMixin:
             # 4. Submit Output natively
             content_str = res if isinstance(res, str) else json.dumps(res)
             await self._native_exec.submit_tool_output(
-                thread_id=thread_id,
+                thread_id=conversation_thread_id,
                 assistant_id=assistant_id,
                 tool_call_id=tool_call_id,
                 content=content_str,
@@ -233,7 +236,7 @@ class ScratchpadMixin:
                 )
 
             await self._native_exec.submit_tool_output(
-                thread_id=thread_id,
+                thread_id=conversation_thread_id,
                 assistant_id=assistant_id,
                 tool_call_id=tool_call_id,
                 content=f"Error: {e}",

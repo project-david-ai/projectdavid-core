@@ -182,19 +182,45 @@ class ConversationTruncator:
     @staticmethod
     def merge_consecutive_messages(conversation: List[dict]) -> List[dict]:
         """
-        Merge back-to-back messages from the same role.
+        Merge back-to-back plain messages from the same role.
+
+        Structured tool-protocol messages are atomic and must never be
+        coalesced. In particular:
+
+        - each ``role="tool"`` message owns exactly one ``tool_call_id``;
+        - assistant messages carrying ``tool_calls`` define provider call
+          boundaries;
+        - any message carrying ``tool_call_id`` retains that correlation
+          identity.
 
         Handles multimodal (list) content correctly via _merge_content().
         """
         if not conversation:
             return conversation
 
+        def _is_protocol_message(message: dict) -> bool:
+            return (
+                message.get("role") == "tool"
+                or bool(message.get("tool_calls"))
+                or message.get("tool_call_id") is not None
+            )
+
         merged = [dict(conversation[0])]  # shallow copy so we don't mutate original
 
         for msg in conversation[1:]:
             last = merged[-1]
-            if msg["role"] == last["role"]:
-                last["content"] = _merge_content(last["content"], msg["content"])
+
+            can_merge = (
+                msg.get("role") == last.get("role")
+                and not _is_protocol_message(last)
+                and not _is_protocol_message(msg)
+            )
+
+            if can_merge:
+                last["content"] = _merge_content(
+                    last.get("content"),
+                    msg.get("content"),
+                )
             else:
                 merged.append(dict(msg))
 

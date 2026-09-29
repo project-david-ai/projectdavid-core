@@ -8,6 +8,10 @@ from entities_api.platform_tools.tool_reigistry.junior_network_engineer import (
 from entities_api.platform_tools.tool_reigistry.research_supervisor import (
     SUPERVISOR_TOOLS,
 )
+from entities_api.platform_tools.tool_reigistry.research_worker import (
+    RESEARCH_WORKER_ASSISTANT_TOOLS,
+    RESEARCH_WORKER_MAX_TURNS,
+)
 from entities_api.platform_tools.tool_reigistry.senior_network_engineer import (
     SENIOR_ENGINEER_TOOLS,
 )
@@ -97,9 +101,10 @@ class AssistantManager:
             user_id=user_id,
             name=f"worker_{uuid.uuid4().hex[:8]}",
             description="Ephemeral research worker",
-            tools=JUNIOR_ENGINEER_TOOLS,
+            tools=RESEARCH_WORKER_ASSISTANT_TOOLS,
             web_access=True,
             deep_research=False,
+            max_turns=RESEARCH_WORKER_MAX_TURNS,
             meta_data={"is_research_worker": "true"},
         )
 
