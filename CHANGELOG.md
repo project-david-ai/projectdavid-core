@@ -1,3 +1,16 @@
+# [1.56.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.55.3...v1.56.0) (2026-09-29)
+
+
+### Bug Fixes
+
+* inherit parent inference model for research workers ([31533f4](https://github.com/project-david-ai/projectdavid-core/commit/31533f41f4029c551533de4c4ac1bbe0e41a866e))
+
+
+### Features
+
+* **db:** add tenant-owned scratchpad resource ([9710ac6](https://github.com/project-david-ai/projectdavid-core/commit/9710ac61dd88664d9e7117b6fc1d314dce6778cc))
+* **scratchpads:** add tenant-owned SQL resource service ([de089f0](https://github.com/project-david-ai/projectdavid-core/commit/de089f0e4bbea9a8cf3d07d4f336bf99e856ae76))
+
 ## [1.55.3](https://github.com/project-david-ai/projectdavid-core/compare/v1.55.2...v1.55.3) (2026-09-29)
 
 
