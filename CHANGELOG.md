@@ -1,3 +1,10 @@
+# [1.58.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.57.0...v1.58.0) (2026-09-29)
+
+
+### Features
+
+* **scratchpads:** add first-class REST API ([09d05fc](https://github.com/project-david-ai/projectdavid-core/commit/09d05fc9c4de24b41c0756d9c36cf0b770efc16d))
+
 # [1.57.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.56.0...v1.57.0) (2026-09-29)
 
 
