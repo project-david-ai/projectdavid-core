@@ -1,3 +1,10 @@
+# [1.59.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.58.0...v1.59.0) (2026-09-29)
+
+
+### Features
+
+* **scratchpads:** add platform tool capability ([eae3ddd](https://github.com/project-david-ai/projectdavid-core/commit/eae3ddd58f1fe25acf2a043197b1427f68243cf4))
+
 # [1.58.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.57.0...v1.58.0) (2026-09-29)
 
 
