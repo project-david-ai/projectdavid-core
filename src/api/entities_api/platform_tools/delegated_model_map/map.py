@@ -10,7 +10,7 @@
 # together-ai/openai/gpt-oss-120b
 
 DELEGATED_DEEP_SEARCH_MAP = {
-    "together-ai": "together-ai/Qwen/Qwen3-Next-80B-A3B-Instruct-FP8",
+    "together-ai": "together-ai/moonshotai/Kimi-K3",
     "hyperbolic": "hyperbolic/Qwen/Qwen3-Coder-480B-A35B-Instruct",
     "fireworks": "fireworks/accounts/fireworks/models/deepseek-r1",
     "openai": "openai/o1-preview",

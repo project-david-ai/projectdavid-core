@@ -2,11 +2,11 @@ import asyncio
 import uuid
 from typing import Any, Optional
 
+from entities_api.platform_tools.definitions.delegation.delegate_research_task import (
+    delegate_research_task,
+)
 from entities_api.platform_tools.tool_reigistry.junior_network_engineer import (
     JUNIOR_ENGINEER_TOOLS,
-)
-from entities_api.platform_tools.tool_reigistry.research_supervisor import (
-    SUPERVISOR_TOOLS,
 )
 from entities_api.platform_tools.tool_reigistry.research_worker import (
     RESEARCH_WORKER_ASSISTANT_TOOLS,
@@ -59,7 +59,7 @@ class AssistantManager:
             user_id=user_id,
             name=name,
             model=model,
-            tools=SUPERVISOR_TOOLS,
+            tools=[{"type": "scratchpad"}],
             web_access=True,
         )
 
@@ -77,7 +77,7 @@ class AssistantManager:
             user_id=user_id,
             name=f"worker_{uuid.uuid4().hex[:8]}",
             description="Temp research supervisor",
-            tools=SUPERVISOR_TOOLS,
+            tools=[{"type": "scratchpad"}, delegate_research_task],
             deep_research=True,
         )
 
@@ -101,7 +101,10 @@ class AssistantManager:
             user_id=user_id,
             name=f"worker_{uuid.uuid4().hex[:8]}",
             description="Ephemeral research worker",
-            tools=RESEARCH_WORKER_ASSISTANT_TOOLS,
+            tools=[
+                {"type": "web_search"},
+                {"type": "scratchpad"},
+            ],
             web_access=True,
             deep_research=False,
             max_turns=RESEARCH_WORKER_MAX_TURNS,
