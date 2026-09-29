@@ -1,3 +1,11 @@
+## [1.55.3](https://github.com/project-david-ai/projectdavid-core/compare/v1.55.2...v1.55.3) (2026-09-29)
+
+
+### Bug Fixes
+
+* harden deep research worker execution lifecycle ([4148ad3](https://github.com/project-david-ai/projectdavid-core/commit/4148ad3f07b91ee00422e20ce323168812a74f68))
+* make message persistence ordering deterministic ([2214adc](https://github.com/project-david-ai/projectdavid-core/commit/2214adcfeb6cc49c2ef2b207b4fa9c756bdabbd6))
+
 ## [1.55.2](https://github.com/project-david-ai/projectdavid-core/compare/v1.55.1...v1.55.2) (2026-09-28)
 
 
