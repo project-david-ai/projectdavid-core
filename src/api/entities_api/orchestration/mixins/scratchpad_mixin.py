@@ -59,6 +59,7 @@ class ScratchpadMixin:
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._scratch_pad_thread: Optional[str] = None
+        self._scratchpad_id: Optional[str] = None
 
     async def _execute_scratchpad_logic(
         self,
@@ -70,6 +71,7 @@ class ScratchpadMixin:
         arguments_dict: Dict[str, Any],
         tool_call_id: str,
         decision: Any,
+        scratchpad_id: Optional[str] = None,
         scratch_pad_thread: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
 
@@ -169,20 +171,22 @@ class ScratchpadMixin:
 
                 raise RuntimeError(f"Run {run_id} has no owning user.")
 
-            # 3. Resolve the canonical Scratchpad resource.
+            # 3. Prefer the canonical Scratchpad resource ID.
             #
-            # scratchpad_thread_id remains the compatibility locator for
-            # current Supervisor/Worker orchestration. The service resolves
-            # it to the tenant-owned first-class Scratchpad and performs any
-            # one-time legacy Redis migration before returning the resource.
-            scratchpad = (
-                await self._native_exec.scratchpad_svc.resolve_scratchpad_for_thread(
+            # Newly migrated orchestration paths pass scratchpad_id directly.
+            # The thread locator remains a temporary compatibility fallback
+            # for older/in-flight runs that do not yet carry the resource ID.
+            if not scratchpad_id:
+                scratchpad = await self._native_exec.scratchpad_svc.resolve_scratchpad_for_thread(
                     scratchpad_thread_id,
                     user_id=user_id,
                 )
-            )
 
-            scratchpad_id = scratchpad.id
+                scratchpad_id = scratchpad.id
+
+            # Cache the resolved/propagated resource identity for this
+            # orchestrator/worker instance.
+            self._scratchpad_id = scratchpad_id
 
             LOG.info(
                 "SCRATCHPAD ? resource id: %s",
@@ -190,6 +194,7 @@ class ScratchpadMixin:
             )
 
             # 4. Execute against the first-class Scratchpad API by ID.
+
             #
             # Preserve the historical model-facing tool-output strings for
             # update/append. Only the internal persistence path changes.
