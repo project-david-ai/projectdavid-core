@@ -283,7 +283,7 @@ class MessageService:
             messages = (
                 db.query(Message)
                 .filter(Message.thread_id == thread_id)
-                .order_by(Message.created_at.asc())
+                .order_by(Message.sequence_no.asc())
                 .all()
             )
 
@@ -311,7 +311,7 @@ class MessageService:
             messages = (
                 db.query(Message)
                 .filter(Message.thread_id == thread_id)
-                .order_by(Message.created_at.asc())
+                .order_by(Message.sequence_no.asc())
                 .all()
             )
 
@@ -421,9 +421,9 @@ class MessageService:
             self._assert_thread_owner(db, thread_id, user_id)
             query = db.query(Message).filter(Message.thread_id == thread_id)
             query = (
-                query.order_by(Message.created_at.asc())
+                query.order_by(Message.sequence_no.asc())
                 if order == "asc"
-                else query.order_by(Message.created_at.desc())
+                else query.order_by(Message.sequence_no.desc())
             )
             db_messages = query.limit(limit).all()
             messages = [
@@ -492,7 +492,7 @@ class MessageService:
             messages = (
                 db.query(Message)
                 .filter(Message.thread_id == thread_id)
-                .order_by(Message.created_at.asc())
+                .order_by(Message.sequence_no.asc())
                 .all()
             )
             return self._format_messages_from_db(
