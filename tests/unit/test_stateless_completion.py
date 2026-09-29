@@ -382,11 +382,19 @@ def test_stateful_buffered_completion_retains_existing_processing_path():
     selector = MagicMock()
     selector.select_provider.return_value = (Handler(), "provider/model")
 
+    authenticated_key = SimpleNamespace(user_id="user_1")
+    get_api_key = AsyncMock(return_value=authenticated_key)
+
     with (
         patch.object(
             inference_router,
             "NativeExecutionService",
             return_value=native,
+        ),
+        patch.object(
+            inference_router,
+            "get_api_key",
+            get_api_key,
         ),
         patch.object(inference_router, "InferenceArbiter", return_value=MagicMock()),
         patch.object(
@@ -395,7 +403,13 @@ def test_stateful_buffered_completion_retains_existing_processing_path():
             return_value=selector,
         ),
     ):
-        response = asyncio.run(inference_router.completions(request, redis=MagicMock()))
+        response = asyncio.run(
+            inference_router.completions(
+                request,
+                redis=MagicMock(),
+                project_api_key="project-key",
+            )
+        )
 
     body = _decode_response(response)
     assert body == {
@@ -406,6 +420,8 @@ def test_stateful_buffered_completion_retains_existing_processing_path():
         "elapsed_s": body["elapsed_s"],
     }
     native.retrieve_run.assert_awaited_once_with("run_1")
+    get_api_key.assert_awaited_once()
+    assert get_api_key.await_args.kwargs["api_key_header"] == "project-key"
     native.assert_assistant_access.assert_awaited_once_with(
         assistant_id="assistant_1",
         user_id="user_1",
