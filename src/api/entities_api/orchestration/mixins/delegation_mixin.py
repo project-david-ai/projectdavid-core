@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import json
@@ -30,44 +30,44 @@ class DelegationMixin:
     assistants running on isolated threads and runs.
 
     Owns:
-        __init__()                        — cooperative, calls super().__init__().
+        __init__()                         cooperative, calls super().__init__().
                                             Only mixin in the stack with __init__
                                             participation. Initialises delegation
                                             state attributes.
-        _stream_sync_generator()          — bridges a blocking sync generator into
+        _stream_sync_generator()           bridges a blocking sync generator into
                                             an async generator via a daemon thread
                                             and asyncio.Queue
-        _wait_for_run_completion()        — async poller with configurable timeout
-        _ephemeral_clean_up()             — deletes ephemeral assistant and
+        _wait_for_run_completion()         async poller with configurable timeout
+        _ephemeral_clean_up()              deletes ephemeral assistant and
                                             optionally the ephemeral thread
-        _capture_tool_outputs()           — async context manager that intercepts
+        _capture_tool_outputs()            async context manager that intercepts
                                             submit_tool_output calls into a dict
         create_ephemeral_worker_assistant()
         create_ephemeral_junior_engineer()
         create_ephemeral_thread()
         create_ephemeral_message()
-        create_ephemeral_run()            — factory helpers, all require
+        create_ephemeral_run()             factory helpers, all require
                                             self._run_user_id to be set first
-        _fetch_worker_final_report()      — fallback message retrieval, retained
+        _fetch_worker_final_report()       fallback message retrieval, retained
                                             for other components
-        handle_delegate_research_task()   — async generator, full research
+        handle_delegate_research_task()    async generator, full research
                                             delegation lifecycle
-        handle_delegate_engineer_task()   — async generator (implied by symmetry)
+        handle_delegate_engineer_task()    async generator (implied by symmetry)
 
     Requires on self:
-        self._native_exec                 — NativeExecMixin
-        self._run_user_id                 — set in QwenBaseWorker.stream() before
+        self._native_exec                  NativeExecMixin
+        self._run_user_id                  set in QwenBaseWorker.stream() before
                                             delegation is triggered
-        self.submit_tool_output()         — ConsumerToolHandlersMixin
-        self.project_david_client         — ServiceRegistryMixin, used for
+        self.submit_tool_output()          ConsumerToolHandlersMixin
+        self.project_david_client          ServiceRegistryMixin, used for
                                             synchronous_inference_stream
-        self._assistant_manager           — lazy property, self-initialising
+        self._assistant_manager            lazy property, self-initialising
                                             via AssistantManager()
 
     Instance state (set in __init__):
-        self._delete_ephemeral_thread     — bool, controls thread cleanup
-        self._research_worker_thread      — ephemeral thread id for research flow
-        self._run_user_id                 — owner resolved from run at stream time
+        self._delete_ephemeral_thread      bool, controls thread cleanup
+        self._research_worker_thread       ephemeral thread id for research flow
+        self._run_user_id                  owner resolved from run at stream time
 
     Contract:
         DelegationMixin is the only mixin in _ProviderMixins that calls
@@ -75,10 +75,10 @@ class DelegationMixin:
         Do not add __init__ to other mixins without updating the _ProviderMixins
         and OrchestratorCore contract comments.
         All factory methods guard on self._run_user_id via getattr and raise
-        RuntimeError explicitly — this is the correct pattern for cross-mixin
+        RuntimeError explicitly  this is the correct pattern for cross-mixin
         state access and should be followed in any new factory methods added here.
         The api_key scrub at the end of handle_delegate_research_task()
-        (meta_data={"api_key": "***"}) is a security requirement — do not remove.
+        (meta_data={"api_key": "***"}) is a security requirement  do not remove.
     """
 
     def __init__(self, *args, **kwargs):
@@ -127,7 +127,7 @@ class DelegationMixin:
                     loop.call_soon_threadsafe(queue.put_nowait, item)
                 loop.call_soon_threadsafe(queue.put_nowait, None)
             except Exception as e:
-                LOG.error(f"🧵[THREAD-ERR] {e}")
+                LOG.error(f"[THREAD-ERR] {e}")
                 loop.call_soon_threadsafe(queue.put_nowait, e)
 
         threading.Thread(target=producer, daemon=True).start()
@@ -152,7 +152,7 @@ class DelegationMixin:
         poll_interval: float = _WORKER_POLL_INTERVAL,
     ) -> str:
         LOG.info(
-            "⏳ [DELEGATE] Waiting for worker run %s to complete (timeout=%ss)...",
+            " [DELEGATE] Waiting for worker run %s to complete (timeout=%ss)...",
             run_id,
             timeout,
         )
@@ -166,23 +166,23 @@ class DelegationMixin:
                     else str(run.status)
                 )
                 LOG.critical(
-                    "██████ [DELEGATE_POLL] run_id=%s status=%s elapsed=%.1fs ██████",
+                    " [DELEGATE_POLL] run_id=%s status=%s elapsed=%.1fs ",
                     run_id,
                     status_value,
                     elapsed,
                 )
                 if status_value in _TERMINAL_RUN_STATES:
                     LOG.critical(
-                        "██████ [DELEGATE_POLL] run_id=%s reached terminal state=%s ██████",
+                        " [DELEGATE_POLL] run_id=%s reached terminal state=%s ",
                         run_id,
                         status_value,
                     )
                     return status_value
             except Exception as e:
-                LOG.warning("⚠️[DELEGATE_POLL] Error polling run %s: %s", run_id, e)
+                LOG.warning("[DELEGATE_POLL] Error polling run %s: %s", run_id, e)
             await asyncio.sleep(poll_interval)
             elapsed += poll_interval
-        LOG.error("❌[DELEGATE_POLL] run_id=%s timed out after %ss.", run_id, timeout)
+        LOG.error("[DELEGATE_POLL] run_id=%s timed out after %ss.", run_id, timeout)
         raise asyncio.TimeoutError(
             f"Worker run {run_id} did not complete within {timeout}s"
         )
@@ -193,7 +193,7 @@ class DelegationMixin:
     async def _ephemeral_clean_up(
         self, assistant_id: str, thread_id: Optional[str], delete_thread: bool = False
     ):
-        LOG.info(f"🧹[CLEANUP] Assistant: {assistant_id} | Thread: {thread_id}")
+        LOG.info(f"[CLEANUP] Assistant: {assistant_id} | Thread: {thread_id}")
 
         user_id = getattr(self, "_batfish_owner_user_id", None)
 
@@ -201,13 +201,13 @@ class DelegationMixin:
             try:
                 if not user_id:
                     LOG.warning(
-                        "⚠️ [CLEANUP] Cannot delete thread %s — user_id not resolved.",
+                        " [CLEANUP] Cannot delete thread %s  user_id not resolved.",
                         thread_id,
                     )
                 else:
                     await self._native_exec.delete_thread(thread_id, user_id=user_id)
             except Exception as e:
-                LOG.warning(f"⚠️[CLEANUP] Thread delete failed: {e}")
+                LOG.warning(f"[CLEANUP] Thread delete failed: {e}")
 
         if user_id and assistant_id:
             try:
@@ -215,7 +215,7 @@ class DelegationMixin:
                     assistant_id=assistant_id, user_id=user_id, permanent=True
                 )
             except Exception as e:
-                LOG.warning(f"⚠️ [CLEANUP] Assistant delete failed: {e}")
+                LOG.warning(f" [CLEANUP] Assistant delete failed: {e}")
 
     @asynccontextmanager
     async def _capture_tool_outputs(self, capture_dict: Dict[str, str]):
@@ -255,7 +255,7 @@ class DelegationMixin:
         if not user_id:
             raise RuntimeError(
                 "create_ephemeral_worker_assistant: _batfish_owner_user_id has not been "
-                "resolved yet — ensure it is set before calling this method."
+                "resolved yet  ensure it is set before calling this method."
             )
         return await self._assistant_manager.create_ephemeral_worker_assistant(
             user_id=user_id
@@ -266,7 +266,7 @@ class DelegationMixin:
         if not user_id:
             raise RuntimeError(
                 "create_ephemeral_junior_engineer: _batfish_owner_user_id has not been "
-                "resolved yet — ensure it is set before calling this method."
+                "resolved yet  ensure it is set before calling this method."
             )
         return await self._assistant_manager.create_ephemeral_junior_engineer(
             user_id=user_id
@@ -277,7 +277,7 @@ class DelegationMixin:
         if not user_id:
             raise RuntimeError(
                 "create_ephemeral_thread: _batfish_owner_user_id has not been "
-                "resolved yet — ensure it is set before calling this method."
+                "resolved yet  ensure it is set before calling this method."
             )
         return await self._native_exec.create_thread(user_id=user_id)
 
@@ -295,7 +295,7 @@ class DelegationMixin:
         if not user_id:
             raise RuntimeError(
                 "create_ephemeral_run: _batfish_owner_user_id has not been "
-                "resolved yet — ensure it is set before calling this method."
+                "resolved yet  ensure it is set before calling this method."
             )
         return await self._native_exec.create_run(
             assistant_id=assistant_id,
@@ -336,7 +336,7 @@ class DelegationMixin:
 
                     return stripped
             except Exception as e:
-                LOG.exception("❌ [WORKER_FETCH] Error: %s", e)
+                LOG.exception(" [WORKER_FETCH] Error: %s", e)
             if attempt < max_attempts:
                 await asyncio.sleep(retry_delay)
 
@@ -350,7 +350,7 @@ class DelegationMixin:
     ) -> AsyncGenerator[str, None]:
 
         self._scratch_pad_thread = thread_id
-        LOG.info(f"🔄[DELEGATE] STARTING. Run: {run_id}")
+        LOG.info(f"[DELEGATE] STARTING. Run: {run_id}")
 
         if isinstance(arguments_dict, str):
             try:
@@ -374,7 +374,7 @@ class DelegationMixin:
                 decision=decision,
             )
         except Exception as e:
-            LOG.error(f"❌[DELEGATE] Action creation failed: {e}")
+            LOG.error(f"[DELEGATE] Action creation failed: {e}")
 
         ephemeral_worker = None
         ephemeral_thread = None
@@ -391,7 +391,7 @@ class DelegationMixin:
                 self._batfish_owner_user_id = origin_user_id
 
             LOG.info(
-                "RESEARCH_DELEGATE ▸ origin_user_id=%s | scratch_pad_thread=%s",
+                "RESEARCH_DELEGATE  origin_user_id=%s | scratch_pad_thread=%s",
                 origin_user_id,
                 self._scratch_pad_thread,
             )
@@ -401,8 +401,8 @@ class DelegationMixin:
             self._research_worker_thread = ephemeral_thread
 
             LOG.critical(
-                "██████ [WORKER_CREATED] id=%s name=%s deep_research=%s "
-                "web_access=%s meta_data=%s ██████",
+                " [WORKER_CREATED] id=%s name=%s deep_research=%s "
+                "web_access=%s meta_data=%s ",
                 ephemeral_worker.id,
                 getattr(ephemeral_worker, "name", "?"),
                 getattr(ephemeral_worker, "deep_research", "?"),
@@ -413,17 +413,17 @@ class DelegationMixin:
             prompt = (
                 f"TASK: {args.get('task')}\n"
                 f"REQ: {args.get('requirements')}\n\n"
-                f"⚠️ MANDATORY EXECUTION RULES — NO EXCEPTIONS:\n"
+                f" MANDATORY EXECUTION RULES  NO EXCEPTIONS:\n"
                 f"1. Your FIRST action MUST be tool calls: fire `read_scratchpad()` "
                 f"AND `perform_web_search()` simultaneously. Do NOT reason first.\n"
                 f"2. Your training knowledge is NOT an acceptable source. "
                 f"Every fact MUST come from a live URL retrieved in this session.\n"
                 f"3. You MUST call `append_scratchpad` with your verified result "
                 f"BEFORE sending any text reply.\n"
-                f"4. A ✅ [VERIFIED] entry requires an exact value AND a live source URL. "
+                f"4. A  [VERIFIED] entry requires an exact value AND a live source URL. "
                 f"No URL = no verification = task failure.\n"
                 f"5. Sending a confirmation without having called `append_scratchpad` "
-                f"means you have failed. The supervisor cannot see your text — "
+                f"means you have failed. The supervisor cannot see your text  "
                 f"only the scratchpad."
             )
 
@@ -451,19 +451,36 @@ class DelegationMixin:
             inference_api_key = (
                 run_obj.meta_data.get("api_key") if run_obj.meta_data else None
             )
-            inference_model = getattr(self, "_inference_model", None)
+            project_david_api_key = (
+                run_obj.meta_data.get("project_david_api_key")
+                if run_obj.meta_data
+                else None
+            )
+            inference_model = (
+                run_obj.meta_data.get("delegated_model") if run_obj.meta_data else None
+            )
 
             if not inference_api_key:
                 raise RuntimeError(
-                    f"DELEGATE ABORT: No api_key found in run {run_id} meta_data."
+                    f"DELEGATE ABORT: No provider api_key found in run {run_id} meta_data."
+                )
+
+            if not project_david_api_key:
+                raise RuntimeError(
+                    f"DELEGATE ABORT: No Project David API key found in run {run_id} meta_data."
                 )
 
             if not inference_model:
                 raise RuntimeError(
-                    f"DELEGATE ABORT: Parent inference model is unavailable for run {run_id}."
+                    f"DELEGATE ABORT: No delegated model found in run {run_id} meta_data."
                 )
 
-            sync_stream = self.project_david_client.synchronous_inference_stream
+            user_project_david_client = self._create_project_david_client(
+                api_key=project_david_api_key,
+                base_url=os.getenv("ASSISTANTS_BASE_URL"),
+            )
+
+            sync_stream = user_project_david_client.synchronous_inference_stream
             sync_stream.setup(
                 thread_id=ephemeral_thread.id,
                 assistant_id=ephemeral_worker.id,
@@ -473,7 +490,7 @@ class DelegationMixin:
             )
 
             LOG.critical(
-                "🎬 WORKER STREAM STARTING - worker=%s thread=%s run=%s model=%s",
+                " WORKER STREAM STARTING - worker=%s thread=%s run=%s model=%s",
                 ephemeral_worker.id,
                 ephemeral_thread.id,
                 ephemeral_run.id,
@@ -493,13 +510,13 @@ class DelegationMixin:
                 event_type = type(event).__name__
 
                 LOG.critical(
-                    f"👀 [RAW EVENT DUMP] Event {raw_event_count} | Type: {event_type} | Payload: {getattr(event, 'model_dump', lambda: str(event))()}"
+                    f" [RAW EVENT DUMP] Event {raw_event_count} | Type: {event_type} | Payload: {getattr(event, 'model_dump', lambda: str(event))()}"
                 )
 
-                # ✅ INTERCEPT: ScratchpadEvent
+                #  INTERCEPT: ScratchpadEvent
                 if isinstance(event, ScratchpadEvent):
                     LOG.critical(
-                        f"📝 [WORKER SCRATCHPAD EVENT] Action: {event.operation} | State: {event.state} | Entry: {event.entry}"
+                        f" [WORKER SCRATCHPAD EVENT] Action: {event.operation} | State: {event.state} | Entry: {event.entry}"
                     )
 
                     payload = {
@@ -522,7 +539,7 @@ class DelegationMixin:
                     yield json.dumps(payload)
                     continue
 
-                # 🛑 GUARD 1: Status Events
+                #  GUARD 1: Status Events
                 guard1_triggered = (
                     hasattr(event, "tool")
                     or hasattr(event, "status")
@@ -576,7 +593,7 @@ class DelegationMixin:
                     continue
                 passed_guard1 += 1
 
-                # 🛑 GUARD 2: Tool Call Payload
+                #  GUARD 2: Tool Call Payload
                 guard2_triggered = getattr(event, "tool_calls", None) or getattr(
                     event, "function_call", None
                 )
@@ -591,7 +608,7 @@ class DelegationMixin:
                             name = getattr(func, "name", "unknown")
                             args = getattr(func, "arguments", "")
                             LOG.critical(
-                                f"🛠️[WORKER EXECUTES TOOL] Worker {ephemeral_worker.id} called: {name} | Args: {args}"
+                                f"[WORKER EXECUTES TOOL] Worker {ephemeral_worker.id} called: {name} | Args: {args}"
                             )
                     continue
                 passed_guard2 += 1
@@ -627,8 +644,8 @@ class DelegationMixin:
                     )
 
             LOG.critical(
-                "██████ [STREAM_SUMMARY] worker=%s | total_raw_events=%d | "
-                "passed_guard1=%d | passed_guard2=%d | captured_content_length=%d ██████",
+                " [STREAM_SUMMARY] worker=%s | total_raw_events=%d | "
+                "passed_guard1=%d | passed_guard2=%d | captured_content_length=%d ",
                 ephemeral_worker.id,
                 raw_event_count,
                 passed_guard1,
@@ -708,7 +725,7 @@ class DelegationMixin:
 
         except Exception as e:
             execution_had_error = True
-            LOG.error(f"❌[DELEGATE] Error: {e}", exc_info=True)
+            LOG.error(f"[DELEGATE] Error: {e}", exc_info=True)
             yield self._research_status(f"Error: {str(e)}", "error", run_id)
 
         finally:
@@ -719,12 +736,23 @@ class DelegationMixin:
                     self._delete_ephemeral_thread,
                 )
 
-                # -------------------------------------------------
-                # Scrub the users inference api key from the db
-                # -------------------------------------------------
-                await self._native_exec.update_run_fields(
-                    run_id, meta_data={"api_key": "***"}
-                )
+            # -------------------------------------------------
+            # Remove transient plaintext credentials from the
+            # parent run metadata after every delegation attempt,
+            # including failures before worker creation.
+            # Preserve delegated_model and other non-sensitive
+            # metadata.
+            # -------------------------------------------------
+            scrub_run = await self._native_exec.retrieve_run(run_id)
+            scrub_meta = dict(scrub_run.meta_data or {})
+
+            scrub_meta.pop("api_key", None)
+            scrub_meta.pop("project_david_api_key", None)
+
+            await self._native_exec.update_run_fields(
+                run_id,
+                meta_data=scrub_meta,
+            )
 
             yield self._research_status(
                 (

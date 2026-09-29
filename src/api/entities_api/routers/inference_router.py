@@ -213,6 +213,20 @@ async def completions(
         if not run:
             raise HTTPException(status_code=404, detail="Run not found.")
 
+        # Authenticate the Project David X-API-Key and bind it to the run owner
+        # before allowing the credential into delegated execution.
+        with SessionLocal() as db:
+            authenticated_key = await get_api_key(
+                api_key_header=project_api_key,
+                db=db,
+            )
+
+        if authenticated_key.user_id != run.user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="API key identity does not match the run owner.",
+            )
+
         if run.thread_id != stream_request.thread_id:
             raise HTTPException(
                 status_code=403,
@@ -267,6 +281,7 @@ async def completions(
             model=stream_request.model,
             stream_reasoning=False,
             api_key=stream_request.api_key,
+            project_david_api_key=project_api_key,
         ):
             yield chunk
 

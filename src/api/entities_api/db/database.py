@@ -47,7 +47,8 @@ SPECIAL_DB_RUNTIME_URL = resolve_special_db_runtime_url(SPECIAL_DB_URL)
 # 1. The ONE configured main engine for the entire application
 engine = create_engine(
     DATABASE_URL,
-    echo=True,
+    echo=False,
+    hide_parameters=True,
     pool_size=20,
     max_overflow=40,
     pool_timeout=30,
@@ -58,7 +59,8 @@ engine = create_engine(
 special_engine = (
     create_engine(
         SPECIAL_DB_RUNTIME_URL,
-        echo=True,
+        echo=False,
+        hide_parameters=True,
         pool_size=10,
         max_overflow=20,
         pool_timeout=30,

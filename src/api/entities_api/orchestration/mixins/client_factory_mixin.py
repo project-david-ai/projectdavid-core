@@ -37,6 +37,21 @@ class ClientFactoryMixin:
             LOG.error("Project-David client init failed: %s", exc, exc_info=True)
             raise
 
+    def _create_project_david_client(
+        self,
+        *,
+        api_key: str,
+        base_url: str,
+    ) -> Entity:
+        """Create a transient, non-cached Project David SDK client."""
+        if not api_key or not base_url:
+            raise RuntimeError("api_key + base_url required for Entity client")
+
+        return Entity(
+            api_key=api_key,
+            base_url=base_url,
+        )
+
     @lru_cache(maxsize=32)
     def _get_unified_client(
         self, *, api_key: Optional[str], base_url: Optional[str]

@@ -1,4 +1,4 @@
-# src/api/entities_api/orchestration/workers/base_workers/qwen_base.py
+﻿# src/api/entities_api/orchestration/workers/base_workers/qwen_base.py
 from __future__ import annotations
 
 import asyncio
@@ -49,7 +49,7 @@ class QwenBaseWorker(
 
     Provider image limits:
         VISION_MAX_IMAGES controls how many images are passed per request.
-        Default is None (unlimited) — suitable for TogetherAI and vLLM.
+        Default is None (unlimited)  suitable for TogetherAI and vLLM.
         Hyperbolic subclasses must override this to 1:
 
             class HyperbolicQwenWorker(QwenBaseWorker):
@@ -165,27 +165,27 @@ class QwenBaseWorker(
         """
         Unified stream method supporting four distinct assistant roles:
 
-          1. SENIOR ENGINEER (Supervisor)  — is_engineer=True in assistant config
+          1. SENIOR ENGINEER (Supervisor)   is_engineer=True in assistant config
              Plans the incident, delegates to Junior Engineers, writes the Change Request.
              No web access. No SSH. Uses update_scratchpad / read_scratchpad / delegate_engineer_task.
 
-          2. RESEARCH SUPERVISOR           — deep_research=True in assistant config
+          2. RESEARCH SUPERVISOR            deep_research=True in assistant config
              Plans the research, delegates to Research Workers. No web access.
 
-          3. RESEARCH WORKER               — is_research_worker=True in assistant config
+          3. RESEARCH WORKER                is_research_worker=True in assistant config
              Browses the web, appends verified facts to the shared scratchpad.
              Web access enabled. Used exclusively by the deep research workflow.
 
-          4. JUNIOR ENGINEER               — junior_engineer=True in assistant config
+          4. JUNIOR ENGINEER                junior_engineer=True in assistant config
              SSHs to network devices, runs delegated command sets, appends raw evidence
              and flags to the shared scratchpad. No web access.
 
-          5. STANDARD ASSISTANT            — no role flags set
+          5. STANDARD ASSISTANT             no role flags set
              Normal user-facing assistant. Uses whatever is configured on the assistant record.
 
         Role flags are set via assistant metadata at ephemeral creation time and read here
         from the normalized assistant_config cache. Exactly one role is ever active per
-        stream invocation — the conflict resolution block enforces mutual exclusivity.
+        stream invocation  the conflict resolution block enforces mutual exclusivity.
         """
         # ------------------------------------------------------------------
         # Ephemeral supervisor / delegation state
@@ -195,7 +195,7 @@ class QwenBaseWorker(
         self._scratch_pad_thread = None
         stop_event = self.start_cancellation_monitor(run_id)
 
-        # Capture original assistant_id BEFORE any identity swap —
+        # Capture original assistant_id BEFORE any identity swap
         # the swap may mutate self.assistant_id to the supervisor's ID,
         # and we need the original for cleanup / fallback.
         _original_assistant_id = assistant_id
@@ -240,13 +240,13 @@ class QwenBaseWorker(
             agent_mode_setting = self.assistant_config.get("agent_mode", False)
             decision_telemetry = self.assistant_config.get("decision_telemetry", False)
 
-            # Default web_access from config — may be overridden by role resolution below
+            # Default web_access from config  may be overridden by role resolution below
             web_access_setting = self.assistant_config.get("web_access", False)
 
             # Extract from meta_data for dynamic ephemeral flags
             raw_meta = self.assistant_config.get("meta_data", {})
 
-            # Worker role flags — mutually exclusive, enforced below
+            # Worker role flags  mutually exclusive, enforced below
             is_worker_val = raw_meta.get(
                 "is_research_worker", raw_meta.get("research_worker_calling", False)
             )
@@ -277,9 +277,19 @@ class QwenBaseWorker(
                 web_access_setting = False
                 research_worker_setting = False
                 junior_engineer_setting = False
+                project_david_api_key = kwargs.get("project_david_api_key")
+                if not project_david_api_key:
+                    raise RuntimeError(
+                        "Deep Research requires the caller Project David API key."
+                    )
+
                 await self._native_exec.update_run_fields(
                     run_id,
-                    meta_data={"api_key": api_key},
+                    meta_data={
+                        "api_key": api_key,
+                        "project_david_api_key": project_david_api_key,
+                        "delegated_model": pre_mapped_model,
+                    },
                 )
 
             elif research_worker_setting:
@@ -291,12 +301,12 @@ class QwenBaseWorker(
                 research_worker_setting = False
 
             LOG.critical(
-                "██████[ROLE CONFIG] "
+                "[ROLE CONFIG] "
                 "SeniorEngineer=%s | "
                 "DeepResearch=%s | "
                 "ResearchWorker=%s | "
                 "JuniorEngineer=%s | "
-                "WebAccess=%s ██████",
+                "WebAccess=%s ",
                 self.is_engineer,
                 self.is_deep_research,
                 research_worker_setting,
@@ -323,14 +333,14 @@ class QwenBaseWorker(
                     self._scratch_pad_thread = meta_scratchpad
 
                 LOG.info(
-                    "STREAM ▸ Captured run_user_id=%s | batfish_owner=%s | scratch_pad_thread=%s",
+                    "STREAM  Captured run_user_id=%s | batfish_owner=%s | scratch_pad_thread=%s",
                     self._run_user_id,
                     self._batfish_owner_user_id,
                     self._scratch_pad_thread,
                 )
             except Exception as e:
                 self._run_user_id = None
-                LOG.warning("STREAM ▸ Could not resolve run_user_id: %s", e)
+                LOG.warning("STREAM  Could not resolve run_user_id: %s", e)
 
             # ------------------------------------------------------------------
             # 5. IDENTITY SWAP (Supervisor roles only)
@@ -352,7 +362,7 @@ class QwenBaseWorker(
                 self._scratch_pad_thread = thread_id
 
             LOG.info(
-                "STREAM ▸ Scratchpad thread pinned to: %s", self._scratch_pad_thread
+                "STREAM  Scratchpad thread pinned to: %s", self._scratch_pad_thread
             )
 
             # ------------------------------------------------------------------
@@ -385,7 +395,7 @@ class QwenBaseWorker(
             # ------------------------------------------------------------------
             if is_multimodal(ctx):
                 LOG.info(
-                    "QwenBaseWorker ▸ multimodal context detected — normalising to OpenAI "
+                    "QwenBaseWorker  multimodal context detected  normalising to OpenAI "
                     "image_url format (max_images=%s).",
                     self.VISION_MAX_IMAGES,
                 )
@@ -400,7 +410,7 @@ class QwenBaseWorker(
             # Extract tool definitions from the system message and pass them
             # natively to the provider via tools=. Required for providers that
             # no longer parse text-embedded tool definitions from the system prompt.
-            # Falls back gracefully — if extraction yields nothing, tools=None
+            # Falls back gracefully  if extraction yields nothing, tools=None
             # and the text-embedded definitions remain in the system prompt.
             # ------------------------------------------------------------------
             native_tools = None
@@ -408,14 +418,14 @@ class QwenBaseWorker(
                 ctx, native_tools = self.prepare_native_tool_context(ctx)
                 if native_tools:
                     LOG.info(
-                        "NATIVE TOOLS ▸ Extracted %d tool(s) for native dispatch: %s",
+                        "NATIVE TOOLS  Extracted %d tool(s) for native dispatch: %s",
                         len(native_tools),
                         [t.get("function", {}).get("name") for t in native_tools],
                     )
                 else:
                     LOG.warning(
-                        "NATIVE TOOLS ▸ USE_NATIVE_TOOLS=True but no tools extracted "
-                        "from system message — falling back to text-embedded definitions."
+                        "NATIVE TOOLS  USE_NATIVE_TOOLS=True but no tools extracted "
+                        "from system message  falling back to text-embedded definitions."
                     )
 
             # ------------------------------------------------------------------
@@ -428,7 +438,7 @@ class QwenBaseWorker(
             _top_p = self.assistant_config.get("top_p", None)
 
             LOG.info(
-                "INFERENCE PARAMS ▸ max_tokens=%s | temperature=%s | top_p=%s",
+                "INFERENCE PARAMS  max_tokens=%s | temperature=%s | top_p=%s",
                 _max_tokens,
                 _temperature,
                 _top_p,
@@ -595,7 +605,7 @@ class QwenBaseWorker(
         )
 
         # ------------------------------------------------------------------
-        # Path A — no running loop in this thread
+        # Path A  no running loop in this thread
         # ------------------------------------------------------------------
         try:
             running_loop = asyncio.get_running_loop()
@@ -624,7 +634,7 @@ class QwenBaseWorker(
             return
 
         # ------------------------------------------------------------------
-        # Path B — a loop is already running; isolate in a background thread
+        # Path B  a loop is already running; isolate in a background thread
         # ------------------------------------------------------------------
         _SENTINEL = object()
         queue_ref: list = []
