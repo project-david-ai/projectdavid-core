@@ -3,8 +3,8 @@ read_scratchpad = {
     "function": {
         "name": "read_scratchpad",
         "description": (
-            "Reads the current 'Research Scratchpad'. This contains your master plan, "
-            "collected facts, and status. Use this to review what you know."
+            "Reads the current scratchpad, including its working content "
+            "and accumulated entries. Use this to review shared working state."
         ),
         "parameters": {
             "type": "object",

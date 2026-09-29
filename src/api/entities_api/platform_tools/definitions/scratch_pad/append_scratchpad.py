@@ -3,15 +3,16 @@ append_scratchpad = {
     "function": {
         "name": "append_scratchpad",
         "description": (
-            "Appends a specific note to the bottom of the scratchpad. "
-            "Use this to quickly save a fact, URL, or number without rewriting the whole plan."
+            "Appends an entry to the scratchpad without replacing its working "
+            "content. Use this to record findings, facts, URLs, numbers, "
+            "progress updates, or other shared information."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "note": {
                     "type": "string",
-                    "description": "The text to append (e.g., 'Found revenue: $50M').",
+                    "description": "The text to append as a new scratchpad entry.",
                 }
             },
             "required": ["note"],

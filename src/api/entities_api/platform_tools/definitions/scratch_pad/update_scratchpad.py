@@ -3,18 +3,19 @@ update_scratchpad = {
     "function": {
         "name": "update_scratchpad",
         "description": (
-            "Overwrites the entire scratchpad. Use this to restructure your plan, "
-            "check off completed steps, or summarize your findings into a clean list."
+            "Replaces the scratchpad's working content. Use this to update, "
+            "restructure, or rewrite the current shared plan or working state."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "content": {
                     "type": "string",
-                    "description": "The new full text content of the scratchpad.",
+                    "description": "The new working content for the scratchpad.",
                 }
             },
             "required": ["content"],
+            "additionalProperties": False,
         },
     },
 }
