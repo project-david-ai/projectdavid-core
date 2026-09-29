@@ -27,13 +27,6 @@ from entities_api.platform_tools.definitions.web_search.search_web_page import (
 RESEARCH_WORKER_MAX_TURNS = 8
 
 
-RESEARCH_WORKER_ASSISTANT_TOOLS = [
-    {"type": "web_search"},
-    read_scratchpad,
-    append_scratchpad,
-]
-
-
 WORKER_TOOLS = [
     perform_web_search,
     read_web_page,

@@ -1,4 +1,46 @@
-# Deep Research Architecture
+### 9.1 Persisted Worker Declaration
+
+The persisted worker assistant declares logical platform capabilities:
+
+```python
+tools = [
+    {"type": "web_search"},
+    {"type": "scratchpad"},
+]
+```
+
+The assistant subscribes to capabilities rather than persisting the
+individual concrete runtime functions.
+
+Infrastructure identity such as `scratchpad_id`, `thread_id`, `owner_id`,
+and `user_id` is therefore not part of the model-facing tool schema.
+
+### 9.2 Runtime Tool Expansion
+
+During input-context construction, `ContextMixin` resolves these capability
+placeholders through `PLATFORM_TOOL_MAP`.
+
+Conceptually:
+
+```text
+{"type": "web_search"}
+    |
+    +--> perform_web_search
+    +--> read_web_page
+    +--> search_web_page
+    +--> scroll_web_page
+
+{"type": "scratchpad"}
+    |
+    +--> read_scratchpad
+    +--> update_scratchpad
+    +--> append_scratchpad
+```
+
+Core owns the concrete runtime tool definitions while the assistant stores
+only the logical capability subscriptions.
+
+
 
 Project David Deep Research is a bounded, multi-agent research execution architecture designed around two primary failure modes of long-horizon LLM work:
 
@@ -384,7 +426,7 @@ There is a distinction between the worker assistant's persisted tool declaration
 The persisted worker assistant exposes the logical research capabilities:
 
 ```python
-RESEARCH_WORKER_ASSISTANT_TOOLS = [
+platform capability placeholders = [
     {"type": "web_search"},
     read_scratchpad,
     append_scratchpad,
@@ -872,7 +914,7 @@ Defines the research worker's logical and runtime tool capabilities.
 Key concepts:
 
 ```text
-RESEARCH_WORKER_ASSISTANT_TOOLS
+platform capability placeholders
 WORKER_TOOLS
 RESEARCH_WORKER_MAX_TURNS
 ```

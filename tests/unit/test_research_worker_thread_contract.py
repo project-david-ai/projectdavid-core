@@ -1,9 +1,8 @@
 import asyncio
-import inspect
 from types import SimpleNamespace
 
+from entities_api.orchestration.mixins.context_mixin import ContextMixin
 from entities_api.platform_tools.tool_reigistry.research_worker import (
-    RESEARCH_WORKER_ASSISTANT_TOOLS,
     RESEARCH_WORKER_MAX_TURNS,
     WORKER_TOOLS,
 )
@@ -169,44 +168,43 @@ def test_shared_append_uses_shared_data_but_worker_tool_result():
     assert output["tool_call_id"] == "call_append"
 
 
-def test_research_worker_assistant_declaration_passes_namespace_guard():
-    # This is the exact boundary that failed in integration.
-    model = AssistantCreate(
-        name="test-research-worker",
-        model="test-model",
-        tools=RESEARCH_WORKER_ASSISTANT_TOOLS,
-        web_access=True,
+def test_ephemeral_worker_uses_platform_capability_placeholders():
+    class _CaptureNativeExec:
+        def __init__(self):
+            self.kwargs = None
+
+        async def create_assistant(self, **kwargs):
+            self.kwargs = kwargs
+            return SimpleNamespace(**kwargs)
+
+    manager = AssistantManager()
+    capture = _CaptureNativeExec()
+
+    manager._native_exec_svc = capture
+
+    asyncio.run(manager.create_ephemeral_worker_assistant(user_id="user_test"))
+
+    assert capture.kwargs["tools"] == [
+        {"type": "web_search"},
+        {"type": "scratchpad"},
+    ]
+
+    assert capture.kwargs["web_access"] is True
+
+    assert capture.kwargs["max_turns"] == RESEARCH_WORKER_MAX_TURNS
+
+
+def test_research_worker_platform_capabilities_hydrate_at_context_boundary():
+    resolved = ContextMixin._resolve_and_prioritize_platform_tools(
+        [
+            {"type": "web_search"},
+            {"type": "scratchpad"},
+        ]
     )
 
-    assert model.tools == RESEARCH_WORKER_ASSISTANT_TOOLS
-
-    assert {"type": "web_search"} in RESEARCH_WORKER_ASSISTANT_TOOLS
-
-    declared_function_names = {
-        tool["function"]["name"]
-        for tool in RESEARCH_WORKER_ASSISTANT_TOOLS
-        if isinstance(tool, dict) and isinstance(tool.get("function"), dict)
-    }
-
-    assert {
-        "read_scratchpad",
-        "append_scratchpad",
-    }.issubset(declared_function_names)
-
-    # Expanded platform function names must NOT cross the persisted
-    # AssistantCreate custom-function namespace.
-    assert not {
-        "perform_web_search",
-        "read_web_page",
-        "search_web_page",
-        "scroll_web_page",
-    }.intersection(declared_function_names)
-
-
-def test_runtime_worker_registry_still_contains_expanded_web_tools():
     names = {
         tool["function"]["name"]
-        for tool in WORKER_TOOLS
+        for tool in resolved
         if isinstance(tool, dict) and isinstance(tool.get("function"), dict)
     }
 
@@ -216,22 +214,40 @@ def test_runtime_worker_registry_still_contains_expanded_web_tools():
         "search_web_page",
         "scroll_web_page",
         "read_scratchpad",
+        "update_scratchpad",
         "append_scratchpad",
     }.issubset(names)
 
 
-def test_ephemeral_worker_uses_assistant_capability_declaration():
-    source = inspect.getsource(AssistantManager.create_ephemeral_worker_assistant)
+def test_scratchpad_platform_schema_hides_resource_identity():
+    resolved = ContextMixin._resolve_and_prioritize_platform_tools(
+        [{"type": "scratchpad"}]
+    )
 
-    assert "tools=RESEARCH_WORKER_ASSISTANT_TOOLS" in source
-    assert "tools=WORKER_TOOLS" not in source
-    assert "tools=JUNIOR_ENGINEER_TOOLS" not in source
+    expected_names = {
+        "read_scratchpad",
+        "update_scratchpad",
+        "append_scratchpad",
+    }
+
+    actual_names = {tool["function"]["name"] for tool in resolved}
+
+    assert actual_names == expected_names
+
+    for tool in resolved:
+        function = tool["function"]
+        schema = function["parameters"]
+
+        assert schema["additionalProperties"] is False
+
+        properties = schema["properties"]
+
+        assert "scratchpad_id" not in properties
+        assert "thread_id" not in properties
+        assert "user_id" not in properties
+        assert "owner_id" not in properties
 
 
 def test_research_worker_has_multi_turn_budget():
     assert RESEARCH_WORKER_MAX_TURNS > 1
     assert RESEARCH_WORKER_MAX_TURNS == 8
-
-    source = inspect.getsource(AssistantManager.create_ephemeral_worker_assistant)
-
-    assert "max_turns=RESEARCH_WORKER_MAX_TURNS" in source

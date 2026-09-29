@@ -9,7 +9,6 @@ from entities_api.platform_tools.tool_reigistry.junior_network_engineer import (
     JUNIOR_ENGINEER_TOOLS,
 )
 from entities_api.platform_tools.tool_reigistry.research_worker import (
-    RESEARCH_WORKER_ASSISTANT_TOOLS,
     RESEARCH_WORKER_MAX_TURNS,
 )
 from entities_api.platform_tools.tool_reigistry.senior_network_engineer import (
