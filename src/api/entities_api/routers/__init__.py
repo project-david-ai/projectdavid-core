@@ -15,6 +15,7 @@ from src.api.entities_api.routers.runs_router import router as runs_router
 from src.api.entities_api.routers.sandbox_auth_router import (
     router as sandbox_auth_router,
 )
+from src.api.entities_api.routers.scratchpads_router import router as scratchpads_router
 from src.api.entities_api.routers.threads_router import router as threads_router
 from src.api.entities_api.routers.tools_router import router as tools_router
 from src.api.entities_api.routers.users_router import router as users_router
@@ -26,6 +27,7 @@ api_router = APIRouter()
 api_router.include_router(health_router, tags=["Health"])
 api_router.include_router(inference_router, tags=["Inference"])
 api_router.include_router(threads_router, tags=["Threads"])
+api_router.include_router(scratchpads_router, tags=["Scratchpads"])
 api_router.include_router(users_router, tags=["Users"])
 api_router.include_router(runs_router, tags=["Runs"])
 api_router.include_router(assistants_router, tags=["Assistants"])
