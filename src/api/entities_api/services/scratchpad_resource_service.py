@@ -132,6 +132,74 @@ class ScratchpadResourceService:
 
             return self._scratchpad_read(row)
 
+    def ensure_scratchpad_for_thread(
+        self,
+        thread_id: str,
+        *,
+        user_id: str,
+    ) -> validator.ScratchpadRead:
+        """
+        Resolve the canonical Scratchpad for an owned Thread,
+        creating it when the Thread predates first-class
+        Scratchpad resources.
+
+        This is an internal compatibility primitive.
+        """
+
+        with self._session_factory() as db:
+            self._owned_thread(
+                db,
+                thread_id=thread_id,
+                user_id=user_id,
+            )
+
+            existing = (
+                db.query(Scratchpad)
+                .filter(
+                    Scratchpad.thread_id == thread_id,
+                    Scratchpad.owner_id == user_id,
+                )
+                .first()
+            )
+
+            if existing is not None:
+                return self._scratchpad_read(existing)
+
+            row = Scratchpad(
+                id=(UtilsInterface.IdentifierService.generate_scratchpad_id()),
+                owner_id=user_id,
+                thread_id=thread_id,
+                meta_data={},
+            )
+
+            db.add(row)
+
+            try:
+                db.commit()
+
+            except IntegrityError:
+                # A concurrent caller may have won the
+                # one-Scratchpad-per-Thread race.
+                db.rollback()
+
+                existing = (
+                    db.query(Scratchpad)
+                    .filter(
+                        Scratchpad.thread_id == thread_id,
+                        Scratchpad.owner_id == user_id,
+                    )
+                    .first()
+                )
+
+                if existing is not None:
+                    return self._scratchpad_read(existing)
+
+                raise
+
+            db.refresh(row)
+
+            return self._scratchpad_read(row)
+
     def retrieve_scratchpad(
         self,
         scratchpad_id: str,
@@ -236,13 +304,13 @@ class ScratchpadResourceService:
 
             return self._scratchpad_read(row)
 
-    def delete_scratchpad(
+    def delete_record(
         self,
         scratchpad_id: str,
         *,
         user_id: str,
     ) -> validator.ScratchpadDeleted:
-        """Delete one tenant-owned Scratchpad SQL resource."""
+        """Delete only the tenant-owned Scratchpad SQL record."""
 
         with self._session_factory() as db:
             row = self._owned_scratchpad(

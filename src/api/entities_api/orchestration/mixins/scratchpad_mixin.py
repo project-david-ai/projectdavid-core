@@ -155,20 +155,43 @@ class ScratchpadMixin:
         )
 
         try:
-            # 2. Perform Data Plane operations via native ScratchpadService (Direct await, NO to_thread)
+            # 2. Resolve tenant ownership from the durable Run.
+
+            run = self._native_exec.run_svc.retrieve_run(run_id)
+
+            user_id = getattr(
+                run,
+                "user_id",
+                None,
+            )
+
+            if not user_id:
+
+                raise RuntimeError(f"Run {run_id} has no owning user.")
+
+            # 3. Operate against the first-class Scratchpad resource.
+
             if operation_type == "read":
-                res = await self._native_exec.scratchpad_svc.get_formatted_view(
-                    thread_id=scratchpad_thread_id,
+
+                res = await self._native_exec.scratchpad_svc.get_formatted_view_for_thread(
+                    scratchpad_thread_id,
+                    user_id=user_id,
                 )
+
             elif operation_type == "update":
+
                 res = await self._native_exec.scratchpad_svc.update_content(
-                    thread_id=scratchpad_thread_id,
-                    content=arguments_dict.get("content"),
+                    scratchpad_thread_id,
+                    arguments_dict.get("content"),
+                    user_id=user_id,
                 )
+
             else:
+
                 res = await self._native_exec.scratchpad_svc.append_note(
-                    thread_id=scratchpad_thread_id,
-                    note=arguments_dict.get("note"),
+                    scratchpad_thread_id,
+                    arguments_dict.get("note"),
+                    user_id=user_id,
                 )
 
             # Determine entry text for the frontend scratchpad component

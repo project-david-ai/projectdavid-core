@@ -321,14 +321,14 @@ def test_delete_is_owner_scoped_and_typed(
     with pytest.raises(
         HTTPException,
     ) as exc_info:
-        service.delete_scratchpad(
+        service.delete_record(
             created.id,
             user_id="user_2",
         )
 
     assert exc_info.value.status_code == 404
 
-    deleted = service.delete_scratchpad(
+    deleted = service.delete_record(
         created.id,
         user_id="user_1",
     )
@@ -345,3 +345,41 @@ def test_delete_is_owner_scoped_and_typed(
             )
             is None
         )
+
+
+def test_ensure_scratchpad_for_thread_is_idempotent(
+    service: ScratchpadResourceService,
+    session_factory: sessionmaker,
+) -> None:
+    first = service.ensure_scratchpad_for_thread(
+        "thread_1",
+        user_id="user_1",
+    )
+
+    second = service.ensure_scratchpad_for_thread(
+        "thread_1",
+        user_id="user_1",
+    )
+
+    assert first.id == second.id
+    assert first.owner_id == "user_1"
+    assert first.thread_id == "thread_1"
+
+    with session_factory() as db:
+        rows = db.query(Scratchpad).filter(Scratchpad.thread_id == "thread_1").all()
+
+        assert len(rows) == 1
+
+
+def test_ensure_scratchpad_for_thread_is_owner_scoped(
+    service: ScratchpadResourceService,
+) -> None:
+    with pytest.raises(
+        HTTPException,
+    ) as exc_info:
+        service.ensure_scratchpad_for_thread(
+            "thread_1",
+            user_id="user_2",
+        )
+
+    assert exc_info.value.status_code == 404

@@ -186,52 +186,102 @@ async def serp_search(
 # -----------------------------------------------------------------------------
 
 
-@router.post("/tools/scratchpad/read", summary="Read the current research plan/notes")
+@router.post(
+    "/tools/scratchpad/read",
+    summary="Read the current research plan/notes",
+)
 async def read_scratchpad(
     payload: ScratchpadReadRequest,
     service: ScratchpadService = Depends(get_scratchpad_service),
-    db: Session = Depends(get_db),
     auth_key: ApiKeyModel = Depends(get_api_key),
 ):
-    """**Agent Action:** Retrieve the current state of the scratchpad."""
-    verify_admin_privileges(db, auth_key)
+    """**Agent Action:** Retrieve the current Scratchpad state."""
+
     try:
-        content = await service.get_formatted_view(payload.thread_id)
+        content = await service.get_formatted_view_for_thread(
+            payload.thread_id,
+            user_id=auth_key.user_id,
+        )
+
         return {"content": content}
-    except Exception as e:
-        logging_utility.error(f"Scratchpad read failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        logging_utility.error(f"Scratchpad read failed: {exc}")
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(exc),
+        ) from exc
 
 
-@router.post("/tools/scratchpad/update", summary="Overwrite the research plan")
+@router.post(
+    "/tools/scratchpad/update",
+    summary="Overwrite the research plan",
+)
 async def update_scratchpad(
     payload: ScratchpadUpdateRequest,
     service: ScratchpadService = Depends(get_scratchpad_service),
-    db: Session = Depends(get_db),
     auth_key: ApiKeyModel = Depends(get_api_key),
 ):
-    """**Agent Action:** Rewrite the scratchpad."""
-    verify_admin_privileges(db, auth_key)
+    """**Agent Action:** Rewrite the Scratchpad working body."""
+
     try:
-        msg = await service.update_content(payload.thread_id, payload.content)
-        return {"status": "success", "message": msg}
-    except Exception as e:
-        logging_utility.error(f"Scratchpad update failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        message = await service.update_content(
+            payload.thread_id,
+            payload.content,
+            user_id=auth_key.user_id,
+        )
+
+        return {
+            "status": "success",
+            "message": message,
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        logging_utility.error(f"Scratchpad update failed: {exc}")
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(exc),
+        ) from exc
 
 
-@router.post("/tools/scratchpad/append", summary="Add a note to the scratchpad")
+@router.post(
+    "/tools/scratchpad/append",
+    summary="Add a note to the scratchpad",
+)
 async def append_scratchpad(
     payload: ScratchpadAppendRequest,
     service: ScratchpadService = Depends(get_scratchpad_service),
-    db: Session = Depends(get_db),
     auth_key: ApiKeyModel = Depends(get_api_key),
 ):
-    """**Agent Action:** Quick-add a finding without rewriting everything."""
-    verify_admin_privileges(db, auth_key)
+    """**Agent Action:** Append a finding without rewriting the body."""
+
     try:
-        msg = await service.append_note(payload.thread_id, payload.note)
-        return {"status": "success", "message": msg}
-    except Exception as e:
-        logging_utility.error(f"Scratchpad append failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        message = await service.append_note(
+            payload.thread_id,
+            payload.note,
+            user_id=auth_key.user_id,
+        )
+
+        return {
+            "status": "success",
+            "message": message,
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        logging_utility.error(f"Scratchpad append failed: {exc}")
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(exc),
+        ) from exc

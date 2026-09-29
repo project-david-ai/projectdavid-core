@@ -16,20 +16,44 @@ from src.api.entities_api.utilities.assistant_manager import AssistantManager
 class _ScratchpadService:
     def __init__(self):
         self.read_thread = None
+        self.read_user = None
         self.append_thread = None
+        self.append_user = None
 
-    async def get_formatted_view(self, thread_id):
+    async def get_formatted_view_for_thread(
+        self,
+        thread_id,
+        *,
+        user_id,
+    ):
         self.read_thread = thread_id
+        self.read_user = user_id
         return "SHARED_STATE"
 
-    async def append_note(self, thread_id, note):
+    async def append_note(
+        self,
+        thread_id,
+        note,
+        *,
+        user_id,
+    ):
         self.append_thread = thread_id
+        self.append_user = user_id
         return note
+
+
+class _RunService:
+    def retrieve_run(self, run_id):
+        return SimpleNamespace(
+            id=run_id,
+            user_id="user_owner",
+        )
 
 
 class _NativeExec:
     def __init__(self):
         self.scratchpad_svc = _ScratchpadService()
+        self.run_svc = _RunService()
         self.outputs = []
 
     async def create_action(self, **kwargs):
@@ -68,6 +92,7 @@ def test_shared_read_uses_shared_data_but_worker_tool_result():
     asyncio.run(exercise())
 
     assert harness._native_exec.scratchpad_svc.read_thread == "thread_shared"
+    assert harness._native_exec.scratchpad_svc.read_user == "user_owner"
 
     output = harness._native_exec.outputs[0]
     assert output["thread_id"] == "thread_worker"
@@ -94,6 +119,7 @@ def test_shared_append_uses_shared_data_but_worker_tool_result():
     asyncio.run(exercise())
 
     assert harness._native_exec.scratchpad_svc.append_thread == "thread_shared"
+    assert harness._native_exec.scratchpad_svc.append_user == "user_owner"
 
     output = harness._native_exec.outputs[0]
     assert output["thread_id"] == "thread_worker"
