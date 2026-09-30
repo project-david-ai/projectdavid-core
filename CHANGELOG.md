@@ -1,3 +1,10 @@
+## [1.59.3](https://github.com/project-david-ai/projectdavid-core/compare/v1.59.2...v1.59.3) (2026-09-30)
+
+
+### Bug Fixes
+
+* **deep-research:** relay worker web status events ([78a1f0e](https://github.com/project-david-ai/projectdavid-core/commit/78a1f0e876345d858fafe26cadfe0df450dadf9b))
+
 ## [1.59.2](https://github.com/project-david-ai/projectdavid-core/compare/v1.59.1...v1.59.2) (2026-09-29)
 
 
