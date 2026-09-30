@@ -7,7 +7,7 @@ import threading
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator, Callable, Dict, Optional
 
-from projectdavid.events import ScratchpadEvent
+from projectdavid.events import ScratchpadEvent, WebStatusEvent
 from projectdavid_common.utilities.logging_service import LoggingUtility
 from projectdavid_common.validation import StatusEnum
 
@@ -535,6 +535,30 @@ class DelegationMixin:
                     entry_val = event.entry or event.content or ""
                     if entry_val:
                         payload["entry"] = entry_val
+
+                    yield json.dumps(payload)
+                    continue
+
+                # ----------------------------------------
+                # INTERCEPT: WebStatusEvent
+                #
+                # The delegated worker runs through its own
+                # Project David SDK stream. Relay its web
+                # lifecycle events back onto the parent run
+                # so the caller's SDK can observe them.
+                # ----------------------------------------
+                if isinstance(event, WebStatusEvent):
+                    payload = {
+                        "type": "web_status",
+                        "run_id": run_id,
+                        "status": event.status,
+                    }
+
+                    if event.message is not None:
+                        payload["message"] = event.message
+
+                    if event.tool is not None:
+                        payload["tool"] = event.tool
 
                     yield json.dumps(payload)
                     continue

@@ -16,6 +16,9 @@ shared visibility, not Redis-key identity or concurrent-write isolation.
 Research tools execute in Core. Any consumer-tool request is recorded as a test
 failure, and no local executor is invoked. Server records are retained for
 inspection; the script prints their IDs and returns a nonzero exit code on failure.
+
+Web search events are monitored directly from the unified SDK stream. The test
+requires at least one WebStatusEvent and records the observed web-status lifecycle.
 """
 
 from __future__ import annotations
@@ -210,6 +213,7 @@ def evaluate_scratchpad(observations: list[PadObservation]) -> ProofReport:
         and o.operation == "update"
         and contains(o.text, SEED_LINE),
     )
+
     read_a = find(
         "worker_a_read_supervisor_seed",
         lambda o: bool(seed)
@@ -219,9 +223,11 @@ def evaluate_scratchpad(observations: list[PadObservation]) -> ProofReport:
         and o.assistant_id != seed.assistant_id
         and contains(o.text, SEED_LINE),
     )
+
     token_pattern = re.compile(
         re.escape(WORKER_A_KEY) + r"=([0-9a-f]{16})(?![A-Za-z0-9_])"
     )
+
     write_a = find(
         "worker_a_appended_own_marker",
         lambda o: bool(read_a)
@@ -232,8 +238,11 @@ def evaluate_scratchpad(observations: list[PadObservation]) -> ProofReport:
         and o.assistant_id == read_a.assistant_id
         and token_pattern.search(o.text) is not None,
     )
+
     token = token_pattern.search(write_a.text).group(1) if write_a else ""
-    line_a, line_b = f"{WORKER_A_KEY}={token}", f"{WORKER_B_KEY}={token}"
+    line_a = f"{WORKER_A_KEY}={token}"
+    line_b = f"{WORKER_B_KEY}={token}"
+
     review_a = find(
         "supervisor_read_worker_a_marker",
         lambda o: bool(write_a)
@@ -244,6 +253,7 @@ def evaluate_scratchpad(observations: list[PadObservation]) -> ProofReport:
         and contains(o.text, SEED_LINE)
         and contains(o.text, line_a),
     )
+
     read_b = find(
         "distinct_worker_b_read_seed_and_a_marker",
         lambda o: bool(review_a)
@@ -252,10 +262,15 @@ def evaluate_scratchpad(observations: list[PadObservation]) -> ProofReport:
         and o.operation == "read"
         and o.delegation != read_a.delegation
         and o.assistant_id
-        not in {read_a.assistant_id, review_a.assistant_id, seed.assistant_id}
+        not in {
+            read_a.assistant_id,
+            review_a.assistant_id,
+            seed.assistant_id,
+        }
         and contains(o.text, SEED_LINE)
         and contains(o.text, line_a),
     )
+
     write_b = find(
         "worker_b_appended_matching_acknowledgement",
         lambda o: bool(read_b)
@@ -266,6 +281,7 @@ def evaluate_scratchpad(observations: list[PadObservation]) -> ProofReport:
         and o.assistant_id == read_b.assistant_id
         and contains(o.text, line_b),
     )
+
     find(
         "supervisor_read_both_worker_markers",
         lambda o: bool(write_b)
@@ -273,8 +289,16 @@ def evaluate_scratchpad(observations: list[PadObservation]) -> ProofReport:
         and o.scope == "supervisor"
         and o.operation == "read"
         and o.assistant_id not in {read_a.assistant_id, read_b.assistant_id}
-        and all(contains(o.text, line) for line in (SEED_LINE, line_a, line_b)),
+        and all(
+            contains(o.text, line)
+            for line in (
+                SEED_LINE,
+                line_a,
+                line_b,
+            )
+        ),
     )
+
     return ProofReport(
         test_id=TEST_ID,
         passed=all(check.passed for check in checks.values()),
@@ -291,8 +315,10 @@ def field(obj: Any, name: str, default: Any = None) -> Any:
 def main() -> int:
     if not API_KEY:
         raise RuntimeError("Missing DEV_PROJECT_DAVID_CORE_TEST_USER_KEY")
+
     if not ASSISTANT_ID:
         raise RuntimeError("Missing ASSISTANT_ID")
+
     if not os.getenv("TOGETHER_API_KEY"):
         raise RuntimeError("Missing TOGETHER_API_KEY")
 
@@ -301,61 +327,116 @@ def main() -> int:
     print(f"{GREY}[CONFIG] Model ID:     {MODEL_ID}{RESET}")
     print(f"{GREY}[CONFIG] Test ID:      {TEST_ID}{RESET}")
 
+    # ------------------------------------------------------------------
     # 1. SDK INIT
-    client = Entity(base_url=BASE_URL, api_key=API_KEY)
+    # ------------------------------------------------------------------
+    client = Entity(
+        base_url=BASE_URL,
+        api_key=API_KEY,
+    )
 
+    # ------------------------------------------------------------------
     # 2. ASSISTANT PREFLIGHT
+    # ------------------------------------------------------------------
     print(f"\n{CYAN}=== ASSISTANT PREFLIGHT ==={RESET}")
+
     assistant = client.assistants.retrieve_assistant(ASSISTANT_ID)
-    for name in ("id", "model", "max_turns", "deep_research", "is_engineer"):
-        print(f"assistant.{name}={field(assistant, name, 'not exposed')}")
+
+    for name in (
+        "id",
+        "model",
+        "max_turns",
+        "deep_research",
+        "is_engineer",
+    ):
+        print(f"assistant.{name}=" f"{field(assistant, name, 'not exposed')}")
+
     for tool in field(assistant, "tools", []) or []:
         if hasattr(tool, "model_dump"):
             tool = tool.model_dump()
+
         if isinstance(tool, dict):
             function = tool.get("function") or {}
             name = field(function, "name") or tool.get("name") or tool.get("type")
+
             if name:
                 print(f"tool={name}")
 
     # Supervisor tools may be supplied by Core's ephemeral identity swap.
     # The original assistant's tool list is informational, not a required list.
     deep_research = field(assistant, "deep_research")
-    if deep_research is not None and str(deep_research).lower() in {"false", "0"}:
+
+    if deep_research is not None and str(deep_research).lower() in {
+        "false",
+        "0",
+    }:
         raise RuntimeError(
             "ASSISTANT_ID identifies an assistant with deep_research disabled. "
             "Enable Deep Research on that assistant before running this test."
         )
-    if str(field(assistant, "is_engineer", False)).lower() in {"true", "1"}:
+
+    if str(field(assistant, "is_engineer", False)).lower() in {
+        "true",
+        "1",
+    }:
         raise RuntimeError(
-            "The selected assistant has Engineer mode enabled, which takes priority over Deep Research."
+            "The selected assistant has Engineer mode enabled, which takes "
+            "priority over Deep Research."
         )
+
     if field(assistant, "max_turns") == 1:
         print(
-            f"{YELLOW}[NOTE] Assistant max_turns=1; inspect this if research cannot finish.{RESET}"
+            f"{YELLOW}[NOTE] Assistant max_turns=1; inspect this if research "
+            f"cannot finish.{RESET}"
         )
+
     print(f"{GREEN}ASSISTANT_PREFLIGHT=PASS{RESET}")
 
+    # ------------------------------------------------------------------
     # 3. INLINE TEST PROMPT
-    print(f"\n{CYAN}=== TEST PROMPT ==={RESET}\n{TEST_PROMPT}")
+    # ------------------------------------------------------------------
+    print(f"\n{CYAN}=== TEST PROMPT ==={RESET}\n" f"{TEST_PROMPT}")
 
+    # ------------------------------------------------------------------
     # 4. CREATE THREAD / MESSAGE / RUN
+    # ------------------------------------------------------------------
     print(f"\n{CYAN}=== CREATE INFERENCE STATE ==={RESET}")
+
     global_start = time.perf_counter()
+
     thread = client.threads.create_thread()
-    print(f"thread.id={thread.id}", flush=True)
+    print(
+        f"thread.id={thread.id}",
+        flush=True,
+    )
+
     message = client.messages.create_message(
         thread_id=thread.id,
         role="user",
         content=TEST_PROMPT,
         assistant_id=ASSISTANT_ID,
     )
-    print(f"message.id={message.id}", flush=True)
-    run = client.runs.create_run(assistant_id=ASSISTANT_ID, thread_id=thread.id)
-    print(f"run.id={run.id}", flush=True)
 
-    # 5. SETUP UNIFIED STREAM -- same provider credential as the base script
+    print(
+        f"message.id={message.id}",
+        flush=True,
+    )
+
+    run = client.runs.create_run(
+        assistant_id=ASSISTANT_ID,
+        thread_id=thread.id,
+    )
+
+    print(
+        f"run.id={run.id}",
+        flush=True,
+    )
+
+    # ------------------------------------------------------------------
+    # 5. SETUP UNIFIED STREAM -- same provider credential as base script
+    # ------------------------------------------------------------------
     stream = client.synchronous_inference_stream
+
     stream.setup(
         thread_id=thread.id,
         assistant_id=ASSISTANT_ID,
@@ -364,18 +445,33 @@ def main() -> int:
         api_key=os.getenv("TOGETHER_API_KEY"),
     )
 
+    # ------------------------------------------------------------------
     # 6. STREAM
+    # ------------------------------------------------------------------
     print(f"\n{CYAN}=== LIVE DEEP RESEARCH STREAM ==={RESET}")
-    print(f"{'LATENCY':<14} | {'EVENT CLASS':<28} | PAYLOAD")
+
+    print(f"{'LATENCY':<14} | " f"{'EVENT CLASS':<28} | " f"PAYLOAD")
+
     print("-" * 120)
+
     observations: list[PadObservation] = []
+
     counts: Counter[str] = Counter()
+
+    web_status_counts: Counter[str] = Counter()
+
     content_chunks: list[str] = []
+
     failures: list[str] = []
+
     delegation_count = 0
+
     active_delegation: int | None = None
+
     saw_client_tool_request = False
+
     stream_completed = False
+
     last_tick = time.perf_counter()
 
     try:
@@ -386,48 +482,112 @@ def main() -> int:
                 max_turns=MAX_SDK_TURNS,
             )
         ) as events:
-            for index, event in enumerate(events, 1):
+            for index, event in enumerate(
+                events,
+                1,
+            ):
                 current_tick = time.perf_counter()
+
                 time_str = f"[{current_tick - last_tick:+.4f}s]"
+
                 last_tick = current_tick
+
                 class_name = type(event).__name__
+
                 counts[class_name] += 1
+
                 payload = event.to_dict()
-                payload_json = json.dumps(payload, ensure_ascii=False, default=str)
+
+                payload_json = json.dumps(
+                    payload,
+                    ensure_ascii=False,
+                    default=str,
+                )
 
                 color = RESET
-                if isinstance(event, ContentEvent):
+
+                if isinstance(
+                    event,
+                    ContentEvent,
+                ):
                     color = GREEN
-                elif isinstance(event, ReasoningEvent):
-                    color = CYAN
-                elif isinstance(event, DecisionEvent):
-                    color = MAGENTA
+
                 elif isinstance(
-                    event, (ResearchStatusEvent, ScratchpadEvent, WebStatusEvent)
+                    event,
+                    ReasoningEvent,
+                ):
+                    color = CYAN
+
+                elif isinstance(
+                    event,
+                    DecisionEvent,
+                ):
+                    color = MAGENTA
+
+                elif isinstance(
+                    event,
+                    (
+                        ResearchStatusEvent,
+                        ScratchpadEvent,
+                        WebStatusEvent,
+                    ),
                 ):
                     color = BLUE
-                elif isinstance(event, (ToolCallRequestEvent, ToolInterceptEvent)):
+
+                elif isinstance(
+                    event,
+                    (
+                        ToolCallRequestEvent,
+                        ToolInterceptEvent,
+                    ),
+                ):
                     color = RED
+
                 print(
                     f"{GREY}{time_str:<14}{RESET} | "
-                    f"{color}{class_name:<28}{RESET} | #{index} {payload_json}",
+                    f"{color}{class_name:<28}{RESET} | "
+                    f"#{index} {payload_json}",
                     flush=True,
                 )
 
-                if isinstance(event, ResearchStatusEvent):
-                    # Current Core dispatches delegations sequentially. Worker
-                    # run IDs are remapped to the parent, and the SDK drops origin;
-                    # classify roles by lifecycle boundaries plus assistant IDs.
+                # ------------------------------------------------------
+                # RESEARCH DELEGATION LIFECYCLE
+                # ------------------------------------------------------
+                if isinstance(
+                    event,
+                    ResearchStatusEvent,
+                ):
+                    # Current Core dispatches delegations sequentially.
+                    # Worker run IDs are remapped to the parent, and the
+                    # SDK drops origin; classify roles by lifecycle
+                    # boundaries plus assistant IDs.
                     if event.tool == "delegate_research_task":
                         if event.state == "in_progress" and active_delegation is None:
                             delegation_count += 1
                             active_delegation = delegation_count
-                        elif event.state in {"completed", "error", "failed"}:
+
+                        elif event.state in {
+                            "completed",
+                            "error",
+                            "failed",
+                        }:
                             active_delegation = None
-                        if event.state in {"error", "failed"}:
-                            failures.append(f"Delegation error: {event.activity}")
-                elif isinstance(event, ScratchpadEvent):
+
+                        if event.state in {
+                            "error",
+                            "failed",
+                        }:
+                            failures.append("Delegation error: " f"{event.activity}")
+
+                # ------------------------------------------------------
+                # SCRATCHPAD EVENTS
+                # ------------------------------------------------------
+                elif isinstance(
+                    event,
+                    ScratchpadEvent,
+                ):
                     entry = event.entry or event.content or ""
+
                     if event.state == "success" and entry:
                         observations.append(
                             PadObservation(
@@ -438,89 +598,224 @@ def main() -> int:
                                     else "supervisor"
                                 ),
                                 delegation=active_delegation,
-                                assistant_id=event.assistant_id or "",
+                                assistant_id=(event.assistant_id or ""),
                                 operation=event.operation,
                                 text=entry,
                             )
                         )
-                    elif event.state in {"error", "failed"}:
-                        failures.append(f"Scratchpad error: {event.activity}")
-                elif isinstance(event, (ToolCallRequestEvent, ToolInterceptEvent)):
-                    # Core owns every tool needed for this research scenario.
-                    # Observe the boundary failure without executing local tools.
+
+                    elif event.state in {
+                        "error",
+                        "failed",
+                    }:
+                        failures.append("Scratchpad error: " f"{event.activity}")
+
+                # ------------------------------------------------------
+                # CLIENT-SIDE TOOL BOUNDARY
+                # ------------------------------------------------------
+                elif isinstance(
+                    event,
+                    (
+                        ToolCallRequestEvent,
+                        ToolInterceptEvent,
+                    ),
+                ):
+                    # Core owns every tool needed for this research
+                    # scenario. Observe the boundary failure without
+                    # executing local tools.
                     saw_client_tool_request = True
+
                     failures.append(
-                        f"Unexpected client-side tool request: {event.tool_name}"
+                        "Unexpected client-side tool request: " f"{event.tool_name}"
                     )
-                elif isinstance(event, ContentEvent):
+
+                # ------------------------------------------------------
+                # MODEL CONTENT
+                # ------------------------------------------------------
+                elif isinstance(
+                    event,
+                    ContentEvent,
+                ):
                     if event.content:
                         content_chunks.append(event.content)
-                elif isinstance(event, WebStatusEvent) and event.status == "failed":
-                    failures.append(f"Stream failure: {event.message or event.status}")
+
+                # ------------------------------------------------------
+                # WEB SEARCH EVENT MONITORING
+                # ------------------------------------------------------
+                elif isinstance(
+                    event,
+                    WebStatusEvent,
+                ):
+                    web_status = str(event.status or "unknown")
+
+                    web_status_counts[web_status] += 1
+
+                    if web_status in {
+                        "failed",
+                        "error",
+                    }:
+                        failures.append(
+                            "Web search failure: " f"{event.message or web_status}"
+                        )
+
             stream_completed = True
+
     except Exception as exc:
-        failures.append(f"Stream raised {type(exc).__name__}: {exc}")
+        failures.append("Stream raised " f"{type(exc).__name__}: {exc}")
+
         traceback.print_exc()
 
+    # ------------------------------------------------------------------
     # 7. RESULTS
+    # ------------------------------------------------------------------
     proof = evaluate_scratchpad(observations)
+
     try:
         final_run = client.runs.retrieve_run(run.id)
-        status = field(final_run, "status", "unknown")
-        final_status = str(getattr(status, "value", status))
+
+        status = field(
+            final_run,
+            "status",
+            "unknown",
+        )
+
+        final_status = str(
+            getattr(
+                status,
+                "value",
+                status,
+            )
+        )
+
     except Exception as exc:
         final_status = "unknown"
-        failures.append(f"Could not retrieve final run status: {exc}")
+
+        failures.append("Could not retrieve final run status: " f"{exc}")
+
     if final_status != "completed":
         failures.append(f"Run status={final_status}; expected completed.")
+
     if active_delegation is not None:
         failures.append("Stream ended before the active delegation completed.")
+
     if not counts["ResearchStatusEvent"]:
         failures.append("No ResearchStatusEvent was observed.")
+
+    if not counts["WebStatusEvent"]:
+        failures.append("No WebStatusEvent was observed.")
+
     streamed_text = "".join(content_chunks).strip()
+
     if not streamed_text:
         failures.append("No non-empty ContentEvent was observed.")
 
-    print(f"\n{YELLOW}{'=' * 72}\nDEEP RESEARCH RESULTS\n{'=' * 72}{RESET}")
-    print(f"THREAD_ID={thread.id}\nMESSAGE_ID={message.id}\nRUN_ID={run.id}")
-    print(f"MODEL_ID={MODEL_ID}\nTEST_ID={TEST_ID}")
-    print(f"STREAM_COMPLETED={'YES' if stream_completed else 'NO'}")
-    print(f"CLIENT_TOOL_REQUEST_SURFACED={'YES' if saw_client_tool_request else 'NO'}")
+    print(
+        f"\n{YELLOW}"
+        f"{'=' * 72}\n"
+        f"DEEP RESEARCH RESULTS\n"
+        f"{'=' * 72}"
+        f"{RESET}"
+    )
+
+    print(f"THREAD_ID={thread.id}\n" f"MESSAGE_ID={message.id}\n" f"RUN_ID={run.id}")
+
+    print(f"MODEL_ID={MODEL_ID}\n" f"TEST_ID={TEST_ID}")
+
+    print("STREAM_COMPLETED=" f"{'YES' if stream_completed else 'NO'}")
+
+    print(
+        "CLIENT_TOOL_REQUEST_SURFACED=" f"{'YES' if saw_client_tool_request else 'NO'}"
+    )
+
     print("LOCAL_TOOL_EXECUTOR_USED=NO")
-    print(f"DELEGATIONS_OBSERVED={delegation_count}\nRUN_STATUS={final_status}")
-    print("EVENT_COUNTS=" + json.dumps(dict(counts), sort_keys=True))
-    print(f"TOTAL_ROUND_TRIP_SECONDS={time.perf_counter() - global_start:.4f}")
-    print("\nSCRATCHPAD PROOF (successful tool events only):")
+
+    print(f"DELEGATIONS_OBSERVED={delegation_count}\n" f"RUN_STATUS={final_status}")
+
+    print(
+        "EVENT_COUNTS="
+        + json.dumps(
+            dict(counts),
+            sort_keys=True,
+        )
+    )
+
+    print(
+        "WEB_STATUS_COUNTS="
+        + json.dumps(
+            dict(web_status_counts),
+            sort_keys=True,
+        )
+    )
+
+    print("TOTAL_ROUND_TRIP_SECONDS=" f"{time.perf_counter() - global_start:.4f}")
+
+    print("\nSCRATCHPAD PROOF " "(successful tool events only):")
+
     print(proof.model_dump_json(indent=2))
 
-    # 8. STREAMED CONTENT -- may contain forwarded worker text as well as synthesis
+    # ------------------------------------------------------------------
+    # 8. STREAMED CONTENT
+    # ------------------------------------------------------------------
+    # May contain forwarded worker text as well as synthesis.
     if streamed_text:
-        print(f"\n{GREEN}=== STREAMED MODEL CONTENT ==={RESET}\n{streamed_text}")
+        print(
+            f"\n{GREEN}"
+            f"=== STREAMED MODEL CONTENT ==="
+            f"{RESET}\n"
+            f"{streamed_text}"
+        )
 
+    # ------------------------------------------------------------------
     # 9. ACCEPTANCE
-    print(f"\n{CYAN}=== ACCEPTANCE ==={RESET}")
+    # ------------------------------------------------------------------
+    print(f"\n{CYAN}" f"=== ACCEPTANCE ===" f"{RESET}")
+
     inference_ok = stream_completed and bool(streamed_text)
+
     boundary_ok = not saw_client_tool_request
-    print(f"INFERENCE_STREAM={'PASS' if inference_ok else 'FAIL'}")
-    print(f"CORE_TOOL_BOUNDARY={'PASS' if boundary_ok else 'FAIL'}")
-    print(f"SHARED_SCRATCHPAD={'PASS' if proof.passed else 'NOT_PROVEN'}")
+
+    web_search_ok = bool(counts["WebStatusEvent"])
+
+    print("INFERENCE_STREAM=" f"{'PASS' if inference_ok else 'FAIL'}")
+
+    print("CORE_TOOL_BOUNDARY=" f"{'PASS' if boundary_ok else 'FAIL'}")
+
+    print("WEB_SEARCH_EVENTS=" f"{'PASS' if web_search_ok else 'FAIL'}")
+
+    print("SHARED_SCRATCHPAD=" f"{'PASS' if proof.passed else 'NOT_PROVEN'}")
+
     for failure in failures:
         print(f"FAILURE={failure}")
-    passed = inference_ok and boundary_ok and proof.passed and not failures
+
+    passed = (
+        inference_ok and boundary_ok and web_search_ok and proof.passed and not failures
+    )
+
     color = GREEN if passed else RED
+
     print(
-        f"{color}DEEP_RESEARCH_INTEGRATION={'PASS' if passed else 'FAIL'}{RESET}",
+        f"{color}"
+        "DEEP_RESEARCH_INTEGRATION="
+        f"{'PASS' if passed else 'FAIL'}"
+        f"{RESET}",
         flush=True,
     )
+
     return 0 if passed else 1
 
 
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
+
     except KeyboardInterrupt:
-        print("\nINTERRUPTED: no integration result was established.", file=sys.stderr)
+        print(
+            "\nINTERRUPTED: no integration result was established.",
+            file=sys.stderr,
+        )
+
         raise SystemExit(130)
+
     except Exception:
         traceback.print_exc()
         raise SystemExit(1)
