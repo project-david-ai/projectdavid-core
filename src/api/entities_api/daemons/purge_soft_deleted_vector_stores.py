@@ -21,8 +21,7 @@ Usage
   python purge_soft_deleted_vector_stores.py          # daemon
 
 Environment variables:
-  QDRANT_HOST              — Qdrant service host              (default: localhost)
-  QDRANT_PORT              — Qdrant service port              (default: 6333)
+  QDRANT_URL               — Internal Qdrant URL (default: http://qdrant:6333)
   CHECK_INTERVAL_SECONDS   — daemon polling interval seconds  (default: 300)
   SOFT_DELETE_GRACE_HOURS  — hours after deleted_at before purge (default: 48)
   DRY_RUN                  — "true" to log without deleting   (default: false)
@@ -55,8 +54,7 @@ log = logging.getLogger("soft-delete-vs-purge")
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
-QDRANT_HOST: str = os.getenv("QDRANT_HOST", "localhost")
-QDRANT_PORT: int = int(os.getenv("QDRANT_PORT", "6333"))
+QDRANT_URL: str = os.getenv("QDRANT_URL", "http://qdrant:6333").rstrip("/")
 CHECK_INTERVAL: int = int(os.getenv("CHECK_INTERVAL_SECONDS", "300"))
 GRACE_HOURS: int = int(os.getenv("SOFT_DELETE_GRACE_HOURS", "48"))
 DRY_RUN: bool = os.getenv("DRY_RUN", "false").lower() == "true"
@@ -72,7 +70,7 @@ def delete_qdrant_collection(collection_name: str) -> bool:
     """
     import httpx
 
-    url = f"http://{QDRANT_HOST}:{QDRANT_PORT}/collections/{collection_name}"
+    url = f"{QDRANT_URL}/collections/{collection_name}"
     if DRY_RUN:
         log.info("[DRY_RUN] Would DELETE Qdrant collection: %s", collection_name)
         return True
@@ -182,10 +180,9 @@ def purge_soft_deleted(session) -> tuple[int, int]:
 
 def run_once() -> None:
     log.info(
-        "=== One-shot VS purge | grace=%dh | qdrant=%s:%d | DRY_RUN=%s ===",
+        "=== One-shot VS purge | grace=%dh | qdrant=%s | DRY_RUN=%s ===",
         GRACE_HOURS,
-        QDRANT_HOST,
-        QDRANT_PORT,
+        QDRANT_URL,
         DRY_RUN,
     )
     db = SessionLocal()

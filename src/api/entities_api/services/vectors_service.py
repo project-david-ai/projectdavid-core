@@ -72,9 +72,11 @@ class VectorStoreDBService:
         )
         self.db.add(new_store)
         try:
-            self.db.commit()
+            self.db.flush()
             self.db.refresh(new_store)
-            return ValidationInterface.VectorStoreRead.model_validate(new_store)
+            result = ValidationInterface.VectorStoreRead.model_validate(new_store)
+            self.db.commit()
+            return result
         except IntegrityError as e:
             self.db.rollback()
             if "Duplicate entry" in str(e.orig) or "violates unique constraint" in str(
@@ -204,7 +206,7 @@ class VectorStoreDBService:
         self.db.add(db_file_record)
         validation_error = None
         try:
-            self.db.commit()
+            self.db.flush()
             self.db.refresh(db_file_record)
             try:
                 validated_model = (
@@ -212,13 +214,14 @@ class VectorStoreDBService:
                         db_file_record
                     )
                 )
-                return validated_model
             except Exception as e:
                 validation_error = e
                 logging_utility.error(
                     f"Pydantic validation failed for VectorStoreFileRead on file ID {db_file_record.id}: {validation_error}"
                 )
                 raise validation_error
+            self.db.commit()
+            return validated_model
         except IntegrityError as e:
             self.db.rollback()
             if "Duplicate entry" in str(e.orig) or "violates unique constraint" in str(

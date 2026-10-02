@@ -6,12 +6,15 @@ import json
 import os
 from typing import Any, Dict, Optional
 
-# Server-side native DB manager
-from projectdavid.clients.vector_store_manager import VectorStoreManager
 from projectdavid_common import ToolValidator
 from projectdavid_common.validation import StatusEnum
 
 from src.api.entities_api.services.logging_service import LoggingUtility
+
+# Server-side native DB manager
+from src.api.entities_api.services.vector_runtime.vector_store_manager import (
+    VectorStoreManager,
+)
 
 LOG = LoggingUtility()
 
@@ -135,8 +138,7 @@ class FileSearchMixin:
                 vector_store_ids,
             )
 
-            qdrant_host = os.getenv("VECTOR_STORE_HOST", "qdrant")
-            vector_manager = VectorStoreManager(vector_store_host=qdrant_host)
+            vector_manager = VectorStoreManager()
 
             async def _search_one(
                 vid: str,

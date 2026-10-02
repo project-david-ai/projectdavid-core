@@ -30,7 +30,6 @@ dependencies = [
   "qdrant-client~=1.13.3",
   "pdfplumber~=0.11.6",
   "validators~=0.34.0",
-  "sentence-transformers~=4.0.1",
   "uvicorn[standard]",
   "pysmb",
   "typer>=0.9.0",
@@ -42,6 +41,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Only the existing local file-search embedding path needs this extra.
+embeddings = ["sentence-transformers~=4.0.1"]
 dev = [
   "black==24.1.1",
   "isort==5.13.2",

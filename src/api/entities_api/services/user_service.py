@@ -3,7 +3,6 @@ from datetime import datetime
 from typing import List, Optional
 
 from fastapi import HTTPException, status
-from projectdavid.clients.vector_store_manager import VectorStoreManager
 from projectdavid_common import UtilsInterface, ValidationInterface
 from sqlalchemy import orm
 from sqlalchemy.orm import Session
@@ -20,6 +19,9 @@ from src.api.entities_api.models.models import (
     VectorStore,
 )
 from src.api.entities_api.services.logging_service import LoggingUtility
+from src.api.entities_api.services.vector_runtime.vector_store_manager import (
+    VectorStoreManager,
+)
 from src.api.entities_api.utilities.samba_client import SambaClient
 
 logging_utility = LoggingUtility()
@@ -136,8 +138,7 @@ class UserService:
         Delete every Qdrant collection owned by user_id.
         Errors are logged but do not abort the erasure.
         """
-        qdrant_host = os.getenv("VECTOR_STORE_HOST", "qdrant")
-        vector_manager = VectorStoreManager(vector_store_host=qdrant_host)
+        vector_manager = VectorStoreManager()
 
         stores = db.query(VectorStore).filter(VectorStore.user_id == user_id).all()
 
