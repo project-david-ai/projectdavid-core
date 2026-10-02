@@ -1,3 +1,10 @@
+# [1.60.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.59.3...v1.60.0) (2026-10-02)
+
+
+### Features
+
+* **vector:** move Qdrant storage behind core API ([0a48967](https://github.com/project-david-ai/projectdavid-core/commit/0a48967f18040c5e04d2630e714a4f6d4fc57a7d))
+
 ## [1.59.3](https://github.com/project-david-ai/projectdavid-core/compare/v1.59.2...v1.59.3) (2026-09-30)
 
 
