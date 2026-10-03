@@ -1,3 +1,10 @@
+## [1.60.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.60.0...v1.60.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* **api:** install Project David embeddings runtime ([bf6674f](https://github.com/project-david-ai/projectdavid-core/commit/bf6674feaf9c22968bff5e667b8f09b183780dee))
+
 # [1.60.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.59.3...v1.60.0) (2026-10-02)
 
 
