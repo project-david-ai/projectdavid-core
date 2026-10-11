@@ -34,9 +34,36 @@ class RecordingNativeExec:
         self.calls.append(("update_action_status", args))
 
 
+class FakeAssistantCache:
+    async def retrieve(
+        self,
+        assistant_id: str,
+    ):
+        return {
+            "id": assistant_id,
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "description": "Get weather",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {},
+                        },
+                    },
+                }
+            ],
+        }
+
+
 class ConsumerHarness(ConsumerToolHandlersMixin):
     def __init__(self) -> None:
         self._native_exec = RecordingNativeExec()
+        self._assistant_cache = FakeAssistantCache()
+
+    def get_assistant_cache(self):
+        return self._assistant_cache
 
 
 def test_provider_tool_definition_uses_openai_function_shape():

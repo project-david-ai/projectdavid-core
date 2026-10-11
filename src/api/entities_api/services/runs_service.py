@@ -310,19 +310,95 @@ class RunService:
             base_data = self._to_read_model(run).dict()
             return validator.RunReadDetailed(**base_data, actions=[])
 
-    def update_run_status(self, run_id: str, new_status: str) -> validator.Run:
+    @staticmethod
+    def _apply_status_transition(
+        run: Run,
+        new_status: StatusEnum,
+    ) -> None:
+        """Apply one coherent Run execution-epoch status transition.
+
+        ``run_id`` remains the durable logical identity. Terminal timestamps
+        describe the current execution epoch and therefore move together
+        with status rather than being maintained by unrelated callers.
         """
-        Admin-only status override.
-        Ownership is NOT checked here — the router gate already requires is_admin.
+        previous_status = run.status
+
+        if not isinstance(previous_status, StatusEnum):
+            try:
+                previous_status = StatusEnum(previous_status)
+            except (TypeError, ValueError):
+                previous_status = None
+
+        now = int(time.time())
+        run.status = new_status
+
+        if new_status == StatusEnum.completed:
+            if previous_status != StatusEnum.completed or run.completed_at is None:
+                run.completed_at = now
+
+            run.failed_at = None
+            run.cancelled_at = None
+            run.last_error = None
+            run.incomplete_details = None
+            return
+
+        if new_status == StatusEnum.failed:
+            if previous_status != StatusEnum.failed or run.failed_at is None:
+                run.failed_at = now
+
+            run.completed_at = None
+            run.cancelled_at = None
+            return
+
+        if new_status == StatusEnum.cancelled:
+            if previous_status != StatusEnum.cancelled or run.cancelled_at is None:
+                run.cancelled_at = now
+
+            run.completed_at = None
+            run.failed_at = None
+            run.last_error = None
+            run.incomplete_details = None
+            return
+
+        if new_status == StatusEnum.expired:
+            # expires_at is the lease/deadline field; do not rewrite it
+            # into an observed-expiry timestamp here.
+            run.completed_at = None
+            run.failed_at = None
+            run.cancelled_at = None
+            run.last_error = None
+            run.incomplete_details = None
+            return
+
+        # Re-entering an active execution epoch from a terminal state must
+        # not leave contradictory terminal metadata attached to the Run.
+        if previous_status in TERMINAL_RUN_STATUSES:
+            run.completed_at = None
+            run.failed_at = None
+            run.cancelled_at = None
+            run.last_error = None
+            run.incomplete_details = None
+
+    def update_run_status(self, run_id: str, new_status: str) -> validator.Run:
+        """Canonical Run execution-epoch status transition writer.
+
+        User-facing access control is enforced by the router. Internal
+        orchestration callers use the same transition primitive so status
+        and terminal timestamps cannot drift independently.
         """
         with SessionLocal() as db:
             run = self._get_run_or_404(run_id, db)
+
             try:
-                run.status = StatusEnum(new_status)
+                status = StatusEnum(new_status)
             except ValueError:
                 raise HTTPException(
-                    status_code=400, detail=f"Invalid status: {new_status}"
+                    status_code=400,
+                    detail=f"Invalid status: {new_status}",
                 )
+
+            self._apply_status_transition(run, status)
+
             db.commit()
             db.refresh(run)
             return self._to_read_model(run)
@@ -410,11 +486,13 @@ class RunService:
             # ── Ownership check ──────────────────────────────────────────────
             self._assert_owner(run, user_id)
 
-            if run.status in {StatusEnum.completed, StatusEnum.cancelled}:
+            if run.status in TERMINAL_RUN_STATUSES:
                 raise HTTPException(status_code=400, detail="Run is already finished")
 
-            run.status = StatusEnum.cancelled
-            run.cancelled_at = int(time.time())
+            self._apply_status_transition(
+                run,
+                StatusEnum.cancelled,
+            )
 
             db.commit()
             db.refresh(run)

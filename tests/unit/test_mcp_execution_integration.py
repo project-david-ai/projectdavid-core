@@ -61,16 +61,44 @@ class RecordingNativeExec:
         self.calls.append(("update_action_status", args))
 
 
+def _function_tool(name: str) -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": name,
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    }
+
+
 class FakeAssistantCache:
+    def __init__(
+        self,
+        tools=(),
+    ) -> None:
+        self.tools = list(tools)
+
     async def retrieve(self, assistant_id: str):
-        return {"tools": []}
+        return {
+            "tools": list(self.tools),
+        }
 
 
 class RouterHarness(ToolRoutingMixin, ConsumerToolHandlersMixin):
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        authorized_tool_names=(),
+    ) -> None:
         self._native_exec = RecordingNativeExec()
         self._batfish_owner_user_id = "user_1"
-        self._assistant_cache = FakeAssistantCache()
+        self._assistant_cache = FakeAssistantCache(
+            _function_tool(name) for name in authorized_tool_names
+        )
 
     def get_assistant_cache(self):
         return self._assistant_cache
@@ -225,9 +253,9 @@ def test_executor_rejects_call_for_different_alias():
 
 
 def test_router_executes_bound_mcp_tool_inside_existing_action_lifecycle():
-    harness = RouterHarness()
-
     tool = discovered_tool()
+
+    harness = RouterHarness(authorized_tool_names=(tool.provider_name,))
     client = FakeMcpClient(result_with_text("three issues"))
     executor = McpToolExecutor(tool, lambda: client)
 
@@ -296,9 +324,9 @@ def test_router_executes_bound_mcp_tool_inside_existing_action_lifecycle():
 
 
 def test_router_marks_action_failed_when_mcp_returns_error():
-    harness = RouterHarness()
-
     tool = discovered_tool()
+
+    harness = RouterHarness(authorized_tool_names=(tool.provider_name,))
     client = FakeMcpClient(
         result_with_text(
             "permission denied",
@@ -348,7 +376,7 @@ def test_router_marks_action_failed_when_mcp_returns_error():
 
 
 def test_unbound_tool_still_uses_existing_consumer_handoff():
-    harness = RouterHarness()
+    harness = RouterHarness(authorized_tool_names=("get_weather",))
 
     harness.set_function_call_state(
         {

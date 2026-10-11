@@ -144,7 +144,6 @@ class DockerManager:
         "TOOL_CODE_INTERPRETER",
         "TOOL_WEB_SEARCH",
         "TOOL_COMPUTER",
-        "TOOL_VECTOR_STORE_SEARCH",
     ]
 
     _USER_REQUIRED = {
@@ -283,7 +282,6 @@ class DockerManager:
             "TOOL_CODE_INTERPRETER",
             "TOOL_WEB_SEARCH",
             "TOOL_COMPUTER",
-            "TOOL_VECTOR_STORE_SEARCH",
         ],
         "Other": ["LOG_LEVEL", "PYTHONUNBUFFERED"],
     }

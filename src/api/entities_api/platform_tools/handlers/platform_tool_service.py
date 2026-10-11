@@ -8,9 +8,6 @@ from entities_api.platform_tools.handlers.code_interpreter.code_execution_client
 from entities_api.platform_tools.handlers.computer.shell_command_interface import (
     ShellCommandInterface,
 )
-from entities_api.platform_tools.handlers.vector_store.vector_search_handler import (
-    VectorSearchHandler,
-)
 from entities_api.platform_tools.handlers.web.web_search_handler import FirecrawlService
 
 from src.api.entities_api.services.logging_service import LoggingUtility
@@ -22,14 +19,12 @@ class PlatformToolService:
     function_handlers = {
         "code_interpreter": None,
         "web_search": None,
-        "vector_store_search": None,
         "computer": None,
     }
 
     def __init__(self, base_url=None, api_key=None, assistant_id=None, thread_id=None):
         self._stream_output_handler = None
         self._web_search_handler = None
-        self._vector_search_handler = None
         self.assistant_id = assistant_id
         self.thread_id = thread_id
         self._call_cache = {}
@@ -45,13 +40,6 @@ class PlatformToolService:
         if self._web_search_handler is None:
             self._web_search_handler = FirecrawlService()
         return self._web_search_handler
-
-    def _get_vector__search_handler(self):
-        if self._vector_search_handler is None:
-            self._vector_search_handler = VectorSearchHandler(
-                assistant_id=self.assistant_id
-            )
-        return self._vector_search_handler
 
     def call_function(
         self, function_name: str, arguments: Dict[str, Any]
@@ -82,10 +70,6 @@ class PlatformToolService:
             elif function_name == "web_search":
                 self.function_handlers[function_name] = (
                     self._get_web_search_handler().search_orchestrator
-                )
-            elif function_name == "vector_store_search":
-                self.function_handlers[function_name] = (
-                    self._get_vector__search_handler().execute_search
                 )
             elif function_name == "computer":
                 shell_service = ShellCommandInterface(

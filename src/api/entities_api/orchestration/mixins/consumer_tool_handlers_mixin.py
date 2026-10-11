@@ -10,6 +10,10 @@ from dotenv import load_dotenv
 from projectdavid_common.validation import StatusEnum
 
 from src.api.entities_api.constants.platform import ERROR_NO_CONTENT
+from src.api.entities_api.orchestration.mcp_run_session_manager import (
+    McpRunSessionManager,
+    get_mcp_run_session_manager,
+)
 from src.api.entities_api.orchestration.mcp_tool_executor import McpToolExecutor
 from src.api.entities_api.orchestration.tool_abi import (
     ToolCallEnvelope,
@@ -215,6 +219,29 @@ class ConsumerToolHandlersMixin:
             self.__dict__["_mcp_tool_executors"] = registry
         return registry
 
+    def _mcp_run_session_manager(self) -> McpRunSessionManager:
+        """Return the application-runtime MCP session owner.
+
+        Provider/orchestrator instances may be recreated across inference
+        continuation requests for the same Project David Run. The asyncio
+        application loop survives those request boundaries.
+        """
+
+        return get_mcp_run_session_manager()
+
+    async def _close_mcp_run_sessions(
+        self,
+        run_id: str,
+        *,
+        cancel: bool = False,
+    ) -> None:
+        """Release all live MCP protocol sessions owned by one Run."""
+
+        await get_mcp_run_session_manager().close_run(
+            run_id,
+            cancel=cancel,
+        )
+
     def bind_mcp_tool_executor(self, executor: McpToolExecutor) -> None:
         """Bind one provider-visible MCP alias for this orchestrator instance."""
 
@@ -303,9 +330,21 @@ class ConsumerToolHandlersMixin:
                 message,
             )
 
+        # Stateful MCP servers require protocol-session affinity across
+        # multiple native tool calls in the same Project David Run.
+        #
+        # Scope by authenticated tenant, Run and MCP registration. If an
+        # internal/legacy execution path lacks an owner identity, fall back to
+        # a run-unique scope rather than ever sharing state across Runs.
+        owner_scope = str(
+            getattr(self, "_batfish_owner_user_id", None) or f"run:{call.run_id}"
+        )
+
         task = asyncio.create_task(
-            executor.execute(
-                call,
+            self._mcp_run_session_manager().execute(
+                owner_scope=owner_scope,
+                executor=executor,
+                call=call,
                 progress_callback=progress_callback,
             )
         )
@@ -349,6 +388,10 @@ class ConsumerToolHandlersMixin:
                                     StatusEnum.cancelled.value,
                                 )
 
+                            await self._close_mcp_run_sessions(
+                                call.run_id,
+                                cancel=True,
+                            )
                             return None
 
                     return result
@@ -387,6 +430,11 @@ class ConsumerToolHandlersMixin:
                         exc,
                     )
 
+                await self._close_mcp_run_sessions(
+                    call.run_id,
+                    cancel=True,
+                )
+
                 if action_id:
                     await self._native_exec.update_action_status(
                         action_id,
@@ -410,7 +458,81 @@ class ConsumerToolHandlersMixin:
                     exc,
                 )
 
+            await self._close_mcp_run_sessions(
+                call.run_id,
+                cancel=True,
+            )
             raise
+
+    async def _resolve_authorized_consumer_tool_names(
+        self,
+        assistant_id: str,
+    ) -> frozenset[str]:
+        """
+        Return SDK/MCP function names authorized for this assistant.
+
+        Consumer functions and attached MCP aliases are both represented as
+        ``type=function`` entries in the assistant tools configuration.
+
+        Failure to load that authoritative configuration fails closed.
+        """
+        try:
+            cache = self.get_assistant_cache()
+
+            cfg = await cache.retrieve(assistant_id)
+
+        except Exception as exc:
+            LOG.warning(
+                "CONSUMER-TOOLS ? Failed to load assistant %s "
+                "tool configuration for authority validation: %s. "
+                "Failing closed.",
+                assistant_id,
+                exc,
+            )
+
+            return frozenset()
+
+        raw_tools = (
+            cfg.get("tools")
+            if isinstance(
+                cfg,
+                dict,
+            )
+            else None
+        ) or []
+
+        allowed: set[str] = set()
+
+        for tool in raw_tools:
+            if not isinstance(
+                tool,
+                dict,
+            ):
+                continue
+
+            if tool.get("type") != "function":
+                continue
+
+            function = tool.get("function")
+
+            if not isinstance(
+                function,
+                dict,
+            ):
+                continue
+
+            name = function.get("name")
+
+            if (
+                isinstance(
+                    name,
+                    str,
+                )
+                and name
+            ):
+                allowed.add(name)
+
+        return frozenset(allowed)
 
     async def _handover_to_consumer(
         self,
@@ -434,6 +556,42 @@ class ConsumerToolHandlersMixin:
             assistant_id=assistant_id,
             tool_call_id=tool_call_id,
         )
+
+        authorized_names = await self._resolve_authorized_consumer_tool_names(
+            assistant_id
+        )
+
+        if call.name not in authorized_names:
+            LOG.warning(
+                "CONSUMER-TOOLS ? Rejecting unauthorized consumer/MCP "
+                "tool call: %s (assistant=%s)",
+                call.name,
+                assistant_id,
+            )
+
+            try:
+                await self._native_exec.submit_tool_output(
+                    thread_id=call.thread_id,
+                    assistant_id=call.assistant_id,
+                    tool_call_id=call.tool_call_id,
+                    content=(
+                        f"Error: the tool '{call.name}' is not available "
+                        "to this assistant. It was not declared in the "
+                        "assistant's tools configuration. Do not attempt "
+                        "to call it again."
+                    ),
+                    is_error=True,
+                )
+
+            except Exception as exc:
+                LOG.error(
+                    "CONSUMER-TOOLS ? Failed to persist unauthorized "
+                    "tool rejection for %s: %s",
+                    call.name,
+                    exc,
+                )
+
+            return
 
         action = await self._native_exec.create_action(
             tool_name=call.name,
@@ -496,11 +654,19 @@ class ConsumerToolHandlersMixin:
         run_id: str,
         final_status: Optional[str] = None,
     ) -> None:
-        """Saves final output and marks run completed (Async)."""
+        """Persist assistant output without implicitly completing the Run.
+
+        Assistant/tool-call transcript persistence and Run lifecycle are
+        separate concerns. Provider/orchestration code owns the execution
+        status transition. ``final_status`` remains as an explicit
+        compatibility escape hatch for callers that intentionally want
+        this operation to perform a transition.
+        """
         if not assistant_reply:
             return
 
-        LOG.info(f"TOOL-ROUTER ▸ Finalizing run {run_id}")
+        LOG.info("TOOL-ROUTER Persisting assistant output for run %s", run_id)
+
         await asyncio.to_thread(
             self._save_assistant_message,
             thread_id,
@@ -508,21 +674,42 @@ class ConsumerToolHandlersMixin:
             run_id,
             assistant_reply,
             is_error=False,
-            forced_status=final_status,
         )
 
+        if final_status is not None:
+            await self._native_exec.update_run_status(
+                run_id,
+                final_status,
+            )
+
     async def handle_error(
-        self, assistant_reply: str, thread_id: str, assistant_id: str, run_id: str
+        self,
+        assistant_reply: str,
+        thread_id: str,
+        assistant_id: str,
+        run_id: str,
     ) -> None:
-        """Saves terminal error output and marks run failed (Async)."""
-        await asyncio.to_thread(
-            self._save_assistant_message,
-            thread_id,
-            assistant_id,
-            run_id,
-            assistant_reply or "An unexpected terminal error occurred.",
-            is_error=True,
-        )
+        """Persist terminal error output, fail the epoch, release MCP state."""
+
+        try:
+            await asyncio.to_thread(
+                self._save_assistant_message,
+                thread_id,
+                assistant_id,
+                run_id,
+                assistant_reply or "An unexpected terminal error occurred.",
+                is_error=True,
+            )
+
+            await self._native_exec.update_run_status(
+                run_id,
+                StatusEnum.failed.value,
+            )
+        finally:
+            await self._close_mcp_run_sessions(
+                run_id,
+                cancel=True,
+            )
 
     def _save_assistant_message(
         self,
@@ -557,7 +744,8 @@ class ConsumerToolHandlersMixin:
         except Exception as exc:
             LOG.warning("Failed to append assistant message to cache: %s", exc)
 
-        status = forced_status or (
-            StatusEnum.failed.value if is_error else StatusEnum.completed.value
-        )
-        self._native_exec.run_svc.update_run_status(run_id, status)
+        # Deliberately lifecycle-neutral.
+        #
+        # This method also persists assistant tool-call envelopes. Saving
+        # one of those rows must never imply that the logical Run has
+        # reached a terminal state.

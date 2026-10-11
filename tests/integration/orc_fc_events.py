@@ -117,7 +117,6 @@ t_setup_end = time.perf_counter()
 # ------------------------------------------------------------------
 stream = client.synchronous_inference_stream
 stream.setup(
-    user_id=ENTITIES_USER_ID,
     thread_id=thread.id,
     assistant_id=ASSISTANT_ID,
     message_id=message.id,
@@ -135,7 +134,7 @@ last_tick = t_stream1_start  # Track time between events
 
 # We iterate over EVENTS
 try:
-    for event in stream.stream_events(provider=PROVIDER_KW, model=MODEL_ID):
+    for event in stream.stream_events(model=MODEL_ID):
 
         # --- GRANULAR TIMING ---
         current_tick = time.perf_counter()
@@ -207,7 +206,6 @@ if tool_event:
 
         # Re-setup for final answer
         stream.setup(
-            user_id=ENTITIES_USER_ID,
             thread_id=thread.id,
             assistant_id=ASSISTANT_ID,
             message_id=message.id,

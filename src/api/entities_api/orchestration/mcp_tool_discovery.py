@@ -1,4 +1,5 @@
-﻿"""Adapt MCP tool discovery into Project David's internal Tool ABI.
+﻿# src/api/entities_api/orchestration/mcp_tool_discovery.py
+"""Adapt MCP tool discovery into Project David's internal Tool ABI.
 
 This module owns MCP discovery identity and provider-safe naming only.
 It does not execute tools, mutate orchestration state, persist server

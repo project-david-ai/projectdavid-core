@@ -46,6 +46,7 @@ from entities_api.platform_tools.delegated_model_map.delegation_model_map import
 from projectdavid import StreamEvent
 from projectdavid_common import ToolValidator
 from projectdavid_common.utilities.logging_service import LoggingUtility
+from projectdavid_common.validation import StatusEnum
 
 from src.api.entities_api.constants.platform import PLATFORM_TOOLS
 
@@ -89,6 +90,31 @@ class StreamState:
     decision_buffer: str = ""
     plan_buffer: str = ""
     current_block: str | None = None
+
+
+def _should_handoff_to_sdk_user_tool(
+    *,
+    tool_name: Optional[str],
+    platform_tools: Any,
+    mcp_executor: Any,
+    authorized_consumer_tool_names: frozenset[str],
+) -> bool:
+    """
+    Return True only when a model-emitted function is an actually authorized
+    SDK-managed consumer tool.
+
+    Merely being unknown to the platform router and lacking an MCP executor is
+    not sufficient: hallucinated or otherwise undeclared function names must
+    remain inside Core so their persisted rejection can drive another
+    inference turn.
+    """
+
+    return bool(
+        tool_name
+        and tool_name not in platform_tools
+        and mcp_executor is None
+        and tool_name in authorized_consumer_tool_names
+    )
 
 
 class OrchestratorCore(
@@ -467,11 +493,13 @@ class OrchestratorCore(
         Level 3 Recursive Orchestrator (Batch-Aware).
 
         Run lifecycle guarantees:
-        - started_at   : written on Turn 1
-        - current_turn : written every turn
-        - completed_at : written on clean text-only exit
-        - failed_at    : written on stream failure, max-turn failsafe, or outer exception
-        - last_error   : written on failure paths
+        - run_id        : durable logical execution identity
+        - started_at    : written once for the execution epoch
+        - current_turn  : durable across continuation HTTP boundaries
+        - status        : canonical transition through RunService
+        - completed_at  : derived from transition to completed
+        - failed_at     : derived from transition to failed
+        - last_error    : written before failure transition
         - incomplete_details : written on max-turn failsafe
         """
 
@@ -481,8 +509,34 @@ class OrchestratorCore(
         await self._ensure_config_loaded()
 
         tool_validator = ToolValidator()
-        turn_count = 0
+
+        # A continuation request can recreate the orchestrator while
+        # retaining the same durable Project David Run. Resume the
+        # execution epoch from the authoritative Run instead of
+        # resetting turn accounting at each HTTP boundary.
+        try:
+            persisted_run = await self._native_exec.retrieve_run(run_id)
+            turn_count = int(getattr(persisted_run, "current_turn", 0) or 0)
+            started_at = getattr(
+                persisted_run,
+                "started_at",
+                None,
+            )
+        except Exception as lifecycle_exc:
+            LOG.warning(
+                "ORCHESTRATOR ? Failed to hydrate persisted Run "
+                "lifecycle (non-fatal): %s",
+                lifecycle_exc,
+            )
+            turn_count = 0
+            started_at = None
+
         current_message_id = message_id
+
+        # These flags distinguish a real terminal result from merely
+        # exhausting/breaking the while-loop at the configured limit.
+        clean_exit = False
+        stream_failed = False
 
         try:
             while turn_count < max_turns:
@@ -494,10 +548,23 @@ class OrchestratorCore(
                 # ------------------------------------------------------------------
                 try:
                     fields = {"current_turn": turn_count}
-                    if turn_count == 1:
-                        fields["started_at"] = int(time.time())
 
-                    await self._native_exec.update_run_fields(run_id, **fields)
+                    if started_at is None:
+                        started_at = int(time.time())
+                        fields["started_at"] = started_at
+
+                    await self._native_exec.update_run_fields(
+                        run_id,
+                        **fields,
+                    )
+
+                    # The Run is actively executing during inference.
+                    # Native/consumer tool dispatch may subsequently
+                    # move it to pending_action, but never completed.
+                    await self._native_exec.update_run_status(
+                        run_id,
+                        StatusEnum.in_progress.value,
+                    )
 
                 except Exception as lifecycle_exc:
                     LOG.warning(
@@ -536,12 +603,17 @@ class OrchestratorCore(
                         await self._native_exec.update_run_fields(
                             run_id,
                             last_error=str(stream_exc),
-                            failed_at=int(time.time()),
+                        )
+                        await self._native_exec.update_run_status(
+                            run_id,
+                            StatusEnum.failed.value,
                         )
                     except Exception as lifecycle_exc:
                         LOG.warning(
                             f"ORCHESTRATOR ▸ Failed to write stream error (non-fatal): {lifecycle_exc}"
                         )
+
+                    stream_failed = True
 
                     yield json.dumps(
                         {
@@ -561,21 +633,29 @@ class OrchestratorCore(
                     LOG.info(f"ORCHESTRATOR ▸ Turn {turn_count} completed with text.")
 
                     try:
-                        await self._native_exec.update_run_fields(
+                        await self._native_exec.update_run_status(
                             run_id,
-                            completed_at=int(time.time()),
+                            StatusEnum.completed.value,
                         )
                     except Exception as lifecycle_exc:
                         LOG.warning(
-                            f"ORCHESTRATOR ▸ Failed to write completed_at (non-fatal): {lifecycle_exc}"
+                            f"ORCHESTRATOR ▸ Failed to mark Run completed (non-fatal): {lifecycle_exc}"
                         )
 
+                    clean_exit = True
                     break
 
                 # ------------------------------------------------------------------
-                # TOOL VALIDATION + SDK DETECTION
+                # TOOL VALIDATION + AUTHORIZED SDK DETECTION
                 # ------------------------------------------------------------------
                 has_sdk_user_tool = False
+
+                # Consumer-tool authority is assistant-specific. Resolve it once
+                # for this inference turn so an undeclared/hallucinated function
+                # cannot be mistaken for a legitimate SDK handoff.
+                authorized_consumer_tool_names = (
+                    await self._resolve_authorized_consumer_tool_names(assistant_id)
+                )
 
                 for call in batch:
                     if "function" in call and isinstance(call["function"], dict):
@@ -585,9 +665,13 @@ class OrchestratorCore(
                         tool_name = call.get("name")
                         args = call.get("arguments", {})
 
-                    if (
-                        tool_name not in PLATFORM_TOOLS
-                        and self._get_mcp_tool_executor(tool_name) is None
+                    mcp_executor = self._get_mcp_tool_executor(tool_name)
+
+                    if _should_handoff_to_sdk_user_tool(
+                        tool_name=tool_name,
+                        platform_tools=PLATFORM_TOOLS,
+                        mcp_executor=mcp_executor,
+                        authorized_consumer_tool_names=(authorized_consumer_tool_names),
                     ):
                         has_sdk_user_tool = True
 
@@ -634,18 +718,24 @@ class OrchestratorCore(
             # ----------------------------------------------------------------------
             # FAILSAFE — MAX TURNS
             # ----------------------------------------------------------------------
-            if turn_count >= max_turns:
+            if turn_count >= max_turns and not clean_exit and not stream_failed:
                 LOG.error("ORCHESTRATOR ▸ Max turns reached.")
 
                 try:
+                    details = (
+                        f"Max turns ({max_turns}) reached without clean completion. "
+                        f"Last tool batch size: "
+                        f"{len(self.get_function_call_state() or [])}."
+                    )
+
                     await self._native_exec.update_run_fields(
                         run_id,
-                        failed_at=int(time.time()),
-                        incomplete_details=(
-                            f"Max turns ({max_turns}) reached without clean completion. "
-                            f"Last tool batch size: "
-                            f"{len(self.get_function_call_state() or [])}."
-                        ),
+                        incomplete_details=details,
+                        last_error="Maximum conversation turns exceeded",
+                    )
+                    await self._native_exec.update_run_status(
+                        run_id,
+                        StatusEnum.failed.value,
                     )
                 except Exception as lifecycle_exc:
                     LOG.warning(
@@ -670,7 +760,10 @@ class OrchestratorCore(
                 await self._native_exec.update_run_fields(
                     run_id,
                     last_error=str(exc),
-                    failed_at=int(time.time()),
+                )
+                await self._native_exec.update_run_status(
+                    run_id,
+                    StatusEnum.failed.value,
                 )
             except Exception as lifecycle_exc:
                 LOG.warning(

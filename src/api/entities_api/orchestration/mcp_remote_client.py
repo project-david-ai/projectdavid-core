@@ -1,3 +1,4 @@
+# src/api/entities_api/orchestration/mcp_remote_client.py
 """Remote MCP client transport built on the official MCP Python SDK.
 
 This module deliberately stops at the protocol boundary. Tool discovery mapping,

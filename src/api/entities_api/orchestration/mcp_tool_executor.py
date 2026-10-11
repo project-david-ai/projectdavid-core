@@ -1,3 +1,4 @@
+# src/api/entities_api/orchestration/mcp_tool_executor.py
 """Execute discovered MCP tools through Project David's Tool ABI.
 
 The MCP adapter preserves rich protocol results inside ToolResultEnvelope while
@@ -37,6 +38,15 @@ class McpToolExecutor:
     @property
     def provider_name(self) -> str:
         return self._tool.provider_name
+
+    @property
+    def server_id(self) -> str:
+        """Durable MCP registration identity for this tool."""
+        return self._tool.server_id
+
+    def client_context(self) -> AsyncContextManager[RemoteMcpClient]:
+        """Create the registered remote-client context for runtime ownership."""
+        return self._client_factory()
 
     @staticmethod
     def _is_timeout_error(exc: BaseException) -> bool:
@@ -134,16 +144,66 @@ class McpToolExecutor:
             is_error=result.is_error,
         )
 
+    def failure_result(
+        self,
+        exc: Exception,
+    ) -> ToolResultEnvelope:
+        """Map an MCP transport/protocol failure onto the tool ABI."""
+
+        if self._is_timeout_error(exc):
+            return ToolResultEnvelope(
+                content=(f"ERROR: MCP tool '{self.provider_name}' timed out"),
+                metadata={
+                    "mcp_timeout": True,
+                    "exception_type": type(exc).__name__,
+                },
+                is_error=True,
+            )
+
+        return ToolResultEnvelope(
+            content=(
+                f"ERROR: MCP tool '{self.provider_name}' failed: "
+                f"{type(exc).__name__}: {exc}"
+            ),
+            is_error=True,
+        )
+
+    async def execute_connected(
+        self,
+        client: RemoteMcpClient,
+        call: ToolCallEnvelope,
+        *,
+        progress_callback: Any | None = None,
+    ) -> ToolResultEnvelope:
+        """Execute through an already-active Project David-owned MCP session."""
+
+        if call.name != self.provider_name:
+            raise ValueError(
+                "MCP executor received a call for a different provider alias"
+            )
+
+        try:
+            result = await client.call_tool(
+                self._tool.remote_name,
+                dict(call.arguments),
+                progress_callback=progress_callback,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return self.failure_result(exc)
+
+        return self._adapt_result(result)
+
     async def execute(
         self,
         call: ToolCallEnvelope,
         *,
         progress_callback: Any | None = None,
     ) -> ToolResultEnvelope:
-        """Execute the mapped remote MCP tool.
+        """Execute using a short-lived MCP session.
 
-        asyncio cancellation deliberately escapes this fault boundary so the
-        Project David Run lifecycle can cancel the in-flight MCP request.
+        This remains the standalone/backwards-compatible execution path.
+        Runtime orchestration may instead provide a run-affine connected client
+        through ``execute_connected``.
         """
 
         if call.name != self.provider_name:
@@ -152,35 +212,14 @@ class McpToolExecutor:
             )
 
         try:
-            async with self._client_factory() as client:
-                result = await client.call_tool(
-                    self._tool.remote_name,
-                    dict(call.arguments),
+            async with self.client_context() as client:
+                return await self.execute_connected(
+                    client,
+                    call,
                     progress_callback=progress_callback,
                 )
-        # Remote MCP execution is a fault boundary: transport, protocol, and
-        # server failures become tool failures. asyncio.CancelledError derives
-        # from BaseException and therefore remains an orchestration signal.
         except Exception as exc:  # noqa: BLE001
-            if self._is_timeout_error(exc):
-                return ToolResultEnvelope(
-                    content=(f"ERROR: MCP tool '{self.provider_name}' timed out"),
-                    metadata={
-                        "mcp_timeout": True,
-                        "exception_type": type(exc).__name__,
-                    },
-                    is_error=True,
-                )
-
-            return ToolResultEnvelope(
-                content=(
-                    f"ERROR: MCP tool '{self.provider_name}' failed: "
-                    f"{type(exc).__name__}: {exc}"
-                ),
-                is_error=True,
-            )
-
-        return self._adapt_result(result)
+            return self.failure_result(exc)
 
 
 __all__ = ["McpToolExecutor"]

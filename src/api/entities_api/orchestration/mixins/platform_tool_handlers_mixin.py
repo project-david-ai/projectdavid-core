@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 class PlatformToolHandlersMixin:
     """
     Handlers for platform-native tools shipped with the substrate
-    (web_search, code_interpreter, vector_store_search, computer).
+    (web_search, code_interpreter, computer).
 
     Owns:
         _submit_platform_tool_output() — thin async wrapper around
@@ -36,7 +36,6 @@ class PlatformToolHandlersMixin:
         _handle_web_search()           — formats search results and appends
                                          follow-up instructions before submission
         _handle_code_interpreter()     — parses result JSON, extracts output text
-        _handle_vector_search()        — passes result directly to submission
         _handle_computer()             — passes shell output or ERROR_NO_CONTENT
         _process_platform_tool_calls() — main entry point: creates Action record,
                                          updates run status, calls platform service,
@@ -153,24 +152,6 @@ class PlatformToolHandlersMixin:
             action=action,
         )
 
-    async def _handle_vector_search(
-        self,
-        *,
-        thread_id: str,
-        assistant_id: str,
-        tool_call_id: Optional[str] = None,
-        output: Any,
-        action,
-    ):
-        """Async handler for vector store results."""
-        await self._submit_platform_tool_output(
-            thread_id=thread_id,
-            assistant_id=assistant_id,
-            tool_call_id=tool_call_id,
-            content=str(output),
-            action=action,
-        )
-
     async def _handle_computer(
         self,
         *,
@@ -250,7 +231,6 @@ class PlatformToolHandlersMixin:
         handlers = {
             "web_search": self._handle_web_search,
             "code_interpreter": self._handle_code_interpreter,
-            "vector_store_search": self._handle_vector_search,
             "computer": self._handle_computer,
         }
 

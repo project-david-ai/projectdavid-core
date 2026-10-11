@@ -33,7 +33,7 @@ L3_INSTRUCTIONS = [
 # ---------------------------------------------------------------------------
 TOOL_INSTRUCTION_MAP = {
     "code_interpreter": ["CODE_INTERPRETER", "CODE_FILE_HANDLING"],
-    "file_search": ["VECTOR_SEARCH_EXAMPLES"],
+    "file_search": [],
     "web_search": ["WEB_SEARCH_RULES"],
     "computer": [],  # no instruction bundle yet
 }

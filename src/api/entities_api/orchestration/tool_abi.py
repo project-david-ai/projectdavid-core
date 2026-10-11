@@ -1,3 +1,4 @@
+# src/api/entities_api/orchestration/tool_abi.py
 """Minimal internal tool contracts at Project David's execution boundary.
 
 These types describe behavior that Core already supports. They do not add a
