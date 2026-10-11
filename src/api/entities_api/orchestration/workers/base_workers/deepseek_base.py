@@ -225,7 +225,7 @@ class DeepSeekBaseWorker(
                 junior_engineer_setting = False
                 await self._native_exec.update_run_fields(
                     run_id,
-                    meta_data={"api_key": api_key},
+                    meta_data={"api_key": api_key, "delegated_model": pre_mapped_model},
                 )
 
             elif research_worker_setting:
