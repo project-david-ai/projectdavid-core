@@ -1,3 +1,15 @@
+# [1.61.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.60.1...v1.61.0) (2026-10-11)
+
+
+### Bug Fixes
+
+* **deepseek:** preserve runtime model for delegated research ([cfc9f8c](https://github.com/project-david-ai/projectdavid-core/commit/cfc9f8cc45730cb9c4060b3166dc763951148a24))
+
+
+### Features
+
+* **core:** harden MCP session lifecycle and tool execution authority ([e3deb21](https://github.com/project-david-ai/projectdavid-core/commit/e3deb21b4ec1f081c1522b16d6ce571a1af5164d))
+
 ## [1.60.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.60.0...v1.60.1) (2026-10-03)
 
 
