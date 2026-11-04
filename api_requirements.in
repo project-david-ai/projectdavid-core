@@ -9,6 +9,7 @@ certifi
 cffi
 click
 cryptography
+defusedxml==0.7.1
 exceptiongroup
 fastapi
 greenlet

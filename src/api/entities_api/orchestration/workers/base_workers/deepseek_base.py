@@ -2,11 +2,9 @@
 from __future__ import annotations
 
 import asyncio
-import html
 import json
 import os
 import queue as _queue_mod
-import re
 import threading
 import time
 from abc import ABC, abstractmethod
@@ -138,93 +136,11 @@ class DeepSeekBaseWorker(
 
     @staticmethod
     def _normalise_dsml_calls(text: str) -> str:
-        """Bridge complete DeepSeek V4.1 DSML tool calls to the existing <fc> ABI.
+        # Existing Rust routing, tool permissions and action lifecycle
+        # remain authoritative.
+        from src.api.entities_api.clients.dsml_tool_calls import normalise_dsml_calls
 
-        DSML is emitted as *text* by some Together AI DeepSeek deployments,
-        rather than as OpenAI-native tool_calls. Parsing is atomic per block:
-        invalid/incomplete invocations are never dispatched.
-        """
-        if "<｜DSML｜" not in text:
-            return text
-
-        block_re = re.compile(
-            r"<｜DSML｜\s*calls\s*>(.*?)</｜DSML｜\s*calls\s*>",
-            re.DOTALL,
-        )
-        invoke_re = re.compile(
-            r"<｜DSML｜\s*invoke\b([^>]*)>(.*?)</｜DSML｜\s*invoke\s*>",
-            re.DOTALL,
-        )
-        param_re = re.compile(
-            r"<｜DSML｜\s*parameter\b([^>]*)>(.*?)</｜DSML｜\s*parameter\s*>",
-            re.DOTALL,
-        )
-        attr_re = re.compile(r"([A-Za-z_][\w-]*)\s*=\s*([\"'])(.*?)\2", re.DOTALL)
-
-        def attributes(source: str) -> dict[str, str]:
-            return {
-                name: html.unescape(value) for name, _, value in attr_re.findall(source)
-            }
-
-        def replace_block(match: re.Match[str]) -> str:
-            block = match.group(1)
-            invocations = list(invoke_re.finditer(block))
-            if not invocations or len(invocations) != len(
-                re.findall(r"<｜DSML｜\s*invoke\b", block)
-            ):
-                LOG.warning(
-                    "DEEPSEEK DSML: incomplete invocation block; not dispatching"
-                )
-                return match.group(0)
-
-            calls: list[str] = []
-            for invocation in invocations:
-                tool_name = attributes(invocation.group(1)).get("name")
-                body = invocation.group(2)
-                params = list(param_re.finditer(body))
-                if not tool_name or len(params) != len(
-                    re.findall(r"<｜DSML｜\s*parameter\b", body)
-                ):
-                    LOG.warning("DEEPSEEK DSML: malformed invocation; not dispatching")
-                    return match.group(0)
-
-                arguments: dict[str, Any] = {}
-                for parameter in params:
-                    attrs = attributes(parameter.group(1))
-                    key = attrs.get("name")
-                    if not key or key in arguments:
-                        LOG.warning(
-                            "DEEPSEEK DSML: invalid/duplicate parameter; not dispatching"
-                        )
-                        return match.group(0)
-                    value = html.unescape(parameter.group(2))
-                    if attrs.get("string", "true").lower() == "false":
-                        try:
-                            arguments[key] = json.loads(value)
-                        except json.JSONDecodeError:
-                            LOG.warning(
-                                "DEEPSEEK DSML: invalid JSON parameter; not dispatching"
-                            )
-                            return match.group(0)
-                    else:
-                        arguments[key] = value
-
-                calls.append(
-                    "<fc>"
-                    + json.dumps(
-                        {"name": tool_name, "arguments": arguments},
-                        ensure_ascii=False,
-                    )
-                    + "</fc>"
-                )
-
-            LOG.info(
-                "DEEPSEEK DSML: converted %d invocation(s) to native routing ABI",
-                len(calls),
-            )
-            return "\n".join(calls)
-
-        return block_re.sub(replace_block, text)
+        return normalise_dsml_calls(text)
 
     async def stream(
         self,

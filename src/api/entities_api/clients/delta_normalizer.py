@@ -78,29 +78,43 @@ class DeltaNormalizer:
 
     @staticmethod
     def _extract_json(text: str) -> dict | None:
-        """
-        Bulletproof JSON extractor.
-        Scans messy text (e.g. LLM rambling) to find and parse the first valid
-        JSON object.
-        """
-        start = 0
-        while True:
-            start = text.find("{", start)
-            if start == -1:
-                break
-            depth = 0
-            for i in range(start, len(text)):
-                if text[i] == "{":
-                    depth += 1
-                elif text[i] == "}":
-                    depth -= 1
-                    if depth == 0:
-                        candidate = text[start : i + 1]
+        """Find a complete tool call, respecting quoted braces and escapes."""
+
+        decoder = json.JSONDecoder()
+        start = text.find("{")
+
+        while start >= 0:
+            try:
+                parsed, _ = decoder.raw_decode(text, start)
+            except json.JSONDecodeError:
+                pass
+            else:
+                if isinstance(parsed, dict):
+                    name = parsed.get("name")
+                    arguments = parsed.get("arguments")
+
+                    if (
+                        isinstance(name, str)
+                        and name.strip()
+                        and isinstance(arguments, dict)
+                    ):
+                        return parsed
+
+                    if (
+                        isinstance(name, str)
+                        and name.strip()
+                        and isinstance(arguments, str)
+                    ):
                         try:
-                            return json.loads(candidate)
+                            valid_arguments = json.loads(arguments)
                         except json.JSONDecodeError:
-                            break
-            start += 1
+                            valid_arguments = None
+
+                        if isinstance(valid_arguments, dict):
+                            return parsed
+
+            start = text.find("{", start + 1)
+
         return None
 
     # ── Rust-accelerated buffer processor ────────────────────────────────────
