@@ -114,7 +114,16 @@ class ToolRoutingMixin:
         return self._function_calls
 
     def set_structured_function_calls(self, calls: List[Dict]) -> List[Dict]:
-        """Promote normalized provider tool calls directly into routing state.
+        """Normalize provider tool calls and publish them to routing state."""
+        normalized = self.normalize_structured_function_calls(calls)
+        if normalized:
+            self.set_tool_response_state(True)
+            self.set_function_call_state(normalized)
+        return normalized
+
+    @staticmethod
+    def normalize_structured_function_calls(calls: List[Dict]) -> List[Dict]:
+        """Normalize provider tool calls without publishing them for dispatch.
 
         Structured ``tool_call`` events are authoritative when a provider or
         DeltaNormalizer has already identified the function call.  The legacy
@@ -189,10 +198,6 @@ class ToolRoutingMixin:
             }
 
             normalized.append(item)
-
-        if normalized:
-            self.set_tool_response_state(True)
-            self.set_function_call_state(normalized)
 
         return normalized
 

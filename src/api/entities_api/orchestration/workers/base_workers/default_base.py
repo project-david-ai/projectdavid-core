@@ -29,6 +29,10 @@ from src.api.entities_api.orchestration.engine.orchestrator_core import (
 )
 
 # --- MIXINS ---
+from src.api.entities_api.orchestration.mixins.g97_native_history import (
+    prepare_bonsai_native_history,
+    to_native_assistant_envelope,
+)
 from src.api.entities_api.orchestration.mixins.provider_mixins import _ProviderMixins
 
 load_dotenv()
@@ -169,11 +173,20 @@ class DefaultBaseWorker(
         # Delegated research workers inherit this model unchanged.
 
         self._inference_model = pre_mapped_model
+        g97_native_mode = False
         try:
             if hasattr(self, "_get_model_map") and (
                 mapped := self._get_model_map(model)
             ):
                 model = mapped
+
+            g97_native_mode = (
+                type(self).__name__ == "TogetherDefaultWorker"
+                and "Prism-ML/Ternary-Bonsai-27B" in str(model)
+                and os.environ.get("G97_DISABLE_NATIVE_BONSAI") != "1"
+            )
+            g97_native_events = []
+            g97_native_tools = None
 
             self.assistant_id = assistant_id
             await self._ensure_config_loaded()
@@ -337,6 +350,15 @@ class DefaultBaseWorker(
                 )
                 ctx = normalise_for_chat(ctx, max_images=self.VISION_MAX_IMAGES)
 
+            if g97_native_mode:
+                ctx, g97_native_tools = self.prepare_native_tool_context(ctx)
+                if g97_native_tools is None:
+                    raise RuntimeError("G97_NATIVE_TOOL_SCHEMAS_MISSING")
+                ctx = prepare_bonsai_native_history(ctx)
+                LOG.info(
+                    "G97_NATIVE_BONSAI=ENABLED; TOOL_SCHEMAS=%d", len(g97_native_tools)
+                )
+
             LOG.info(
                 f"\nRAW_CTX_DUMP:\n{json.dumps(ctx, indent=2, ensure_ascii=False)}"
             )
@@ -360,16 +382,26 @@ class DefaultBaseWorker(
             raw_stream = client.stream_chat_completion(
                 messages=ctx,
                 model=model,
+                **({"tools": g97_native_tools} if g97_native_tools else {}),
                 **({"max_tokens": _max_tokens} if _max_tokens is not None else {}),
                 **({"top_p": _top_p} if _top_p is not None else {}),
                 temperature=_temperature,
                 stream=True,
             )
 
-            async for chunk in DeltaNormalizer.async_iter_deltas(raw_stream, run_id):
+            async for chunk in DeltaNormalizer.async_iter_deltas(
+                raw_stream, run_id, strict_native_tool_calls=g97_native_mode
+            ):
                 if stop_event.is_set():
                     break
 
+                if g97_native_mode:
+                    # Native argument fragments are NOT text <fc> fragments.
+                    if chunk.get("type") == "call_arguments":
+                        continue
+                    if chunk.get("type") == "tool_call":
+                        g97_native_events.append(chunk)
+                        continue
                 self._update_stream_state(chunk, state)
 
                 ctype = chunk.get("type")
@@ -377,6 +409,9 @@ class DefaultBaseWorker(
                     continue
 
                 yield json.dumps(chunk)
+
+            if g97_native_mode and stop_event.is_set():
+                return
 
             # Cleanup open tags
             if state.current_block == "fc":
@@ -399,15 +434,40 @@ class DefaultBaseWorker(
                 {"type": "status", "status": "processing", "run_id": run_id}
             )
 
-            tool_calls_batch = self.parse_and_set_function_calls(
-                state.accumulated, state.assistant_reply
-            )
-
-            message_to_save = state.accumulated
+            if g97_native_mode:
+                tool_calls_batch = []
+                message_to_save = state.accumulated
+                if g97_native_events:
+                    calls = [event.get("content") for event in g97_native_events]
+                    if any(
+                        not isinstance(call, dict)
+                        or not isinstance(call.get("id"), str)
+                        or not call["id"].strip()
+                        for call in calls
+                    ):
+                        raise RuntimeError("G97_NATIVE_PROVIDER_TOOL_ID_MISSING")
+                    if not g97_native_tools or any(
+                        isinstance(call.get("arguments"), str)
+                        and not call["arguments"].strip()
+                        for call in calls
+                    ):
+                        raise RuntimeError("G97_NATIVE_TOOL_CALL_VALIDATION_FAILED")
+                    tool_calls_batch = self.normalize_structured_function_calls(calls)
+                    if len(tool_calls_batch) != len(calls):
+                        raise RuntimeError("G97_NATIVE_TOOL_CALL_VALIDATION_FAILED")
+                    message_to_save = to_native_assistant_envelope(tool_calls_batch)
+                elif "<fc>" in state.accumulated or "<｜DSML｜" in state.accumulated:
+                    raise RuntimeError("G97_TEXT_TOOL_CALL_IN_NATIVE_MODE")
+            else:
+                tool_calls_batch = self.parse_and_set_function_calls(
+                    state.accumulated, state.assistant_reply
+                )
+                message_to_save = state.accumulated
             final_status = StatusEnum.completed.value
 
             if tool_calls_batch:
-                self._tool_queue = tool_calls_batch
+                if not g97_native_mode:
+                    self._tool_queue = tool_calls_batch
                 final_status = StatusEnum.pending_action.value
                 LOG.info(
                     f"🚀[L3 NATIVE MODE] Turn 1 Batch size: {len(tool_calls_batch)}"
@@ -418,7 +478,18 @@ class DefaultBaseWorker(
                     message_to_save, thread_id, self.assistant_id, run_id
                 )
 
+            if g97_native_mode and stop_event.is_set():
+                return
             await self._native_exec.update_run_status(run_id, final_status)
+
+            if g97_native_mode and tool_calls_batch:
+                if stop_event.is_set():
+                    return
+                self._tool_queue = tool_calls_batch
+                self.set_tool_response_state(True)
+                self.set_function_call_state(tool_calls_batch)
+                for event in g97_native_events:
+                    yield json.dumps(event)
 
             if not tool_calls_batch:
                 yield json.dumps(
@@ -426,6 +497,8 @@ class DefaultBaseWorker(
                 )
 
         except Exception as exc:
+            if g97_native_mode:
+                raise
             LOG.error(f"DEBUG: Stream Exception: {exc}")
             yield json.dumps(
                 {"type": "error", "content": f"Stream error: {exc}", "run_id": run_id}

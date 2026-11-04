@@ -188,7 +188,11 @@ class DeltaNormalizer:
 
     @classmethod
     async def async_iter_deltas(
-        cls, raw_stream: AsyncGenerator[Any, None], run_id: str
+        cls,
+        raw_stream: AsyncGenerator[Any, None],
+        run_id: str,
+        *,
+        strict_native_tool_calls: bool = False,
     ) -> AsyncGenerator[dict[str, Any], None]:
         buffer = ""
         state = "content"
@@ -246,11 +250,13 @@ class DeltaNormalizer:
                 for tc in t_calls:
                     if isinstance(tc, dict):
                         t_index = tc.get("index", 0)
+                        call_id = tc.get("id")
                         fn = tc.get("function", {})
                         fn_name = fn.get("name")
                         fn_args = fn.get("arguments", "")
                     else:
                         t_index = getattr(tc, "index", 0)
+                        call_id = getattr(tc, "id", None)
                         fn = getattr(tc, "function", None)
                         fn_name = getattr(fn, "name", None) if fn else None
                         fn_args = getattr(fn, "arguments", "") if fn else ""
@@ -261,6 +267,10 @@ class DeltaNormalizer:
                         fn_args = ""
 
                     tool_data = pending_tool_calls[t_index]
+                    if strict_native_tool_calls and call_id:
+                        if tool_data.get("id", call_id) != call_id:
+                            raise ValueError("Native tool call changed its provider ID")
+                        tool_data["id"] = call_id
                     if fn_name:
                         tool_data["function"]["name"] += fn_name
                         yield {
@@ -279,16 +289,27 @@ class DeltaNormalizer:
             seg = seg or ""
 
             if finish_reason == "tool_calls":
-                for idx, data in list(pending_tool_calls.items()):
+                for data in pending_tool_calls.values():
                     name = data["function"]["name"]
                     args = data["function"]["arguments"]
+                    if strict_native_tool_calls and not name:
+                        raise ValueError(
+                            "Native tool call is missing its function name"
+                        )
                     if name:
+                        content = {"name": name, "arguments": args}
+                        if strict_native_tool_calls:
+                            content["id"] = data.get("id")
                         yield {
                             "type": "tool_call",
-                            "content": {"name": name, "arguments": args},
+                            "content": content,
                             "run_id": run_id,
                         }
                 pending_tool_calls.clear()
+            elif strict_native_tool_calls and pending_tool_calls and finish_reason:
+                raise ValueError(
+                    "Native tool call stream ended without tool_calls finish"
+                )
 
             if not seg:
                 continue
@@ -737,6 +758,10 @@ class DeltaNormalizer:
 
         # ── Flush pending tool calls ──────────────────────────────────────────
         if pending_tool_calls:
+            if strict_native_tool_calls:
+                raise ValueError(
+                    "Native tool call stream ended without tool_calls finish"
+                )
             for idx, data in list(pending_tool_calls.items()):
                 name = data["function"]["name"]
                 args = data["function"]["arguments"]
