@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import HTTPException
+from projectdavid_common.schemas.deployment_schemas import DeploymentUpdateRequest
 from projectdavid_common.schemas.enums import StatusEnum
 from projectdavid_common.utilities.identifier_service import IdentifierService
 from projectdavid_common.utilities.logging_service import LoggingUtility

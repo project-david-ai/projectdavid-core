@@ -6,10 +6,11 @@ from unittest.mock import Mock, patch
 import pytest
 from fastapi import HTTPException
 
+from src.api.training.services.deployment_service import DeploymentService
+
 deployments_router = importlib.import_module(
     "src.api.training.routers.deployments_router"
 )
-from src.api.training.services.deployment_service import DeploymentService
 
 
 def test_service_returns_runtime_capability_payload():
