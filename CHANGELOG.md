@@ -1,3 +1,11 @@
+## [1.61.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.61.0...v1.61.1) (2026-11-06)
+
+
+### Bug Fixes
+
+* **bonsai:** validate native tool batches before dispatch ([364fa95](https://github.com/project-david-ai/projectdavid-core/commit/364fa95d2ee635793eedc7ba7b4455a5f35f3e21))
+* **deepseek:** validate DSML tool call envelopes ([35547df](https://github.com/project-david-ai/projectdavid-core/commit/35547df732b40927fd1908b5da84404104ee9c41))
+
 # [1.61.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.60.1...v1.61.0) (2026-10-11)
 
 
