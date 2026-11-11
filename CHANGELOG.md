@@ -1,3 +1,10 @@
+## [1.61.2](https://github.com/project-david-ai/projectdavid-core/compare/v1.61.1...v1.61.2) (2026-11-11)
+
+
+### Bug Fixes
+
+* **api:** publish consolidated assistant summaries and run listing ([fe5dbfd](https://github.com/project-david-ai/projectdavid-core/commit/fe5dbfd648f795ec60fd57cc8ff58d89d2e554cf))
+
 ## [1.61.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.61.0...v1.61.1) (2026-11-06)
 
 
