@@ -94,6 +94,7 @@ deb http://security.debian.org/debian-security bookworm-security main contrib no
     > /etc/apt/sources.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
+        libatomic1 \
         libgl1 \
         libglib2.0-0 \
         libmagic1 \
