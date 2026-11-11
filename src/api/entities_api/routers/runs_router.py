@@ -256,6 +256,42 @@ def list_runs(
 
 
 @router.get(
+    "/assistants/{assistant_id}/runs",
+    response_model=ValidationInterface.RunListResponse,
+)
+def list_runs_for_assistant(
+    assistant_id: str,
+    limit: int = Query(20, ge=1, le=100),
+    order: Literal["asc", "desc"] = Query("desc"),
+    after: Optional[str] = Query(None, min_length=1, max_length=64),
+    auth_key: ApiKeyModel = Depends(get_api_key),
+):
+    try:
+        runs, has_more = RunService().list_runs_by_assistant_id(
+            assistant_id,
+            user_id=auth_key.user_id,
+            limit=limit,
+            order=order,
+            after=after,
+        )
+        return {
+            "object": "list",
+            "data": runs,
+            "first_id": runs[0].id if runs else None,
+            "last_id": runs[-1].id if runs else None,
+            "has_more": has_more,
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        logging_utility.error("Failed to list runs for assistant %s", assistant_id)
+        raise HTTPException(
+            status_code=500,
+            detail="An unexpected error occurred.",
+        ) from None
+
+
+@router.get(
     "/threads/{thread_id}/runs",
     response_model=ValidationInterface.RunListResponse,
 )

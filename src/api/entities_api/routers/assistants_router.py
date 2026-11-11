@@ -1,11 +1,18 @@
 # src/api/entities_api/routers/assistants.py
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from projectdavid_common import ValidationInterface
+from typing import Annotated
 
-from src.api.entities_api.dependencies import get_api_key
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from projectdavid_common import ValidationInterface
+from sqlalchemy.orm import Session
+
+from src.api.entities_api.dependencies import get_api_key, get_db
 from src.api.entities_api.models.models import ApiKey as ApiKeyModel
-from src.api.entities_api.services.assistants_service import AssistantService
+from src.api.entities_api.services.assistants_service import (
+    AssistantService,
+    SummaryFilters,
+    SummaryPage,
+)
 from src.api.entities_api.services.logging_service import LoggingUtility
 
 router = APIRouter()
@@ -33,6 +40,20 @@ def create_assistant(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error",
         ) from exc
+
+
+@router.get("/assistants/summaries", response_model=SummaryPage)
+def assistant_summaries(
+    filters: Annotated[SummaryFilters, Query()],
+    auth_key: ApiKeyModel = Depends(get_api_key),
+    db: Session = Depends(get_db),
+):
+    """List owned active assistants. Treat name-prefix wildcards literally."""
+    return AssistantService.list_summaries(
+        db=db,
+        user_id=auth_key.user_id,
+        filters=filters,
+    )
 
 
 @router.get(

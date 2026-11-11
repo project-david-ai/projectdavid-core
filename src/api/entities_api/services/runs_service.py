@@ -479,6 +479,62 @@ class RunService:
 
             return [self._to_read_model(r) for r in rows], has_more
 
+    def list_runs_by_assistant_id(
+        self,
+        assistant_id: str,
+        *,
+        user_id: str,
+        limit: int = 20,
+        order: str = "desc",
+        after: Optional[str] = None,
+    ) -> Tuple[List[validator.Run], bool]:
+        """List this user's runs for an assistant; use the last ID as `after`."""
+        if not 1 <= limit <= 100:
+            raise HTTPException(422, "limit must be between 1 and 100")
+
+        if order not in ("asc", "desc"):
+            raise HTTPException(422, "order must be 'asc' or 'desc'")
+
+        with SessionLocal() as db:
+            query = db.query(Run).filter(
+                Run.user_id == user_id,
+                Run.assistant_id == assistant_id,
+            )
+
+            if after is not None:
+                cursor = (
+                    query.with_entities(Run.id, Run.created_at)
+                    .filter(Run.id == after)
+                    .first()
+                )
+
+                if cursor is None or cursor.created_at is None:
+                    raise HTTPException(422, "Invalid pagination cursor")
+
+                if order == "asc":
+                    query = query.filter(
+                        (Run.created_at > cursor.created_at)
+                        | ((Run.created_at == cursor.created_at) & (Run.id > cursor.id))
+                    )
+                else:
+                    query = query.filter(
+                        (Run.created_at < cursor.created_at)
+                        | ((Run.created_at == cursor.created_at) & (Run.id < cursor.id))
+                    )
+
+            ordering = (
+                (Run.created_at.asc(), Run.id.asc())
+                if order == "asc"
+                else (Run.created_at.desc(), Run.id.desc())
+            )
+
+            rows = query.order_by(*ordering).limit(limit + 1).all()
+
+            return (
+                [self._to_read_model(run) for run in rows[:limit]],
+                len(rows) > limit,
+            )
+
     def cancel_run(self, run_id: str, *, user_id: str) -> validator.Run:
         with SessionLocal() as db:
             run = self._get_run_or_404(run_id, db)
