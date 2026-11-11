@@ -261,7 +261,10 @@ class AssistantService:
         user_id: str,
         filters: SummaryFilters,
     ) -> SummaryPage:
-        """Return a bounded page of active assistants visible to this user."""
+        """Return a bounded page of active assistants visible to this user.
+        Apply ownership, filtering, and cursor pagination in SQL before
+        serializing summary fields. The caller owns the database session.
+        """
         rows = db.execute(summary_query(user_id, filters)).mappings().all()
 
         has_more = len(rows) > filters.limit
