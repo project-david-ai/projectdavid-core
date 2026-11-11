@@ -1,0 +1,4 @@
+# Use second, after reference-projectdavid-platform/docker-compose.yml.
+services:
+  api:
+    image: projectdavid-core-api:1.61-agent-summaries-local

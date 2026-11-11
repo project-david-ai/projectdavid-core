@@ -1,0 +1,6 @@
+# Narrow local overlay for the installed Core 1.61; do not replace unrelated source.
+FROM thanosprime/projectdavid-core-api:1.61
+COPY src/api/entities_api/services/assistant_summaries.py /app/src/api/entities_api/services/
+COPY src/api/entities_api/services/assistants_service.py /app/src/api/entities_api/services/
+COPY src/api/entities_api/routers/assistants_router.py /app/src/api/entities_api/routers/
+COPY migrations/versions/eaf2f16ac073_assistant_summary_indexes.py /app/migrations/versions/
