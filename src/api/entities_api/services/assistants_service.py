@@ -104,9 +104,11 @@ def decode_cursor(cursor: str) -> tuple[int, str]:
         version, ts, ident = data
 
         if (
-            type(version) is not int
+            not isinstance(version, int)
+            or isinstance(version, bool)
             or version != 1
-            or type(ts) is not int
+            or not isinstance(ts, int)
+            or isinstance(ts, bool)
             or not 0 <= ts <= 2**31 - 1
         ):
             raise ValueError
