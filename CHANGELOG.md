@@ -1,3 +1,10 @@
+## [1.61.4](https://github.com/project-david-ai/projectdavid-core/compare/v1.61.3...v1.61.4) (2026-11-12)
+
+
+### Bug Fixes
+
+* enforce authoritative run model across inference and delegation ([286b47e](https://github.com/project-david-ai/projectdavid-core/commit/286b47e184142c9767b72e626eb7674302069ccd))
+
 ## [1.61.3](https://github.com/project-david-ai/projectdavid-core/compare/v1.61.2...v1.61.3) (2026-11-11)
 
 
