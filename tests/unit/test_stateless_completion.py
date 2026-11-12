@@ -371,6 +371,7 @@ def test_stateful_buffered_completion_retains_existing_processing_path():
             thread_id="thread_1",
             assistant_id="assistant_1",
             user_id="user_1",
+            model="together-ai/example/model",
         )
     )
     native.assert_assistant_access = AsyncMock()

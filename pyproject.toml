@@ -19,7 +19,7 @@ keywords = ["AI", "API", "Assistants", "LLM", "RAG", "Vector"]
 requires-python = ">=3.10,<3.14"
 
 dependencies = [
-  "fastapi~=0.110.0",
+  "fastapi~=0.115.0",
   "SQLAlchemy",
   "pydantic>=2.10.3",
   "httpx>=0.24.1",

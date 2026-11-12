@@ -90,7 +90,7 @@ class RunService:
         # Coerce stale/malformed truncation_strategy values from old dev runs.
         # '{}', '', or any non-enum string → None (schema accepts Optional).
         raw_truncation = r.truncation_strategy
-        if raw_truncation not in _VALID_TRUNCATION:  # ← module-level constant, no self.
+        if raw_truncation not in _VALID_TRUNCATION:
             raw_truncation = None
 
         return validator.Run(
@@ -134,8 +134,7 @@ class RunService:
         """
         Raise 403 if user_id is not the owner of this run.
         Used by all user-facing mutating endpoints.
-        Internal orchestration callers (NativeExecutionService) bypass
-        this by omitting user_id from the call.
+        Internal orchestration callers use separate trusted paths.
         """
         if run.user_id != user_id:
             raise HTTPException(
@@ -158,7 +157,7 @@ class RunService:
         their context, tools, and quota.
 
         Back-fill window: if owner_id is still NULL, falls back to checking the
-        many-to-many users relationship — identical logic to AssistantService._assert_owner.
+        many-to-many users relationship — identical logic to AssistantService.
         """
         if assistant.owner_id is not None:
             is_owner = assistant.owner_id == user_id
@@ -238,11 +237,21 @@ class RunService:
             # ── Cross-resource ownership check ──────────────────────────────
             self._assert_assistant_access(assistant, user_id)
 
+            # Resolve tools: explicit Run override or Assistant defaults.
             tools_override = getattr(run_data, "tools", None)
             effective_tools = (
                 tools_override
                 if tools_override is not None
                 else (assistant.tool_configs or [])
+            )
+
+            # Resolve tool resources using the same precedence.
+            # None means inherit; {} explicitly clears resources.
+            resources_override = getattr(run_data, "tool_resources", None)
+            effective_tool_resources = (
+                resources_override
+                if resources_override is not None
+                else (assistant.tool_resources or {})
             )
 
             ts_value = "auto"
@@ -254,13 +263,26 @@ class RunService:
                     run_data.truncation_strategy, "value", run_data.truncation_strategy
                 )
 
+            # Resolve exactly once. An explicit blank override is invalid;
+            # it must not silently fall back to the Assistant.
+            requested_model = getattr(run_data, "model", None)
+            effective_model = (
+                requested_model if requested_model is not None else assistant.model
+            )
+            if not isinstance(effective_model, str) or not effective_model.strip():
+                raise HTTPException(
+                    status_code=422,
+                    detail="A non-blank Run or Assistant model is required.",
+                )
+            effective_model = effective_model.strip()
+
             new_run = Run(
                 id=UtilsInterface.IdentifierService.generate_run_id(),
                 user_id=user_id,
                 assistant_id=run_data.assistant_id,
                 thread_id=run_data.thread_id,
                 status=StatusEnum.queued,
-                model=run_data.model or assistant.model,
+                model=effective_model,
                 instructions=run_data.instructions or assistant.instructions,
                 tools=effective_tools,
                 temperature=getattr(run_data, "temperature", assistant.temperature),
@@ -268,10 +290,7 @@ class RunService:
                 max_turns=assistant.max_turns,
                 agent_mode=assistant.agent_mode,
                 meta_data=run_data.meta_data or {},
-                tool_resources=getattr(
-                    run_data, "tool_resources", assistant.tool_resources
-                )
-                or {},
+                tool_resources=effective_tool_resources,
                 created_at=int(time.time()),
                 expires_at=int(time.time() + 3600),
                 object="thread.run",
@@ -362,7 +381,7 @@ class RunService:
 
         if new_status == StatusEnum.expired:
             # expires_at is the lease/deadline field; do not rewrite it
-            # into an observed-expiry timestamp here.
+            # into an observed-expiry timestamp.
             run.completed_at = None
             run.failed_at = None
             run.cancelled_at = None
@@ -423,7 +442,7 @@ class RunService:
 
         Usage:
             svc.update_run_fields(run_id, user_id=uid, started_at=int(time.time()))
-            svc.update_run_fields(run_id, completed_at=int(time.time()))   # internal
+            svc.update_run_fields(run_id, completed_at=int(time.time()))
         """
         safe = {k: v for k, v in kwargs.items() if k in MUTABLE_RUN_FIELDS}
 

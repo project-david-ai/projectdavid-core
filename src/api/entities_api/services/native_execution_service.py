@@ -290,6 +290,7 @@ class NativeExecutionService:
         thread_id: str,
         user_id: str,
         meta_data: Optional[Dict] = None,
+        model: Optional[str] = None,
     ) -> Any:
         import types
 
@@ -297,7 +298,7 @@ class NativeExecutionService:
             assistant_id=assistant_id,
             thread_id=thread_id,
             meta_data=meta_data or {},
-            model=None,
+            model=model,
             instructions=None,
             tools=None,
             temperature=None,

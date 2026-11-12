@@ -244,6 +244,17 @@ async def completions(
             user_id=run.user_id,
         )
 
+        # For stateful inference, the durable Run is the model authority.
+        effective_model = run.model
+        if not isinstance(effective_model, str) or not effective_model.strip():
+            raise HTTPException(status_code=409, detail="Run has no resolved model.")
+        effective_model = effective_model.strip()
+        if stream_request.model != effective_model:
+            raise HTTPException(
+                status_code=409,
+                detail="Request model does not match the persisted Run model.",
+            )
+
     except HTTPException:
         raise
     except Exception as e:
@@ -257,8 +268,11 @@ async def completions(
         arbiter = InferenceArbiter(redis=redis)
         selector = InferenceProviderSelector(arbiter)
         general_handler_instance, api_model_name = selector.select_provider(
-            model_id=stream_request.model
+            model_id=effective_model
         )
+    except ValueError as e:
+        logging_utility.warning("Invalid Run model for provider routing: %s", e)
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except Exception as e:
         logging_utility.error(f"Provider setup failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -278,7 +292,7 @@ async def completions(
             message_id=stream_request.message_id,
             run_id=run_id,
             assistant_id=stream_request.assistant_id,
-            model=stream_request.model,
+            model=effective_model,
             stream_reasoning=False,
             api_key=stream_request.api_key,
             project_david_api_key=project_api_key,
@@ -405,7 +419,7 @@ async def completions(
             "run_id": run_id,
             "content": assembled_content,
             "type": "content",
-            "model": stream_request.model,
+            "model": effective_model,
             "elapsed_s": round(elapsed, 3),
         }
     )

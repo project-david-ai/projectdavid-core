@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 import json
@@ -289,7 +289,11 @@ class DelegationMixin:
         )
 
     async def create_ephemeral_run(
-        self, assistant_id, thread_id, meta_data: Dict | None = None
+        self,
+        assistant_id,
+        thread_id,
+        meta_data: Dict | None = None,
+        model: Optional[str] = None,
     ):
         user_id = getattr(self, "_batfish_owner_user_id", None)
         if not user_id:
@@ -302,6 +306,7 @@ class DelegationMixin:
             thread_id=thread_id,
             user_id=user_id,
             meta_data=meta_data,
+            model=model,
         )
 
     async def _fetch_worker_final_report(
@@ -396,6 +401,17 @@ class DelegationMixin:
                 self._scratch_pad_thread,
             )
 
+            # The delegated model can differ from the temporary Assistant
+            # default. Resolve it before creating the child Run so the persisted
+            # Run model and the SDK stream model always agree.
+            parent_run = await self._native_exec.retrieve_run(run_id)
+            inference_model = (parent_run.meta_data or {}).get("delegated_model")
+            if not isinstance(inference_model, str) or not inference_model.strip():
+                raise RuntimeError(
+                    f"DELEGATE ABORT: No delegated model found in run {run_id} meta_data."
+                )
+            inference_model = inference_model.strip()
+
             ephemeral_worker = await self.create_ephemeral_worker_assistant()
             ephemeral_thread = await self.create_ephemeral_thread()
             self._research_worker_thread = ephemeral_thread
@@ -438,6 +454,7 @@ class DelegationMixin:
                     "batfish_owner_user_id": origin_user_id,
                     "scratch_pad_thread": self._scratch_pad_thread,
                 },
+                model=inference_model,
             )
 
             yield self._research_status(
