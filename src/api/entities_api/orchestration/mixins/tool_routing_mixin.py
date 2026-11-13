@@ -305,6 +305,7 @@ class ToolRoutingMixin:
         *,
         model: str | None = None,
         api_key: str | None = None,
+        project_david_api_key: str | None = None,
         decision: Optional[Dict] = None,
     ) -> AsyncGenerator:
         """
@@ -480,6 +481,8 @@ class ToolRoutingMixin:
                     arguments_dict=args,
                     tool_call_id=current_call_id,
                     decision=decision,
+                    inference_api_key=api_key,
+                    project_david_api_key=project_david_api_key,
                 ):
                     yield chunk
 

@@ -77,8 +77,8 @@ class DelegationMixin:
         All factory methods guard on self._run_user_id via getattr and raise
         RuntimeError explicitly  this is the correct pattern for cross-mixin
         state access and should be followed in any new factory methods added here.
-        The api_key scrub at the end of handle_delegate_research_task()
-        (meta_data={"api_key": "***"}) is a security requirement  do not remove.
+        Credential handoff is request-scoped. No plaintext credential is
+        persisted in parent Run metadata or serialized into tool events.
     """
 
     def __init__(self, *args, **kwargs):
@@ -351,7 +351,16 @@ class DelegationMixin:
     # HANDLER 1: Research Delegation
     # ------------------------------------------------------------------
     async def handle_delegate_research_task(
-        self, thread_id, run_id, assistant_id, arguments_dict, tool_call_id, decision
+        self,
+        thread_id,
+        run_id,
+        assistant_id,
+        arguments_dict,
+        tool_call_id,
+        decision,
+        *,
+        inference_api_key: Optional[str] = None,
+        project_david_api_key: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
 
         self._scratch_pad_thread = thread_id
@@ -388,6 +397,16 @@ class DelegationMixin:
         ephemeral_run = None
 
         try:
+            # Caller-supplied credentials are request-scoped, never DB-backed.
+            if not inference_api_key:
+                raise RuntimeError(
+                    "DELEGATE ABORT: Provider BYOK was not supplied to delegation."
+                )
+            if not project_david_api_key:
+                raise RuntimeError(
+                    "DELEGATE ABORT: Project David API key was not supplied to delegation."
+                )
+
             origin_user_id = getattr(self, "_batfish_owner_user_id", None)
 
             if not origin_user_id:
@@ -460,37 +479,6 @@ class DelegationMixin:
             yield self._research_status(
                 "Worker active. Streaming...", "in_progress", run_id
             )
-
-            # ----------------------------------------
-            # Retrieve the users inference api key
-            # -----------------------------------------
-            run_obj = await self._native_exec.retrieve_run(run_id)
-            inference_api_key = (
-                run_obj.meta_data.get("api_key") if run_obj.meta_data else None
-            )
-            project_david_api_key = (
-                run_obj.meta_data.get("project_david_api_key")
-                if run_obj.meta_data
-                else None
-            )
-            inference_model = (
-                run_obj.meta_data.get("delegated_model") if run_obj.meta_data else None
-            )
-
-            if not inference_api_key:
-                raise RuntimeError(
-                    f"DELEGATE ABORT: No provider api_key found in run {run_id} meta_data."
-                )
-
-            if not project_david_api_key:
-                raise RuntimeError(
-                    f"DELEGATE ABORT: No Project David API key found in run {run_id} meta_data."
-                )
-
-            if not inference_model:
-                raise RuntimeError(
-                    f"DELEGATE ABORT: No delegated model found in run {run_id} meta_data."
-                )
 
             user_project_david_client = self._create_project_david_client(
                 api_key=project_david_api_key,
@@ -776,24 +764,6 @@ class DelegationMixin:
                     ephemeral_thread.id if ephemeral_thread else None,
                     self._delete_ephemeral_thread,
                 )
-
-            # -------------------------------------------------
-            # Remove transient plaintext credentials from the
-            # parent run metadata after every delegation attempt,
-            # including failures before worker creation.
-            # Preserve delegated_model and other non-sensitive
-            # metadata.
-            # -------------------------------------------------
-            scrub_run = await self._native_exec.retrieve_run(run_id)
-            scrub_meta = dict(scrub_run.meta_data or {})
-
-            scrub_meta.pop("api_key", None)
-            scrub_meta.pop("project_david_api_key", None)
-
-            await self._native_exec.update_run_fields(
-                run_id,
-                meta_data=scrub_meta,
-            )
 
             yield self._research_status(
                 (

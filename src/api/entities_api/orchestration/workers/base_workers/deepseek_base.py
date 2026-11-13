@@ -231,9 +231,18 @@ class DeepSeekBaseWorker(
                 web_access_setting = False
                 research_worker_setting = False
                 junior_engineer_setting = False
+                # Same credential contract as Qwen, without persisting secrets.
+                if not kwargs.get("project_david_api_key"):
+                    raise RuntimeError(
+                        "Deep Research requires the caller Project David API key."
+                    )
+                if not api_key:
+                    raise RuntimeError(
+                        "Deep Research requires the caller provider API key."
+                    )
+
                 await self._native_exec.update_run_fields(
-                    run_id,
-                    meta_data={"api_key": api_key, "delegated_model": pre_mapped_model},
+                    run_id, meta_data={"delegated_model": pre_mapped_model}
                 )
 
             elif research_worker_setting:

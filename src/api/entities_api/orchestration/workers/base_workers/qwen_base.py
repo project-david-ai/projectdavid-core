@@ -277,19 +277,19 @@ class QwenBaseWorker(
                 web_access_setting = False
                 research_worker_setting = False
                 junior_engineer_setting = False
-                project_david_api_key = kwargs.get("project_david_api_key")
-                if not project_david_api_key:
+                # Validate both request credentials; never persist them in Run
+                # metadata. Delegation receives them through tool dispatch.
+                if not kwargs.get("project_david_api_key"):
                     raise RuntimeError(
                         "Deep Research requires the caller Project David API key."
                     )
+                if not api_key:
+                    raise RuntimeError(
+                        "Deep Research requires the caller provider API key."
+                    )
 
                 await self._native_exec.update_run_fields(
-                    run_id,
-                    meta_data={
-                        "api_key": api_key,
-                        "project_david_api_key": project_david_api_key,
-                        "delegated_model": pre_mapped_model,
-                    },
+                    run_id, meta_data={"delegated_model": pre_mapped_model}
                 )
 
             elif research_worker_setting:

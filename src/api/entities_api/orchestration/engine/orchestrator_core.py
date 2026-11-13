@@ -694,6 +694,7 @@ class OrchestratorCore(
                     tool_call_id=self._current_tool_call_id,
                     model=model,
                     api_key=api_key,
+                    project_david_api_key=kwargs.get("project_david_api_key"),
                     decision=self._decision_payload,
                 ):
                     yield chunk
