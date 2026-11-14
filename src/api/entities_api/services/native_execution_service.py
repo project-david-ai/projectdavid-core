@@ -4,13 +4,23 @@ from typing import Any, Dict, List, Optional
 
 from projectdavid_common import ValidationInterface
 from projectdavid_common.validation import StatusEnum
+from projectdavid_orm.projectdavid_orm.execution_ledger import (
+    ExecutionActor,
+    RunDelegation,
+    RunExecutionEpoch,
+)
+from sqlalchemy import select
 
 from src.api.entities_api.cache.scratchpad_cache import ScratchpadCache
 from src.api.entities_api.cache.web_cache import WebSessionCache
 from src.api.entities_api.db.database import SessionLocal
 from src.api.entities_api.dependencies import get_redis_sync
+from src.api.entities_api.models.models import Run
 from src.api.entities_api.services.actions_service import ActionService
 from src.api.entities_api.services.assistants_service import AssistantService
+from src.api.entities_api.services.execution_ledger_service import (
+    ExecutionLedgerService,
+)
 from src.api.entities_api.services.logging_service import LoggingUtility
 from src.api.entities_api.services.message_service import MessageService
 from src.api.entities_api.services.runs_service import RunService
@@ -20,6 +30,7 @@ from src.api.entities_api.services.vectors_service import VectorStoreDBService
 from src.api.entities_api.services.web_reader import UniversalWebReader
 
 LOG = LoggingUtility()
+_RESULT_UNSET = object()
 
 
 class NativeExecutionService:
@@ -273,12 +284,20 @@ class NativeExecutionService:
         )
         return await asyncio.to_thread(self.action_svc.create_action, req)
 
-    async def update_action_status(self, action_id: str, status: str) -> Any:
+    async def update_action_status(
+        self,
+        action_id: str,
+        status: str,
+        *,
+        result: Any = _RESULT_UNSET,
+    ) -> Any:
         def _update():
             existing = self.action_svc.get_action(action_id)
+            persisted_result = existing.result if result is _RESULT_UNSET else result
+
             req = self.val_interface.ActionUpdate(
                 status=status,
-                result=existing.result,
+                result=persisted_result,
             )
             return self.action_svc.update_action_status(action_id, req)
 
@@ -291,6 +310,8 @@ class NativeExecutionService:
         user_id: str,
         meta_data: Optional[Dict] = None,
         model: Optional[str] = None,
+        *,
+        trusted_metadata: bool = False,
     ) -> Any:
         import types
 
@@ -310,9 +331,176 @@ class NativeExecutionService:
         )
 
         def _create():
-            return self.run_svc.create_run(req, user_id=user_id)
+            return self.run_svc.create_run(
+                req, user_id=user_id, trusted_metadata=trusted_metadata
+            )
 
         return await asyncio.to_thread(_create)
+
+    async def link_research_delegation(
+        self,
+        *,
+        parent_run_id: str,
+        child_run_id: str,
+        parent_action_id: str,
+        worker_assistant_id: str,
+        worker_model: str,
+    ) -> str:
+        """Persist parent Action to child epoch and worker identity."""
+
+        def _link() -> str:
+            ledger = ExecutionLedgerService()
+            with SessionLocal.begin() as db:
+                parent_run = db.execute(
+                    select(Run).where(Run.id == parent_run_id)
+                ).scalar_one()
+                child_run = db.execute(
+                    select(Run).where(Run.id == child_run_id)
+                ).scalar_one()
+
+                if parent_run.user_id != child_run.user_id:
+                    raise RuntimeError("Delegation Run ownership mismatch")
+
+                parent_epoch = db.execute(
+                    select(RunExecutionEpoch)
+                    .where(RunExecutionEpoch.run_id == parent_run_id)
+                    .order_by(RunExecutionEpoch.epoch_number.desc())
+                    .limit(1)
+                ).scalar_one()
+
+                child_epoch = db.execute(
+                    select(RunExecutionEpoch)
+                    .where(RunExecutionEpoch.run_id == child_run_id)
+                    .order_by(RunExecutionEpoch.epoch_number.desc())
+                    .limit(1)
+                ).scalar_one()
+
+                child_meta = child_run.meta_data or {}
+                if (
+                    child_meta.get("root_run_id") != parent_epoch.root_run_id
+                    or child_meta.get("parent_run_id") != parent_run_id
+                    or child_meta.get("parent_action_id") != parent_action_id
+                    or child_epoch.root_run_id != parent_epoch.root_run_id
+                ):
+                    raise RuntimeError("Child Run has inconsistent delegation ancestry")
+
+                initiator = db.execute(
+                    select(ExecutionActor)
+                    .where(
+                        ExecutionActor.epoch_id == parent_epoch.id,
+                        ExecutionActor.execution_role == "research_supervisor",
+                    )
+                    .order_by(ExecutionActor.reserved_at.desc())
+                    .limit(1)
+                ).scalar_one_or_none()
+
+                worker_actor = ledger.reserve_actor(
+                    db,
+                    epoch_id=child_epoch.id,
+                    slot="research_worker",
+                    execution_role="research_worker",
+                    ephemeral=True,
+                )
+
+                ledger.activate_actor(
+                    db,
+                    actor_id=worker_actor.id,
+                    assistant_id=worker_assistant_id,
+                    model=worker_model,
+                )
+
+                already_linked = db.execute(
+                    select(RunDelegation.id).where(
+                        RunDelegation.child_epoch_id == child_epoch.id
+                    )
+                ).scalar_one_or_none()
+
+                edge = ledger.link_delegation(
+                    db,
+                    parent_epoch_id=parent_epoch.id,
+                    child_epoch_id=child_epoch.id,
+                    parent_action_id=parent_action_id,
+                    initiating_actor_id=(
+                        initiator.id if initiator is not None else None
+                    ),
+                )
+
+                if already_linked is None:
+                    ledger.append_event(
+                        db,
+                        epoch_id=parent_epoch.id,
+                        actor_id=(initiator.id if initiator is not None else None),
+                        event_type="delegation_linked",
+                        action_id=parent_action_id,
+                        details={
+                            "delegation_id": edge.id,
+                            "tool_name": "delegate_research_task",
+                        },
+                    )
+
+                    ledger.append_event(
+                        db,
+                        epoch_id=child_epoch.id,
+                        actor_id=worker_actor.id,
+                        event_type="research_worker_assigned",
+                        details={"status": "active"},
+                    )
+
+                return edge.id
+
+        return await asyncio.to_thread(_link)
+
+    async def retire_research_worker_actor(
+        self,
+        *,
+        child_run_id: str,
+    ) -> None:
+        """Retire worker identity only after its Run is terminal."""
+
+        def _retire() -> None:
+            ledger = ExecutionLedgerService()
+            with SessionLocal.begin() as db:
+                child = db.execute(
+                    select(Run).where(Run.id == child_run_id)
+                ).scalar_one()
+
+                state = (
+                    child.status.value
+                    if hasattr(child.status, "value")
+                    else str(child.status)
+                )
+
+                if state not in {"completed", "failed", "cancelled", "expired"}:
+                    raise RuntimeError("Cannot retire a nonterminal research worker")
+
+                epoch = db.execute(
+                    select(RunExecutionEpoch)
+                    .where(RunExecutionEpoch.run_id == child_run_id)
+                    .order_by(RunExecutionEpoch.epoch_number.desc())
+                    .limit(1)
+                ).scalar_one()
+
+                actor = db.execute(
+                    select(ExecutionActor).where(
+                        ExecutionActor.epoch_id == epoch.id,
+                        ExecutionActor.slot == "research_worker",
+                    )
+                ).scalar_one_or_none()
+
+                if actor is None:
+                    raise RuntimeError("Missing durable research worker actor")
+
+                if actor.state != "retired":
+                    ledger.retire_actor(db, actor_id=actor.id)
+                    ledger.append_event(
+                        db,
+                        epoch_id=epoch.id,
+                        actor_id=actor.id,
+                        event_type="research_worker_retired",
+                        details={"status": state},
+                    )
+
+        await asyncio.to_thread(_retire)
 
     async def retrieve_run(self, run_id: str) -> Any:
         return await asyncio.to_thread(self.run_svc.retrieve_run, run_id)
@@ -578,3 +766,147 @@ class NativeExecutionService:
     async def serp_search(self, query: str) -> str:
         LOG.info(f"NativeExec ▸ serp_search: '{query}'")
         return await self.web_reader.perform_serp_search(query)
+
+    async def reserve_execution_actor(
+        self,
+        *,
+        run_id: str,
+        slot: str,
+        execution_role: str,
+        ephemeral: bool = True,
+    ) -> Dict[str, Any]:
+        """Reserve a durable execution actor for a root Run."""
+
+        def _reserve() -> Dict[str, Any]:
+            ledger = ExecutionLedgerService()
+
+            with SessionLocal.begin() as db:
+                epoch = ledger.reserve_epoch(
+                    db,
+                    run_id=run_id,
+                    root_run_id=run_id,
+                )
+
+                actor = ledger.reserve_actor(
+                    db,
+                    epoch_id=epoch.id,
+                    slot=slot,
+                    execution_role=execution_role,
+                    ephemeral=ephemeral,
+                )
+
+                return {
+                    "epoch": {
+                        "id": epoch.id,
+                        "run_id": epoch.run_id,
+                        "root_run_id": epoch.root_run_id,
+                        "state": epoch.state,
+                    },
+                    "actor": {
+                        "id": actor.id,
+                        "epoch_id": actor.epoch_id,
+                        "slot": actor.slot,
+                        "execution_role": actor.execution_role,
+                        "state": actor.state,
+                        "assistant_id_snapshot": actor.assistant_id_snapshot,
+                        "model_snapshot": actor.model_snapshot,
+                    },
+                }
+
+        return await asyncio.to_thread(_reserve)
+
+    async def activate_execution_actor(
+        self,
+        *,
+        actor_id: str,
+        assistant_id: str,
+        model: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Attach the actual Assistant identity to a reserved actor."""
+
+        def _activate() -> Dict[str, Any]:
+            ledger = ExecutionLedgerService()
+
+            with SessionLocal.begin() as db:
+                actor = ledger.activate_actor(
+                    db,
+                    actor_id=actor_id,
+                    assistant_id=assistant_id,
+                    model=model,
+                )
+
+                return {
+                    "id": actor.id,
+                    "epoch_id": actor.epoch_id,
+                    "state": actor.state,
+                    "assistant_id_snapshot": actor.assistant_id_snapshot,
+                    "model_snapshot": actor.model_snapshot,
+                }
+
+        return await asyncio.to_thread(_activate)
+
+    async def retire_execution_actor(
+        self,
+        *,
+        actor_id: str,
+    ) -> Dict[str, Any]:
+        """Retire an actor while preserving its identity snapshot."""
+
+        def _retire() -> Dict[str, Any]:
+            ledger = ExecutionLedgerService()
+
+            with SessionLocal.begin() as db:
+                actor = ledger.retire_actor(
+                    db,
+                    actor_id=actor_id,
+                )
+
+                return {
+                    "id": actor.id,
+                    "epoch_id": actor.epoch_id,
+                    "state": actor.state,
+                    "assistant_id_snapshot": actor.assistant_id_snapshot,
+                }
+
+        return await asyncio.to_thread(_retire)
+
+    async def complete_execution_epoch(
+        self,
+        *,
+        epoch_id: str,
+        terminal_status: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Complete an execution epoch using its canonical terminal state."""
+
+        if terminal_status is not None and status is not None:
+            if terminal_status != status:
+                raise ValueError("Conflicting execution epoch statuses")
+
+        outcome = terminal_status if terminal_status is not None else status
+
+        if hasattr(outcome, "value"):
+            outcome = outcome.value
+
+        if outcome is None:
+            raise ValueError("A terminal status is required")
+
+        def _complete() -> Dict[str, Any]:
+            ledger = ExecutionLedgerService()
+
+            with SessionLocal.begin() as db:
+                epoch = ledger.complete_epoch(
+                    db,
+                    epoch_id=epoch_id,
+                    terminal_status=outcome,
+                )
+
+                return {
+                    "id": epoch.id,
+                    "run_id": epoch.run_id,
+                    "root_run_id": epoch.root_run_id,
+                    "state": epoch.state,
+                    "terminal_status": epoch.terminal_status,
+                }
+
+        return await asyncio.to_thread(_complete)

@@ -294,6 +294,8 @@ class DelegationMixin:
         thread_id,
         meta_data: Dict | None = None,
         model: Optional[str] = None,
+        *,
+        trusted_metadata: bool = False,
     ):
         user_id = getattr(self, "_batfish_owner_user_id", None)
         if not user_id:
@@ -307,6 +309,7 @@ class DelegationMixin:
             user_id=user_id,
             meta_data=meta_data,
             model=model,
+            trusted_metadata=trusted_metadata,
         )
 
     async def _fetch_worker_final_report(
@@ -395,8 +398,14 @@ class DelegationMixin:
         execution_had_error = False
         worker_failure_reason = None
         ephemeral_run = None
+        delegation_succeeded = False
 
         try:
+            if action is None:
+                raise RuntimeError(
+                    "DELEGATE ABORT: No durable parent Action was created."
+                )
+
             # Caller-supplied credentials are request-scoped, never DB-backed.
             if not inference_api_key:
                 raise RuntimeError(
@@ -424,7 +433,9 @@ class DelegationMixin:
             # default. Resolve it before creating the child Run so the persisted
             # Run model and the SDK stream model always agree.
             parent_run = await self._native_exec.retrieve_run(run_id)
-            inference_model = (parent_run.meta_data or {}).get("delegated_model")
+            parent_metadata = parent_run.meta_data or {}
+            root_run_id = parent_metadata.get("root_run_id") or run_id
+            inference_model = parent_metadata.get("delegated_model")
             if not isinstance(inference_model, str) or not inference_model.strip():
                 raise RuntimeError(
                     f"DELEGATE ABORT: No delegated model found in run {run_id} meta_data."
@@ -472,9 +483,24 @@ class DelegationMixin:
                 meta_data={
                     "batfish_owner_user_id": origin_user_id,
                     "scratch_pad_thread": self._scratch_pad_thread,
+                    "root_run_id": root_run_id,
+                    "parent_run_id": run_id,
+                    "parent_action_id": action.id,
                 },
                 model=inference_model,
+                trusted_metadata=True,
             )
+
+            # Persist lineage before starting the worker stream.
+            await self._native_exec.link_research_delegation(
+                parent_run_id=run_id,
+                child_run_id=ephemeral_run.id,
+                parent_action_id=action.id,
+                worker_assistant_id=ephemeral_worker.id,
+                worker_model=inference_model,
+            )
+
+            await self._native_exec.update_action_status(action.id, "processing")
 
             yield self._research_status(
                 "Worker active. Streaming...", "in_progress", run_id
@@ -515,13 +541,19 @@ class DelegationMixin:
                 event_type = type(event).__name__
 
                 LOG.critical(
-                    f" [RAW EVENT DUMP] Event {raw_event_count} | Type: {event_type} | Payload: {getattr(event, 'model_dump', lambda: str(event))()}"
+                    " [RAW EVENT DUMP] Event %s | Type: %s | Payload: %s",
+                    raw_event_count,
+                    event_type,
+                    getattr(event, "model_dump", lambda: str(event))(),
                 )
 
                 #  INTERCEPT: ScratchpadEvent
                 if isinstance(event, ScratchpadEvent):
                     LOG.critical(
-                        f" [WORKER SCRATCHPAD EVENT] Action: {event.operation} | State: {event.state} | Entry: {event.entry}"
+                        " [WORKER SCRATCHPAD EVENT] Action: %s | State: %s | Entry: %s",
+                        event.operation,
+                        event.state,
+                        event.entry,
                     )
 
                     payload = {
@@ -637,7 +669,10 @@ class DelegationMixin:
                             name = getattr(func, "name", "unknown")
                             args = getattr(func, "arguments", "")
                             LOG.critical(
-                                f"[WORKER EXECUTES TOOL] Worker {ephemeral_worker.id} called: {name} | Args: {args}"
+                                "[WORKER EXECUTES TOOL] Worker %s called: %s | Args: %s",
+                                ephemeral_worker.id,
+                                name,
+                                args,
                             )
                     continue
                 passed_guard2 += 1
@@ -688,6 +723,21 @@ class DelegationMixin:
 
             final_content = captured_stream_content.strip()
 
+            # Streamed content alone does not prove child Run completion.
+            child = await self._native_exec.retrieve_run(ephemeral_run.id)
+            child_status = (
+                child.status.value
+                if hasattr(child.status, "value")
+                else str(child.status)
+            )
+            if child_status != "completed":
+                execution_had_error = True
+                if not worker_failure_reason:
+                    worker_failure_reason = (
+                        "Delegated worker ended without a completed Run "
+                        f"(status={child_status})."
+                    )
+
             if execution_had_error:
                 failure_reason = (
                     worker_failure_reason
@@ -727,10 +777,12 @@ class DelegationMixin:
 
             LOG.critical(
                 "\n================ WORKER FINAL RETURN PAYLOAD ================\n"
-                f"Worker ID: {ephemeral_worker.id}\n"
-                f"Content handed back to Supervisor via `delegate_research_task`:\n"
-                f"{final_content}\n"
-                "==============================================================\n"
+                "Worker ID: %s\n"
+                "Content handed back to Supervisor via `delegate_research_task`:\n"
+                "%s\n"
+                "==============================================================\n",
+                ephemeral_worker.id,
+                final_content,
             )
 
             await self.submit_tool_output(
@@ -742,35 +794,118 @@ class DelegationMixin:
                 is_error=execution_had_error,
             )
 
-            if action:
-                await self._native_exec.update_action_status(
-                    action.id,
-                    (
-                        StatusEnum.completed.value
-                        if not execution_had_error
-                        else StatusEnum.failed.value
-                    ),
-                )
+            delegation_succeeded = not execution_had_error
 
-        except Exception as e:
+        except Exception as exc:
             execution_had_error = True
-            LOG.error(f"[DELEGATE] Error: {e}", exc_info=True)
-            yield self._research_status(f"Error: {str(e)}", "error", run_id)
+            LOG.error("[DELEGATE] Research delegation failed: %s", exc, exc_info=True)
+            safe_reason = (
+                str(exc)
+                if str(exc).startswith("DELEGATE ABORT:")
+                else "Internal worker execution error; consult Core logs."
+            )
+
+            if ephemeral_run is not None:
+                try:
+                    failed_child = await self._native_exec.retrieve_run(
+                        ephemeral_run.id
+                    )
+                    failed_state = (
+                        failed_child.status.value
+                        if hasattr(failed_child.status, "value")
+                        else str(failed_child.status)
+                    )
+                    if failed_state not in _TERMINAL_RUN_STATES:
+                        await self._native_exec.update_run_status(
+                            ephemeral_run.id, StatusEnum.failed.value
+                        )
+                except Exception:
+                    LOG.error(
+                        "[DELEGATE] Failed marking child Run failed",
+                        exc_info=True,
+                    )
+
+            if action is not None:
+                try:
+                    await self.submit_tool_output(
+                        thread_id=thread_id,
+                        assistant_id=assistant_id,
+                        tool_call_id=tool_call_id,
+                        content=safe_reason,
+                        action=action,
+                        is_error=True,
+                    )
+                except Exception:
+                    LOG.error(
+                        "[DELEGATE] Failed submitting error tool output",
+                        exc_info=True,
+                    )
+
+            yield self._research_status(f"Error: {safe_reason}", "error", run_id)
 
         finally:
-            if ephemeral_worker:
-                await self._ephemeral_clean_up(
-                    ephemeral_worker.id,
-                    ephemeral_thread.id if ephemeral_thread else None,
-                    self._delete_ephemeral_thread,
-                )
+            # Preserve a worker that has not yet reached a terminal state.
+            safe_to_cleanup = ephemeral_run is None
+            if ephemeral_run is not None:
+                try:
+                    child = await self._native_exec.retrieve_run(ephemeral_run.id)
+                    child_status = (
+                        child.status.value
+                        if hasattr(child.status, "value")
+                        else str(child.status)
+                    )
 
-            yield self._research_status(
-                (
-                    "Delegation failed."
-                    if execution_had_error
-                    else "Delegation complete."
-                ),
-                "completed" if not execution_had_error else "error",
-                run_id,
-            )
+                    if child_status in _TERMINAL_RUN_STATES:
+                        await self._native_exec.retire_research_worker_actor(
+                            child_run_id=ephemeral_run.id,
+                        )
+                        safe_to_cleanup = True
+                    else:
+                        LOG.warning(
+                            "[DELEGATE] Preserving nonterminal worker %s "
+                            "(run=%s state=%s)",
+                            getattr(ephemeral_worker, "id", None),
+                            ephemeral_run.id,
+                            child_status,
+                        )
+                except Exception:
+                    LOG.error(
+                        "[DELEGATE] Failed verifying/retiring worker actor",
+                        exc_info=True,
+                    )
+
+            if action is not None:
+                try:
+                    await self._native_exec.update_action_status(
+                        action.id,
+                        (
+                            StatusEnum.completed.value
+                            if delegation_succeeded
+                            else StatusEnum.failed.value
+                        ),
+                    )
+                except Exception:
+                    LOG.error(
+                        "[DELEGATE] Failed finalizing parent Action %s",
+                        action.id,
+                        exc_info=True,
+                    )
+
+            if ephemeral_worker is not None and safe_to_cleanup:
+                try:
+                    await self._ephemeral_clean_up(
+                        ephemeral_worker.id,
+                        ephemeral_thread.id if ephemeral_thread else None,
+                        self._delete_ephemeral_thread,
+                    )
+                except Exception:
+                    LOG.error(
+                        "[DELEGATE] Worker cleanup failed",
+                        exc_info=True,
+                    )
+
+        yield self._research_status(
+            "Delegation complete." if delegation_succeeded else "Delegation failed.",
+            "completed" if delegation_succeeded else "error",
+            run_id,
+        )

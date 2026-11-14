@@ -156,6 +156,7 @@ class ScratchpadMixin:
             decision=decision,
         )
 
+        tool_output_submitted = False
         try:
             # 2. Resolve tenant ownership from the durable Run.
 
@@ -233,6 +234,35 @@ class ScratchpadMixin:
                 entry_text = ""
 
             # Yield raw scratchpad content event — consumed directly by routes.py
+            # Capture exactly the text returned to the model.
+            content_str = res if isinstance(res, str) else json.dumps(res)
+
+            if operation_type == "read":
+                await self._native_exec.update_action_status(
+                    action_id=action.id,
+                    status="processing",
+                    result={
+                        "scratchpad_id": scratchpad_id,
+                        "content": content_str,
+                    },
+                )
+
+            await self._native_exec.submit_tool_output(
+                thread_id=conversation_thread_id,
+                assistant_id=assistant_id,
+                tool_call_id=tool_call_id,
+                content=content_str,
+                action_id=action.id,
+                is_error=False,
+            )
+            tool_output_submitted = True
+
+            await self._native_exec.update_action_status(
+                action_id=action.id,
+                status=StatusEnum.completed.value,
+            )
+
+            # Emit completion only after output submission and persistence.
             if entry_text:
                 yield _scratchpad_status(
                     run_id=run_id,
@@ -242,7 +272,6 @@ class ScratchpadMixin:
                     assistant_id=assistant_id,
                 )
 
-            # Done-label activity event
             yield _scratchpad_status(
                 run_id=run_id,
                 operation=operation_type,
@@ -250,23 +279,6 @@ class ScratchpadMixin:
                 tool=tool_name,
                 activity=label_done,
                 assistant_id=assistant_id,
-            )
-
-            # 3. Update Action natively
-            await self._native_exec.update_action_status(
-                action_id=action.id,
-                status=StatusEnum.completed.value,
-            )
-
-            # 4. Submit Output natively
-            content_str = res if isinstance(res, str) else json.dumps(res)
-            await self._native_exec.submit_tool_output(
-                thread_id=conversation_thread_id,
-                assistant_id=assistant_id,
-                tool_call_id=tool_call_id,
-                content=content_str,
-                action_id=action.id,
-                is_error=False,
             )
 
         except Exception as e:
@@ -286,14 +298,15 @@ class ScratchpadMixin:
                     status=StatusEnum.failed.value,
                 )
 
-            await self._native_exec.submit_tool_output(
-                thread_id=conversation_thread_id,
-                assistant_id=assistant_id,
-                tool_call_id=tool_call_id,
-                content=f"Error: {e}",
-                action_id=action.id if action else None,
-                is_error=True,
-            )
+            if not tool_output_submitted:
+                await self._native_exec.submit_tool_output(
+                    thread_id=conversation_thread_id,
+                    assistant_id=assistant_id,
+                    tool_call_id=tool_call_id,
+                    content=f"Error: {e}",
+                    action_id=action.id if action else None,
+                    is_error=True,
+                )
 
     async def handle_read_scratchpad(self, *args, **kwargs):
         async for s in self._execute_scratchpad_logic(

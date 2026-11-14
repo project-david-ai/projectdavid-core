@@ -7,19 +7,23 @@ from projectdavid import Entity
 # ------------------------------------------------------------------
 # 0.  SDK init + env
 # ------------------------------------------------------------------
-load_dotenv()
+from pathlib import Path
+
+ENV_FILE = Path(__file__).resolve().parent / ".tests.env"
+
+load_dotenv(ENV_FILE, override=True)
 
 client = Entity(
-    base_url=os.getenv("BASE_URL", "http://localhost:9000"),
-    api_key=os.getenv("ENTITIES_API_KEY"),
+    base_url=os.getenv("BASE_URL", "http://localhost:80"),
+    api_key=os.getenv("DEV_PROJECT_DAVID_CORE_TEST_USER_KEY"),
 )
 
 update_assistant = client.assistants.update_assistant(
-    assistant_id=config.get("assistant_id"),
+    assistant_id=os.getenv("ASSISTANT_ID"),
     agent_mode=False,
     decision_telemetry=False,
     web_access=False,
-    deep_research=False,
+    deep_research=True,
     engineer=False,
 )
 

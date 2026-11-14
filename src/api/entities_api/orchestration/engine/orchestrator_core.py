@@ -1,27 +1,16 @@
 """
 orchestrator_core.py
 src/api/entities_api/orchestration/engine/orchestrator_core.py
-────────────────────
-The ultra-thin root class.
 
-• Glues together every functional mix-in in the correct MRO order
-• Carries only a few shared state fields
-• Leaves `stream` + `process_conversation` abstract so each provider
-  (Hyperbolic, OpenAI, Together, …) can implement its own wire-format.
+The root orchestration class.
 
-Cache ownership
-───────────────
-AssistantCacheMixin is the single source of truth for _assistant_cache
-resolution. It provides the `assistant_cache` property and
-`get_assistant_cache()` accessor with a four-level fallback chain:
-    1. Injected via __init__ (fast path)
-    2. ServiceRegistry (_get_service)
-    3. Lazy construction from self.redis
-    4. Hard ValueError
+AssistantCacheMixin owns assistant-cache resolution.
 
-OrchestratorCore.__init__ sets self.redis before any cache access so
-AssistantCacheMixin path 3 always resolves correctly if paths 1 and 2
-are unavailable.
+Execution ledger:
+- One durable supervisor actor slot per root Run epoch.
+- Assistant identity restored across inference turns and SDK continuations.
+- No supervisor deletion during nonterminal SDK handoff.
+- Terminal cleanup records actor retirement before Assistant soft-deletion.
 """
 
 from __future__ import annotations
@@ -39,18 +28,12 @@ from entities_api.dependencies import get_redis_sync
 from entities_api.platform_tools.delegated_model_map.delegation_model_map import (
     get_delegated_model,
 )
-
-# -------------------------------------------------------------------------
-# IMPORTS
-# -------------------------------------------------------------------------
 from projectdavid import StreamEvent
 from projectdavid_common import ToolValidator
 from projectdavid_common.utilities.logging_service import LoggingUtility
 from projectdavid_common.validation import StatusEnum
 
 from src.api.entities_api.constants.platform import PLATFORM_TOOLS
-
-# Mixins
 from src.api.entities_api.orchestration.mixins.assistant_cache_mixin import (
     AssistantCacheMixin,
 )
@@ -82,7 +65,7 @@ LOG = LoggingUtility()
 
 @dataclass
 class StreamState:
-    """Container for mutable state during the streaming process."""
+    """Mutable state during streaming."""
 
     accumulated: str = ""
     assistant_reply: str = ""
@@ -100,15 +83,11 @@ def _should_handoff_to_sdk_user_tool(
     authorized_consumer_tool_names: frozenset[str],
 ) -> bool:
     """
-    Return True only when a model-emitted function is an actually authorized
-    SDK-managed consumer tool.
+    Only authorized SDK consumer tools may trigger an SDK handoff.
 
-    Merely being unknown to the platform router and lacking an MCP executor is
-    not sufficient: hallucinated or otherwise undeclared function names must
-    remain inside Core so their persisted rejection can drive another
-    inference turn.
+    Unknown or hallucinated tool names remain inside Core so their
+    persisted rejection can drive another inference turn.
     """
-
     return bool(
         tool_name
         and tool_name not in platform_tools
@@ -119,9 +98,7 @@ def _should_handoff_to_sdk_user_tool(
 
 class OrchestratorCore(
     ServiceRegistryMixin,
-    AssistantCacheMixin,  # Owns: assistant_cache property, get_assistant_cache(),
-    # _assistant_cache resolution. Replaces the duplicated
-    # property/setter/getter that previously lived here.
+    AssistantCacheMixin,
     JsonUtilsMixin,
     ContextMixin,
     ToolRoutingMixin,
@@ -132,7 +109,6 @@ class OrchestratorCore(
     ShellExecutionMixin,
     ABC,
 ):
-
     def __init__(
         self,
         *,
@@ -144,60 +120,47 @@ class OrchestratorCore(
         assistant_cache_service: Optional[AssistantCache] = None,
         **extra,
     ) -> None:
-
         self.is_deep_research = None
         self._scratch_pad_thread = None
 
-        # 1. Setup Redis — must be set before any AssistantCacheMixin access
-        #    so that the lazy-construction fallback (path 3) can resolve correctly.
         self.redis = redis or get_redis_sync()
 
-        # 2. Seed _assistant_cache if explicitly injected.
-        #    AssistantCacheMixin owns the property and resolution chain —
-        #    we only set the backing attribute here when the caller passes
-        #    a ready-made instance, bypassing all fallback paths.
         if assistant_cache_service:
             self._assistant_cache = assistant_cache_service
         elif "assistant_cache" in extra and isinstance(
             extra["assistant_cache"], AssistantCache
         ):
             self._assistant_cache = extra["assistant_cache"]
-        # If neither is provided, AssistantCacheMixin will resolve lazily
-        # via ServiceRegistry or self.redis on first access.
 
-        # 3. Setup the Data/Config
         legacy_config = extra.get("assistant_config") or extra.get("assistant_cache")
         self.assistant_config: Dict[str, Any] = (
             legacy_config if isinstance(legacy_config, dict) else {}
         )
 
-        # 4. Core State
         self._current_tool_call_id: Optional[str] = None
         self._decision_payload: Any = None
 
-    """
-    All behaviour resides in the mix-ins.
-    Concrete provider classes only need to implement:
-        • stream()
-    """
+        # Ledger references are request-scoped; the database is durable.
+        self._ledger_epoch_id: Optional[str] = None
+        self._ledger_actor_id: Optional[str] = None
 
     tool_response: Optional[bool] = None
     function_call: Optional[dict] = None
     _cancelled: bool = False
     code_mode: bool = False
 
-    # --------------------------------------------------------------------------
-    # ABSTRACT METHODS
-    # --------------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Abstract provider interface
+    # ------------------------------------------------------------------
 
     @abstractmethod
     def _get_client_instance(self, api_key: str):
-        """Return the specific provider client."""
+        """Return the provider-specific client."""
         pass
 
     @abstractmethod
     def _execute_stream_request(self, client, payload: dict) -> Any:
-        """Execute the stream request (Sync or Async-to-Sync)."""
+        """Execute the provider-specific streaming request."""
         pass
 
     @abstractmethod
@@ -213,97 +176,232 @@ class OrchestratorCore(
         stream_reasoning: bool = False,
         api_key: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
-        """
-        Must open a streaming connection to the underlying LLM provider,
-        parse deltas into the mix-in JSON chunk format and `yield` them.
-        """
+        """Provider-specific streaming implementation."""
         yield ""
 
-    # --------------------------------------------------------------------------
-    # CONFIG HELPERS
-    # --------------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Assistant configuration
+    # ------------------------------------------------------------------
 
     async def load_assistant_config(self):
-        """
-        Populates self.assistant_config from Redis if not already set.
-        """
         if not self.assistant_config and self.assistant_id:
             self.assistant_config = (
                 await self.assistant_cache.retrieve(self.assistant_id) or {}
             )
             LOG.debug(f"Loaded config for {self.assistant_id}")
 
-    async def _handle_role_based_identity_swap(self, requested_model: Any) -> None:
-        """
-        Performs the 'Hot Swap' for specialized agent loops:
-        Deep Research (Supervisor -> Workers) OR Engineering (Senior -> Junior)
+    # ------------------------------------------------------------------
+    # Durable role-based supervisor identity
+    # ------------------------------------------------------------------
 
-        user_id is resolved from self._run_user_id (stamped in stream() before
-        this method is called) so ephemeral assistants are correctly owned.
+    async def _handle_role_based_identity_swap(
+        self,
+        requested_model: Any,
+        *,
+        run_id: str,
+    ) -> None:
         """
-        is_engineer_active = getattr(self, "is_engineer", False)
+        Resolve one supervisor identity per root-Run execution epoch.
 
-        # 1. ENFORCE MUTUAL EXCLUSIVITY
+        The ledger is authoritative across provider turns and SDK
+        continuations.
+
+        A previously activated actor is reused. If its Assistant has
+        been deleted or become unavailable, fail rather than silently
+        assigning a different identity to the same actor.
+        """
+        is_engineer_active = bool(getattr(self, "is_engineer", False))
+
         if self.is_deep_research and is_engineer_active:
             LOG.error(
-                "CRITICAL: Assistant configured with BOTH Deep Research and Engineer. "
-                "Defaulting to Engineer."
+                "CRITICAL: Assistant configured with BOTH Deep Research "
+                "and Engineer. Defaulting to Engineer."
             )
             self.is_deep_research = False
 
-        # 2. No-op for standard assistants
         if not self.is_deep_research and not is_engineer_active:
             return
 
-        # 3. Resolve owner for ephemeral assistants — must be set before this call
         user_id = getattr(self, "_run_user_id", None)
+
         if not user_id:
-            LOG.error(
-                "ORCHESTRATOR ▸ _handle_role_based_identity_swap: "
-                "_run_user_id is not set — ephemeral assistants cannot be created without an owner."
+            raise RuntimeError(
+                "Supervisor reservation requires the authenticated " "Run owner."
             )
-            return
+
+        if not run_id:
+            raise RuntimeError("Supervisor reservation requires run_id.")
+
+        role = "research_supervisor" if self.is_deep_research else "senior_engineer"
+
+        reservation = await self._native_exec.reserve_execution_actor(
+            run_id=run_id,
+            slot="supervisor",
+            execution_role=role,
+            ephemeral=True,
+        )
+
+        epoch = reservation["epoch"]
+        actor = reservation["actor"]
+
+        self._ledger_epoch_id = epoch["id"]
+        self._ledger_actor_id = actor["id"]
+
+        if epoch["run_id"] != run_id or epoch["root_run_id"] != run_id:
+            raise RuntimeError("Supervisor identity swap is only valid for a root Run.")
+
+        if actor["state"] == "retired":
+            raise RuntimeError(
+                "Execution actor was retired; a new execution " "attempt is required."
+            )
 
         assistant_manager = AssistantManager()
+        supervisor_id = actor.get("assistant_id_snapshot")
 
-        # ==========================================
-        # PATH A: DEEP RESEARCH SWAP
-        # ==========================================
-        if self.is_deep_research:
-            LOG.critical("██████ [DEEP_RESEARCH_MODE_ACTIVE] ██████")
-            ephemeral_lead = (
-                await assistant_manager.create_ephemeral_research_supervisor(
-                    user_id=user_id
+        if supervisor_id:
+            # Existing epoch: restore the recorded identity.
+            ephemeral_lead = await self._native_exec.retrieve_assistant(supervisor_id)
+
+            if (
+                not ephemeral_lead
+                or getattr(
+                    ephemeral_lead,
+                    "deleted_at",
+                    None,
                 )
-            )
-            self._worker_thread = await assistant_manager.create_ephemeral_thread(
-                user_id=user_id
+                is not None
+            ):
+                raise RuntimeError(
+                    "Previously recorded supervisor Assistant is "
+                    "unavailable; explicit epoch recovery is required."
+                )
+
+            LOG.info(
+                "ORCHESTRATOR ▸ Reusing supervisor %s (epoch=%s)",
+                supervisor_id,
+                epoch["id"],
             )
 
-        # ==========================================
-        # PATH B: ENGINEER SWAP
-        # ==========================================
-        elif is_engineer_active:
-            LOG.critical("██████ [ENGINEER_MODE_ACTIVE] ██████")
-            ephemeral_lead = await assistant_manager.create_ephemeral_senior_engineer(
-                user_id=user_id
-            )
-            self._worker_thread = await assistant_manager.create_ephemeral_thread(
-                user_id=user_id
+        else:
+            # No Assistant identity has yet been attached to this slot.
+            # Assistant creation happens before ledger activation.
+            #
+            # A concurrent creator could win the write-once activation.
+            # If that happens, reconcile to the winning identity.
+
+            if role == "research_supervisor":
+                ephemeral_lead = (
+                    await assistant_manager.create_ephemeral_research_supervisor(
+                        user_id=user_id
+                    )
+                )
+            else:
+                ephemeral_lead = (
+                    await assistant_manager.create_ephemeral_senior_engineer(
+                        user_id=user_id
+                    )
+                )
+
+            try:
+                activated = await self._native_exec.activate_execution_actor(
+                    actor_id=actor["id"],
+                    assistant_id=ephemeral_lead.id,
+                    model=getattr(
+                        ephemeral_lead,
+                        "model",
+                        None,
+                    ),
+                )
+
+                recorded_id = activated["assistant_id_snapshot"]
+
+            except Exception:
+                # Activation may have committed before its response
+                # failed, or another process may have activated first.
+                #
+                # Read the durable identity before attempting cleanup.
+
+                try:
+                    refreshed = await self._native_exec.reserve_execution_actor(
+                        run_id=run_id,
+                        slot="supervisor",
+                        execution_role=role,
+                        ephemeral=True,
+                    )
+
+                    recorded_id = refreshed["actor"].get("assistant_id_snapshot")
+
+                except Exception:
+                    LOG.warning(
+                        "ORCHESTRATOR ▸ Unable to reconcile supervisor "
+                        "activation for epoch %s; preserving Assistant "
+                        "%s for operator recovery.",
+                        epoch["id"],
+                        ephemeral_lead.id,
+                    )
+                    raise
+
+                if not recorded_id:
+                    LOG.error(
+                        "ORCHESTRATOR ▸ Supervisor activation unresolved "
+                        "for epoch %s; Assistant %s requires "
+                        "reconciliation.",
+                        epoch["id"],
+                        ephemeral_lead.id,
+                    )
+                    raise RuntimeError(
+                        "Supervisor activation did not persist " "an identity."
+                    )
+
+            if recorded_id != ephemeral_lead.id:
+                # The other creator won. Delete only our losing
+                # Assistant, never the identity recorded in the ledger.
+                try:
+                    await assistant_manager.delete_assistant(
+                        assistant_id=ephemeral_lead.id,
+                        user_id=user_id,
+                        permanent=True,
+                    )
+                except Exception as cleanup_exc:
+                    LOG.warning(
+                        "ORCHESTRATOR ▸ Losing supervisor cleanup " "failed: %s",
+                        cleanup_exc,
+                    )
+
+                ephemeral_lead = await self._native_exec.retrieve_assistant(recorded_id)
+
+                if (
+                    not ephemeral_lead
+                    or getattr(
+                        ephemeral_lead,
+                        "deleted_at",
+                        None,
+                    )
+                    is not None
+                ):
+                    raise RuntimeError("Winning supervisor Assistant is not available.")
+
+            LOG.info(
+                "ORCHESTRATOR ▸ Supervisor identity activated: %s "
+                "(epoch=%s, role=%s)",
+                recorded_id,
+                epoch["id"],
+                role,
             )
 
-        # ==========================================
-        # COMMON IDENTITY SWAP LOGIC
-        # ==========================================
+        # Apply the identity only after resolving its durable snapshot.
         self.assistant_id = ephemeral_lead.id
         self.ephemeral_supervisor_id = ephemeral_lead.id
 
-        # Flush and Reload Configuration (Grabs the Senior/Supervisor system prompt & tools)
+        # Reload the supervisor's own prompt and tool configuration.
         self.assistant_config = {}
         await self._ensure_config_loaded()
 
-        # Set Delegated Inference Model
         self._delegation_model = get_delegated_model(requested_model=requested_model)
+
+    # ------------------------------------------------------------------
+    # Chunk accumulation
+    # ------------------------------------------------------------------
 
     def _handle_chunk_accumulation(
         self,
@@ -358,9 +456,19 @@ class OrchestratorCore(
             accumulated += ccontent
             decision_buffer += ccontent
 
-        return current_block, accumulated, assistant_reply, decision_buffer, should_skip
+        return (
+            current_block,
+            accumulated,
+            assistant_reply,
+            decision_buffer,
+            should_skip,
+        )
 
-    def _update_stream_state(self, chunk: dict, state: StreamState) -> None:
+    def _update_stream_state(
+        self,
+        chunk: dict,
+        state: StreamState,
+    ) -> None:
         ctype = chunk.get("type")
         ccontent = chunk.get("content") or ""
 
@@ -371,6 +479,7 @@ class OrchestratorCore(
                 state.accumulated += "</think>"
             elif state.current_block == "plan":
                 state.accumulated += "</plan>"
+
             state.current_block = None
             state.assistant_reply += ccontent
             state.accumulated += ccontent
@@ -381,8 +490,10 @@ class OrchestratorCore(
                     state.accumulated += "</think>"
                 elif state.current_block == "plan":
                     state.accumulated += "</plan>"
+
                 state.accumulated += "<fc>"
                 state.current_block = "fc"
+
             state.accumulated += ccontent
 
         elif ctype == "reasoning":
@@ -391,8 +502,10 @@ class OrchestratorCore(
                     state.accumulated += "</fc>"
                 elif state.current_block == "plan":
                     state.accumulated += "</plan>"
+
                 state.accumulated += "<think>"
                 state.current_block = "think"
+
             state.reasoning_reply += ccontent
 
         elif ctype == "plan":
@@ -401,20 +514,28 @@ class OrchestratorCore(
                     state.accumulated += "</fc>"
                 elif state.current_block == "think":
                     state.accumulated += "</think>"
+
                 state.accumulated += "<plan>"
                 state.current_block = "plan"
+
             state.plan_buffer += ccontent
             state.accumulated += ccontent
 
         elif ctype == "decision":
             state.decision_buffer += ccontent
+
             if state.current_block == "fc":
                 state.accumulated += "</fc>"
             elif state.current_block == "think":
                 state.accumulated += "</think>"
             elif state.current_block == "plan":
                 state.accumulated += "</plan>"
+
             state.current_block = "decision"
+
+    # ------------------------------------------------------------------
+    # Assistant configuration loading
+    # ------------------------------------------------------------------
 
     async def _ensure_config_loaded(self):
         if not self.assistant_id:
@@ -425,28 +546,43 @@ class OrchestratorCore(
             config_loaded = False
 
             cached_data = await self.assistant_cache.retrieve(self.assistant_id)
+
             if cached_data:
                 self.assistant_config = cached_data
                 config_loaded = True
+
                 LOG.info(
                     f"✅ Config Loaded for {self.assistant_id} | "
-                    f"AgentMode: {self.assistant_config.get('agent_mode')}"
+                    f"AgentMode: "
+                    f"{self.assistant_config.get('agent_mode')}"
                 )
+
             else:
                 LOG.warning(
-                    f"⚠️ Cache Miss for {self.assistant_id} — fetching from source"
+                    f"⚠️ Cache Miss for {self.assistant_id} — " f"fetching from source"
                 )
+
                 fresh_config = await self._fetch_assistant_config_from_db(
                     self.assistant_id
                 )
+
                 if fresh_config:
                     self.assistant_config = fresh_config
                     config_loaded = True
-                    await self.assistant_cache.store(self.assistant_id, fresh_config)
-                    LOG.info(f"✅ Config rehydrated from DB for {self.assistant_id}")
+
+                    await self.assistant_cache.store(
+                        self.assistant_id,
+                        fresh_config,
+                    )
+
+                    LOG.info(
+                        f"✅ Config rehydrated from DB " f"for {self.assistant_id}"
+                    )
+
                 else:
                     LOG.error(
-                        f"❌ FATAL: No config found anywhere for {self.assistant_id}"
+                        f"❌ FATAL: No config found anywhere "
+                        f"for {self.assistant_id}"
                     )
 
         except Exception as e:
@@ -457,8 +593,10 @@ class OrchestratorCore(
 
     def _build_tool_structure(self, batch):
         structure = []
+
         for tool in batch:
-            tool_id = tool.get("id") or f"call_{uuid.uuid4().hex[:8]}"
+            tool_id = tool.get("id") or (f"call_{uuid.uuid4().hex[:8]}")
+
             structure.append(
                 {
                     "id": tool_id,
@@ -467,17 +605,22 @@ class OrchestratorCore(
                         "name": tool.get("name"),
                         "arguments": (
                             json.dumps(tool.get("arguments", {}))
-                            if isinstance(tool.get("arguments"), dict)
+                            if isinstance(
+                                tool.get("arguments"),
+                                dict,
+                            )
                             else tool.get("arguments")
                         ),
                     },
                 }
             )
+
         return structure
 
-    # --------------------------------------------------------------------------
-    # CORE ORCHESTRATION LOOP (Recursive Level 3)
-    # --------------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Recursive orchestration loop
+    # ------------------------------------------------------------------
+
     async def process_conversation(
         self,
         thread_id: str,
@@ -493,59 +636,73 @@ class OrchestratorCore(
         Level 3 Recursive Orchestrator (Batch-Aware).
 
         Run lifecycle guarantees:
-        - run_id        : durable logical execution identity
-        - started_at    : written once for the execution epoch
-        - current_turn  : durable across continuation HTTP boundaries
-        - status        : canonical transition through RunService
-        - completed_at  : derived from transition to completed
-        - failed_at     : derived from transition to failed
-        - last_error    : written before failure transition
-        - incomplete_details : written on max-turn failsafe
+        - run_id: durable logical execution identity
+        - started_at: written once
+        - current_turn: durable across continuation boundaries
+        - status: canonical transition through RunService
+        - completed_at: derived from completed status
+        - failed_at: derived from failed status
+        - last_error: written before failure transition
+        - incomplete_details: written on max-turn failure
+
+        The execution ledger does not replace RunService.
         """
 
         self._scratch_pad_thread = None
+        self._ledger_epoch_id = None
+        self._ledger_actor_id = None
+        self.ephemeral_supervisor_id = None
+
         _original_assistant_id = assistant_id
 
         await self._ensure_config_loaded()
 
         tool_validator = ToolValidator()
 
-        # A continuation request can recreate the orchestrator while
-        # retaining the same durable Project David Run. Resume the
-        # execution epoch from the authoritative Run instead of
-        # resetting turn accounting at each HTTP boundary.
+        # Resume turn accounting from the durable Run.
         try:
             persisted_run = await self._native_exec.retrieve_run(run_id)
-            turn_count = int(getattr(persisted_run, "current_turn", 0) or 0)
+
+            turn_count = int(
+                getattr(
+                    persisted_run,
+                    "current_turn",
+                    0,
+                )
+                or 0
+            )
+
             started_at = getattr(
                 persisted_run,
                 "started_at",
                 None,
             )
+
         except Exception as lifecycle_exc:
             LOG.warning(
-                "ORCHESTRATOR ? Failed to hydrate persisted Run "
+                "ORCHESTRATOR ▸ Failed to hydrate persisted Run "
                 "lifecycle (non-fatal): %s",
                 lifecycle_exc,
             )
+
             turn_count = 0
             started_at = None
 
         current_message_id = message_id
 
-        # These flags distinguish a real terminal result from merely
-        # exhausting/breaking the while-loop at the configured limit.
         clean_exit = False
         stream_failed = False
 
         try:
             while turn_count < max_turns:
                 turn_count += 1
-                LOG.info(f"ORCHESTRATOR ▸ Turn {turn_count} start [Run: {run_id}]")
 
-                # ------------------------------------------------------------------
-                # LIFECYCLE STAMP — started_at (turn 1) + current_turn (every turn)
-                # ------------------------------------------------------------------
+                LOG.info(f"ORCHESTRATOR ▸ Turn {turn_count} start " f"[Run: {run_id}]")
+
+                # ------------------------------------------------------
+                # Persist durable turn lifecycle
+                # ------------------------------------------------------
+
                 try:
                     fields = {"current_turn": turn_count}
 
@@ -558,9 +715,6 @@ class OrchestratorCore(
                         **fields,
                     )
 
-                    # The Run is actively executing during inference.
-                    # Native/consumer tool dispatch may subsequently
-                    # move it to pending_action, but never completed.
                     await self._native_exec.update_run_status(
                         run_id,
                         StatusEnum.in_progress.value,
@@ -568,19 +722,22 @@ class OrchestratorCore(
 
                 except Exception as lifecycle_exc:
                     LOG.warning(
-                        f"ORCHESTRATOR ▸ Failed to write turn state (non-fatal): {lifecycle_exc}"
+                        "ORCHESTRATOR ▸ Failed to write turn " "state (non-fatal): %s",
+                        lifecycle_exc,
                     )
 
-                # ------------------------------------------------------------------
-                # RESET INTERNAL TURN STATE
-                # ------------------------------------------------------------------
+                # ------------------------------------------------------
+                # Reset per-turn state
+                # ------------------------------------------------------
+
                 self.set_tool_response_state(False)
                 self.set_function_call_state(None)
                 self._current_tool_call_id = None
 
-                # ------------------------------------------------------------------
-                # INFERENCE TURN
-                # ------------------------------------------------------------------
+                # ------------------------------------------------------
+                # Inference turn
+                # ------------------------------------------------------
+
                 try:
                     async for chunk in self.stream(
                         thread_id=thread_id,
@@ -596,7 +753,9 @@ class OrchestratorCore(
 
                 except Exception as stream_exc:
                     LOG.error(
-                        f"ORCHESTRATOR ▸ Turn {turn_count} stream failed: {stream_exc}"
+                        "ORCHESTRATOR ▸ Turn %s stream failed: %s",
+                        turn_count,
+                        stream_exc,
                     )
 
                     try:
@@ -604,13 +763,17 @@ class OrchestratorCore(
                             run_id,
                             last_error=str(stream_exc),
                         )
+
                         await self._native_exec.update_run_status(
                             run_id,
                             StatusEnum.failed.value,
                         )
+
                     except Exception as lifecycle_exc:
                         LOG.warning(
-                            f"ORCHESTRATOR ▸ Failed to write stream error (non-fatal): {lifecycle_exc}"
+                            "ORCHESTRATOR ▸ Failed to write "
+                            "stream error (non-fatal): %s",
+                            lifecycle_exc,
                         )
 
                     stream_failed = True
@@ -618,52 +781,67 @@ class OrchestratorCore(
                     yield json.dumps(
                         {
                             "type": "error",
-                            "content": f"Stream failure: {stream_exc}",
+                            "content": (f"Stream failure: {stream_exc}"),
                             "run_id": run_id,
                         }
                     )
+
                     break
 
-                # ------------------------------------------------------------------
-                # CHECK FOR TOOL CALLS
-                # ------------------------------------------------------------------
+                # ------------------------------------------------------
+                # Determine whether the model produced tool calls
+                # ------------------------------------------------------
+
                 batch: List[Dict] = self.get_function_call_state()
 
                 if not batch:
-                    LOG.info(f"ORCHESTRATOR ▸ Turn {turn_count} completed with text.")
+                    LOG.info(
+                        "ORCHESTRATOR ▸ Turn %s completed with text.",
+                        turn_count,
+                    )
 
                     try:
                         await self._native_exec.update_run_status(
                             run_id,
                             StatusEnum.completed.value,
                         )
+
                     except Exception as lifecycle_exc:
                         LOG.warning(
-                            f"ORCHESTRATOR ▸ Failed to mark Run completed (non-fatal): {lifecycle_exc}"
+                            "ORCHESTRATOR ▸ Failed to mark Run "
+                            "completed (non-fatal): %s",
+                            lifecycle_exc,
                         )
 
                     clean_exit = True
                     break
 
-                # ------------------------------------------------------------------
-                # TOOL VALIDATION + AUTHORIZED SDK DETECTION
-                # ------------------------------------------------------------------
+                # ------------------------------------------------------
+                # Validate tools and detect authorized SDK handoffs
+                # ------------------------------------------------------
+
                 has_sdk_user_tool = False
 
-                # Consumer-tool authority is assistant-specific. Resolve it once
-                # for this inference turn so an undeclared/hallucinated function
-                # cannot be mistaken for a legitimate SDK handoff.
                 authorized_consumer_tool_names = (
                     await self._resolve_authorized_consumer_tool_names(assistant_id)
                 )
 
                 for call in batch:
-                    if "function" in call and isinstance(call["function"], dict):
+                    if "function" in call and isinstance(
+                        call["function"],
+                        dict,
+                    ):
                         tool_name = call["function"].get("name")
-                        args = call["function"].get("arguments", {})
+                        args = call["function"].get(
+                            "arguments",
+                            {},
+                        )
                     else:
                         tool_name = call.get("name")
-                        args = call.get("arguments", {})
+                        args = call.get(
+                            "arguments",
+                            {},
+                        )
 
                     mcp_executor = self._get_mcp_tool_executor(tool_name)
 
@@ -683,9 +861,10 @@ class OrchestratorCore(
                     if validation_event:
                         yield validation_event
 
-                # ------------------------------------------------------------------
-                # TOOL EXECUTION TURN
-                # ------------------------------------------------------------------
+                # ------------------------------------------------------
+                # Execute the tool batch
+                # ------------------------------------------------------
+
                 async for chunk in self.process_tool_calls(
                     thread_id=thread_id,
                     scratch_pad_thread=self._scratch_pad_thread,
@@ -699,76 +878,97 @@ class OrchestratorCore(
                 ):
                     yield chunk
 
-                # ------------------------------------------------------------------
-                # RECURSION DECISION
-                # ------------------------------------------------------------------
+                # ------------------------------------------------------
+                # Decide whether to return control to the SDK
+                # ------------------------------------------------------
+
                 if has_sdk_user_tool:
                     LOG.info(
-                        "ORCHESTRATOR ▸ SDK tool detected. Handing control to SDK."
+                        "ORCHESTRATOR ▸ SDK tool detected. " "Handing control to SDK."
                     )
+
+                    # Returning from an async generator still runs
+                    # finally. Supervisor cleanup below checks the
+                    # authoritative Run status before deleting it.
                     return
 
                 LOG.info(
-                    f"ORCHESTRATOR ▸ Platform batch {turn_count} complete. Looping internally..."
+                    "ORCHESTRATOR ▸ Platform batch %s complete. "
+                    "Looping internally...",
+                    turn_count,
                 )
+
                 await asyncio.sleep(0.5)
 
                 current_message_id = None
                 continue
 
-            # ----------------------------------------------------------------------
-            # FAILSAFE — MAX TURNS
-            # ----------------------------------------------------------------------
+            # ----------------------------------------------------------
+            # Max-turn failsafe
+            # ----------------------------------------------------------
+
             if turn_count >= max_turns and not clean_exit and not stream_failed:
                 LOG.error("ORCHESTRATOR ▸ Max turns reached.")
 
                 try:
                     details = (
-                        f"Max turns ({max_turns}) reached without clean completion. "
-                        f"Last tool batch size: "
+                        f"Max turns ({max_turns}) reached without "
+                        f"clean completion. Last tool batch size: "
                         f"{len(self.get_function_call_state() or [])}."
                     )
 
                     await self._native_exec.update_run_fields(
                         run_id,
                         incomplete_details=details,
-                        last_error="Maximum conversation turns exceeded",
+                        last_error=("Maximum conversation turns exceeded"),
                     )
+
                     await self._native_exec.update_run_status(
                         run_id,
                         StatusEnum.failed.value,
                     )
+
                 except Exception as lifecycle_exc:
                     LOG.warning(
-                        f"ORCHESTRATOR ▸ Failed to write max-turns state (non-fatal): {lifecycle_exc}"
+                        "ORCHESTRATOR ▸ Failed to write max-turns "
+                        "state (non-fatal): %s",
+                        lifecycle_exc,
                     )
 
                 yield json.dumps(
                     {
                         "type": "error",
-                        "content": "Maximum conversation turns exceeded",
+                        "content": ("Maximum conversation turns exceeded"),
                         "run_id": run_id,
                     }
                 )
 
-        # ----------------------------------------------------------------------
-        # OUTER EXCEPTION GUARD
-        # ----------------------------------------------------------------------
+        # --------------------------------------------------------------
+        # Outer exception guard
+        # --------------------------------------------------------------
+
         except Exception as exc:
-            LOG.error(f"ORCHESTRATOR ▸ Unhandled exception: {exc}")
+            LOG.error(
+                "ORCHESTRATOR ▸ Unhandled exception: %s",
+                exc,
+            )
 
             try:
                 await self._native_exec.update_run_fields(
                     run_id,
                     last_error=str(exc),
                 )
+
                 await self._native_exec.update_run_status(
                     run_id,
                     StatusEnum.failed.value,
                 )
+
             except Exception as lifecycle_exc:
                 LOG.warning(
-                    f"ORCHESTRATOR ▸ Failed to persist outer exception (non-fatal): {lifecycle_exc}"
+                    "ORCHESTRATOR ▸ Failed to persist outer "
+                    "exception (non-fatal): %s",
+                    lifecycle_exc,
                 )
 
             yield json.dumps(
@@ -779,26 +979,90 @@ class OrchestratorCore(
                 }
             )
 
-        # ----------------------------------------------------------------------
-        # IDENTITY TEARDOWN — ALWAYS EXECUTES
-        # ----------------------------------------------------------------------
+        # --------------------------------------------------------------
+        # Supervisor lifecycle finalization
+        # --------------------------------------------------------------
+
         finally:
-            if self.ephemeral_supervisor_id:
+            # SDK tool handoff is not a terminal Run outcome.
+            # The durable actor and Assistant must survive it.
+
+            if (
+                self.ephemeral_supervisor_id
+                and self._ledger_epoch_id
+                and self._ledger_actor_id
+            ):
                 try:
-                    await self._ephemeral_clean_up(
-                        assistant_id=self.ephemeral_supervisor_id,
-                        thread_id=thread_id,
-                        delete_thread=False,
+                    persisted = await self._native_exec.retrieve_run(run_id)
+
+                    raw_status = getattr(
+                        persisted,
+                        "status",
+                        None,
                     )
-                except Exception as cleanup_exc:
+
+                    run_status = str(
+                        getattr(
+                            raw_status,
+                            "value",
+                            raw_status,
+                        )
+                    )
+
+                    if run_status in {
+                        "completed",
+                        "failed",
+                        "cancelled",
+                        "expired",
+                    }:
+                        # Record retirement before deleting the
+                        # Assistant, preserving forensic identity.
+                        #
+                        # If ledger finalization fails, do not
+                        # delete the Assistant. Leave it available
+                        # for explicit recovery.
+
+                        await self._native_exec.retire_execution_actor(
+                            actor_id=self._ledger_actor_id
+                        )
+
+                        await self._native_exec.complete_execution_epoch(
+                            epoch_id=self._ledger_epoch_id,
+                            terminal_status=run_status,
+                        )
+
+                        await self._ephemeral_clean_up(
+                            assistant_id=(self.ephemeral_supervisor_id),
+                            thread_id=thread_id,
+                            delete_thread=False,
+                        )
+
+                    else:
+                        LOG.info(
+                            "ORCHESTRATOR ▸ Supervisor retained at "
+                            "nonterminal Run status %s (epoch=%s)",
+                            run_status,
+                            self._ledger_epoch_id,
+                        )
+
+                except Exception as lifecycle_exc:
                     LOG.warning(
-                        f"ORCHESTRATOR ▸ Ephemeral cleanup failed (non-fatal): {cleanup_exc}"
+                        "ORCHESTRATOR ▸ Supervisor finalization "
+                        "deferred for recovery (Run=%s): %s",
+                        run_id,
+                        lifecycle_exc,
                     )
+
+            # Only clear request-scoped Python state.
+            # This does not delete ledger records or Assistants.
 
             self.assistant_id = _original_assistant_id
             self.ephemeral_supervisor_id = None
+            self._ledger_epoch_id = None
+            self._ledger_actor_id = None
 
             LOG.info(
-                f"ORCHESTRATOR ▸ Identity restored to {_original_assistant_id}. "
-                f"Ephemeral state cleared."
+                "ORCHESTRATOR ▸ Identity restored to %s. "
+                "Request-scoped supervisor state cleared.",
+                _original_assistant_id,
             )
