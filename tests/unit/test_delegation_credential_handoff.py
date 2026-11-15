@@ -1,4 +1,3 @@
-
 """Isolated behavioral tests for request-scoped research delegation credentials.
 
 The real DelegationMixin method is compiled from source, with external services
@@ -100,9 +99,7 @@ def _harness():
         delegations=[],
         retired=[],
         action_statuses=[],
-        parent_metadata={
-            "delegated_model": "hyperbolic/deepseek-v4-flash-0731"
-        },
+        parent_metadata={"delegated_model": "hyperbolic/deepseek-v4-flash-0731"},
     )
 
     async def create_action(**kwargs):
@@ -160,7 +157,6 @@ def _harness():
         thread_id,
         meta_data,
         model,
-<<<<<<< HEAD
         *,
         trusted_metadata=False,
     ):
@@ -173,11 +169,6 @@ def _harness():
                 "trusted_metadata": trusted_metadata,
             }
         )
-=======
-        trusted_metadata=None,
-    ):
-        observations.child_runs.append(((meta_data or {}).copy(), model))
->>>>>>> f0f28181 (fix(core): restore execution ledger migration and complete files integration)
         return SimpleNamespace(id="run_child")
 
     async def retrieve_run(run_id):
@@ -216,9 +207,7 @@ def _harness():
 
     def make_sdk(api_key, base_url):
         observations.sdk_keys.append(api_key)
-        return SimpleNamespace(
-            synchronous_inference_stream=Stream()
-        )
+        return SimpleNamespace(synchronous_inference_stream=Stream())
 
     instance.create_ephemeral_worker_assistant = create_worker
     instance.create_ephemeral_thread = create_thread
@@ -272,19 +261,13 @@ def test_two_research_delegations_reuse_request_credentials():
             "project_second",
         ]
 
-        assert [
-            setup["api_key"]
-            for setup in observed.provider_setups
-        ] == [
+        assert [setup["api_key"] for setup in observed.provider_setups] == [
             "provider_first",
             "provider_second",
         ]
 
         assert len(observed.outputs) == 2
-        assert all(
-            output["is_error"] is False
-            for output in observed.outputs
-        )
+        assert all(output["is_error"] is False for output in observed.outputs)
 
         assert observed.cleaned == [
             "worker_1",
@@ -302,9 +285,7 @@ def test_two_research_delegations_reuse_request_credentials():
             assert child["thread_id"] == "thread_child"
             assert child["trusted_metadata"] is True
 
-            assert child["model"] == (
-                "hyperbolic/deepseek-v4-flash-0731"
-            )
+            assert child["model"] == ("hyperbolic/deepseek-v4-flash-0731")
 
             assert child["meta_data"] == {
                 "batfish_owner_user_id": "user_test",
@@ -315,24 +296,17 @@ def test_two_research_delegations_reuse_request_credentials():
             }
 
             assert "api_key" not in child["meta_data"]
-            assert (
-                "project_david_api_key"
-                not in child["meta_data"]
-            )
+            assert "project_david_api_key" not in child["meta_data"]
 
             assert observed.delegations[index] == {
                 "parent_run_id": "run_parent",
                 "child_run_id": "run_child",
                 "parent_action_id": "action_1",
                 "worker_assistant_id": worker_id,
-                "worker_model": (
-                    "hyperbolic/deepseek-v4-flash-0731"
-                ),
+                "worker_model": ("hyperbolic/deepseek-v4-flash-0731"),
             }
 
-            assert observed.retired[index] == {
-                "child_run_id": "run_child"
-            }
+            assert observed.retired[index] == {"child_run_id": "run_child"}
 
         assert observed.action_statuses == [
             ("action_1", "processing"),
@@ -358,8 +332,7 @@ def test_fails_closed_when_project_key_missing():
         )
 
         assert any(
-            event["state"] == "error"
-            and "Project David API key" in event["activity"]
+            event["state"] == "error" and "Project David API key" in event["activity"]
             for event in events
         )
 
@@ -381,8 +354,7 @@ def test_fails_closed_when_provider_key_missing():
         )
 
         assert any(
-            event["state"] == "error"
-            and "Provider BYOK" in event["activity"]
+            event["state"] == "error" and "Provider BYOK" in event["activity"]
             for event in events
         )
 
@@ -401,14 +373,9 @@ def test_supervisor_persists_model_only():
     )
 
     for filename in ("qwen_base.py", "deepseek_base.py"):
-        text = (source_dir / filename).read_text(
-            encoding="utf-8"
-        )
+        text = (source_dir / filename).read_text(encoding="utf-8")
 
-        assert (
-            'meta_data={"delegated_model": pre_mapped_model}'
-            in text
-        )
+        assert 'meta_data={"delegated_model": pre_mapped_model}' in text
         assert '"api_key": api_key,' not in text
         assert '"project_david_api_key": project_david_api_key,' not in text
         assert 'kwargs.get("project_david_api_key")' in text
@@ -418,30 +385,21 @@ def test_explicit_credential_wiring_is_present():
     root = Path(__file__).resolve().parents[2]
 
     core = (
-        root
-        / "src/api/entities_api/orchestration/engine/orchestrator_core.py"
+        root / "src/api/entities_api/orchestration/engine/orchestrator_core.py"
     ).read_text(encoding="utf-8")
 
     router = (
-        root
-        / "src/api/entities_api/orchestration/mixins/tool_routing_mixin.py"
+        root / "src/api/entities_api/orchestration/mixins/tool_routing_mixin.py"
     ).read_text(encoding="utf-8")
 
     delegation = (
-        root
-        / "src/api/entities_api/orchestration/mixins/delegation_mixin.py"
+        root / "src/api/entities_api/orchestration/mixins/delegation_mixin.py"
     ).read_text(encoding="utf-8")
 
-    assert (
-        'project_david_api_key=kwargs.get("project_david_api_key")'
-        in core
-    )
+    assert 'project_david_api_key=kwargs.get("project_david_api_key")' in core
     assert "project_david_api_key=project_david_api_key" in router
     assert "inference_api_key=api_key" in router
 
     assert 'run_obj.meta_data.get("api_key")' not in delegation
-    assert (
-        'run_obj.meta_data.get("project_david_api_key")'
-        not in delegation
-    )
+    assert 'run_obj.meta_data.get("project_david_api_key")' not in delegation
     assert 'scrub_meta.pop("api_key"' not in delegation
