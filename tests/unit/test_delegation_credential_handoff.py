@@ -160,6 +160,7 @@ def _harness():
         thread_id,
         meta_data,
         model,
+<<<<<<< HEAD
         *,
         trusted_metadata=False,
     ):
@@ -172,7 +173,27 @@ def _harness():
                 "trusted_metadata": trusted_metadata,
             }
         )
+=======
+        trusted_metadata=None,
+    ):
+        observations.child_runs.append(((meta_data or {}).copy(), model))
+>>>>>>> f0f28181 (fix(core): restore execution ledger migration and complete files integration)
         return SimpleNamespace(id="run_child")
+
+    async def retrieve_run(run_id):
+        if run_id == "run_child":
+            return SimpleNamespace(
+                id=run_id,
+                user_id="user_test",
+                status="completed",
+                last_error=None,
+            )
+
+        return SimpleNamespace(
+            id=run_id,
+            user_id="user_test",
+            meta_data=observations.parent_metadata,
+        )
 
     async def cleanup(assistant_id, thread_id, delete_thread):
         observations.cleaned.append(assistant_id)

@@ -23,7 +23,7 @@ update_assistant = client.assistants.update_assistant(
     agent_mode=False,
     decision_telemetry=False,
     web_access=False,
-    deep_research=True,
+    deep_research=False,
     engineer=False,
 )
 
