@@ -1,3 +1,12 @@
+## [1.61.5](https://github.com/project-david-ai/projectdavid-core/compare/v1.61.4...v1.61.5) (2026-11-15)
+
+
+### Bug Fixes
+
+* **core:** include durable execution ledger service ([a2c8b46](https://github.com/project-david-ai/projectdavid-core/commit/a2c8b46c577921776a7f429d3e4754677a1c567b))
+* **core:** stabilize delegation credentials and Kimi routing ([229d4ff](https://github.com/project-david-ai/projectdavid-core/commit/229d4fff349680417c3cbab5e455c0be41af6b37))
+* **core:** stabilize durable delegation and persist scratchpad audit results ([33bd94f](https://github.com/project-david-ai/projectdavid-core/commit/33bd94f8bd45bd0acec4a30cccc9f26d5590bd73))
+
 ## [1.61.4](https://github.com/project-david-ai/projectdavid-core/compare/v1.61.3...v1.61.4) (2026-11-12)
 
 
