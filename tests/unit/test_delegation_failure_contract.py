@@ -1,15 +1,11 @@
-
 """Regression checks for honest research delegation failure reporting."""
 
 import inspect
 
 from src.api.entities_api.orchestration.mixins.delegation_mixin import DelegationMixin
-
-
 from src.api.entities_api.orchestration.workers.base_workers.qwen_base import (
     QwenBaseWorker,
 )
-
 
 
 def test_qwen_provider_exception_propagates():
