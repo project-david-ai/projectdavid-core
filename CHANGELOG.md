@@ -1,3 +1,11 @@
+## [1.61.6](https://github.com/project-david-ai/projectdavid-core/compare/v1.61.5...v1.61.6) (2026-11-15)
+
+
+### Bug Fixes
+
+* **core:** restore execution ledger migration and complete files integration ([73c7f87](https://github.com/project-david-ai/projectdavid-core/commit/73c7f87142af33aa2f82a3a9ae9f2e5acc0ded47))
+* **tests:** resolve delegation credential handoff merge conflict ([ca086a4](https://github.com/project-david-ai/projectdavid-core/commit/ca086a4973a7e6557ec220445b428d6403d84ce7))
+
 ## [1.61.5](https://github.com/project-david-ai/projectdavid-core/compare/v1.61.4...v1.61.5) (2026-11-15)
 
 
