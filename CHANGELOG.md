@@ -1,3 +1,10 @@
+## [1.61.7](https://github.com/project-david-ai/projectdavid-core/compare/v1.61.6...v1.61.7) (2026-11-16)
+
+
+### Bug Fixes
+
+* **core:** restore execution ledger migration and CI packaging ([6ca8f28](https://github.com/project-david-ai/projectdavid-core/commit/6ca8f281129e651fc12e6643742bbe7c57508534))
+
 ## [1.61.6](https://github.com/project-david-ai/projectdavid-core/compare/v1.61.5...v1.61.6) (2026-11-15)
 
 
