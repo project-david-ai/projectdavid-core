@@ -49,6 +49,8 @@ jobs:
               - '!src/api/training/**'
               - '!src/api/sandbox/**'
               - 'docker/api/**'
+              - 'migrations/**'
+              - 'alembic.ini'
             sandbox:
               - 'src/api/sandbox/**'
               - 'docker/sandbox/**'
