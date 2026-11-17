@@ -119,8 +119,34 @@ def _batch_delete_runs(session, where_clause: str, params: dict, label: str) -> 
 
     Returns total runs deleted.
     """
+    # Never hard-delete a Run whose durable lineage or evidence
+    # would be invalidated by cascading Action deletion.
+    ledger_guard = """
+        NOT EXISTS (
+            SELECT 1 FROM run_execution_epochs AS ep
+            WHERE ep.run_id = runs.id
+               OR ep.root_run_id = runs.id
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM execution_events AS ev
+            WHERE ev.origin_run_id = runs.id
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM evidence_retention_holds AS rh
+            WHERE rh.root_run_id = runs.id
+        )
+        AND NOT EXISTS (
+            SELECT 1
+            FROM actions AS a
+            JOIN run_delegations AS d
+              ON d.parent_action_id = a.id
+            WHERE a.run_id = runs.id
+        )
+    """
+    eligible_where = f"({where_clause}) AND ({ledger_guard})"
+
     count_row = session.execute(
-        text(f"SELECT COUNT(*) AS cnt FROM runs WHERE {where_clause}"),  # nosec B608
+        text(f"SELECT COUNT(*) AS cnt FROM runs WHERE {eligible_where}"),  # nosec B608
         params,
     ).fetchone()
 
@@ -140,7 +166,7 @@ def _batch_delete_runs(session, where_clause: str, params: dict, label: str) -> 
     while True:
         rows = session.execute(
             text(
-                f"SELECT id FROM runs WHERE {where_clause} LIMIT :batch_size"  # nosec B608
+                f"SELECT id FROM runs WHERE {eligible_where} LIMIT :batch_size"  # nosec B608
             ),  # nosec B602
             {**params, "batch_size": BATCH_SIZE},
         ).fetchall()
@@ -154,8 +180,10 @@ def _batch_delete_runs(session, where_clause: str, params: dict, label: str) -> 
 
         try:
             result = session.execute(
-                text(f"DELETE FROM runs WHERE id IN ({in_clause})"),  # nosec B608
-                id_params,
+                text(
+                    f"DELETE FROM runs WHERE {eligible_where} AND id IN ({in_clause})"  # nosec B608
+                ),
+                {**params, **id_params},
             )
             session.commit()
         except Exception as exc:
