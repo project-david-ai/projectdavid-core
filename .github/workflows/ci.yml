@@ -313,7 +313,15 @@ jobs:
       github.event_name == 'push' &&
       github.ref == 'refs/heads/dev' &&
       !contains(github.event.head_commit.message, '[skip ci]') &&
-      !contains(github.event.head_commit.message, 'chore(release)')
+      !contains(github.event.head_commit.message, 'chore(release)') &&
+      (
+        needs.changes.outputs.api == 'true' ||
+        needs.changes.outputs.sandbox == 'true' ||
+        needs.changes.outputs.training == 'true' ||
+        needs.changes.outputs.inference == 'true' ||
+        needs.changes.outputs.router == 'true' ||
+        needs.changes.outputs.shared == 'true'
+      )
 
     steps:
       - name: "🕺 Checkout"
@@ -429,7 +437,9 @@ jobs:
             echo "| training-worker | \`dev-${SHORT_SHA}\` |" >> "$GITHUB_STEP_SUMMARY"
           fi
           changed "$INFERENCE_CHANGED" && echo "| inference-worker | \`dev-${SHORT_SHA}\` |" >> "$GITHUB_STEP_SUMMARY"
-          changed "$ROUTER_CHANGED"    && echo "| router | \`dev-${SHORT_SHA}\` |" >> "$GITHUB_STEP_SUMMARY"
+          if changed "$ROUTER_CHANGED"; then
+            echo "| router | \`dev-${SHORT_SHA}\` |" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: "📦 Update staging repo docker-compose.yml"
         env:
