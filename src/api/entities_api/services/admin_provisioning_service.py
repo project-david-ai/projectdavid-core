@@ -20,7 +20,7 @@ class ProvisionedUserApiKey:
 
 
 class AdminProvisioningService:
-    """Converges a verified external account to one active Project David key."""
+    """Converges a verified external account to one active ordinary key."""
 
     PROVIDER = "project-black-bird"
     KEY_PREFIX = "ea_"
@@ -41,6 +41,7 @@ class AdminProvisioningService:
         clean_name = full_name.strip()
         clean_reference = external_reference.strip()
         clean_key_name = key_name.strip()
+
         if (
             "@" not in normalized_email
             or not clean_name
@@ -49,11 +50,11 @@ class AdminProvisioningService:
         ):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="email, full_name, external_reference and key_name are required",
+                detail=(
+                    "email, full_name, external_reference " "and key_name are required"
+                ),
             )
 
-        # A concurrent first-time request may win the unique-email insert. Retry once
-        # after rollback; the second attempt locks and reuses that committed user.
         for attempt in range(2):
             try:
                 return self._ensure_once(
@@ -66,6 +67,7 @@ class AdminProvisioningService:
                 self.db.rollback()
                 if attempt == 1:
                     raise
+
         raise RuntimeError("Project David provisioning retry loop exhausted")
 
     def _ensure_once(
@@ -86,20 +88,26 @@ class AdminProvisioningService:
                 .with_for_update()
                 .first()
             )
+
             by_email = (
                 self.db.query(User)
                 .filter(User.email == email)
                 .with_for_update()
                 .first()
             )
+
             if by_reference and by_email and by_reference.id != by_email.id:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="External reference and verified email resolve to different users",
+                    detail=(
+                        "External reference and verified email "
+                        "resolve to different users"
+                    ),
                 )
 
             user = by_reference or by_email
             user_created = user is None
+
             if user is None:
                 user = User(
                     id=UtilsInterface.IdentifierService.generate_user_id(),
@@ -111,50 +119,69 @@ class AdminProvisioningService:
                 )
                 self.db.add(user)
                 self.db.flush()
+
             else:
                 user.email = email
                 user.email_verified = True
                 user.full_name = full_name
-                # Project David predates Black Bird and may already hold this verified
-                # user. Claim only local/unclaimed identities; email remains the stable
-                # reconciliation key for accounts owned by another identity provider.
-                if user.oauth_provider in (None, "", "local", self.PROVIDER):
+
+                if user.oauth_provider in (
+                    None,
+                    "",
+                    "local",
+                    self.PROVIDER,
+                ):
                     user.oauth_provider = self.PROVIDER
                     user.provider_user_id = external_reference
 
+            # Rotate only ordinary keys.
+            # Protected service credentials must survive provisioning.
             stale_keys = (
                 self.db.query(ApiKey)
                 .filter(
                     ApiKey.user_id == user.id,
                     ApiKey.key_name == key_name,
                     ApiKey.is_active.is_(True),
+                    ApiKey.is_protected.is_(False),
                 )
                 .with_for_update()
                 .all()
             )
+
+            revoked_count = 0
+
             for stale_key in stale_keys:
+                if stale_key.is_protected:
+                    continue
+
                 stale_key.is_active = False
                 stale_key.last_used_at = None
+                revoked_count += 1
 
             plain_key, prefix = self._new_unique_key()
+
             api_key = ApiKey(
                 key_name=key_name,
                 hashed_key=ApiKey.hash_key(plain_key),
                 prefix=prefix,
                 user_id=user.id,
                 is_active=True,
+                is_protected=False,
             )
+
             self.db.add(api_key)
             self.db.commit()
             self.db.refresh(user)
             self.db.refresh(api_key)
+
             return ProvisionedUserApiKey(
                 user=user,
                 api_key=api_key,
                 plain_key=plain_key,
                 user_created=user_created,
-                keys_revoked=len(stale_keys),
+                keys_revoked=revoked_count,
             )
+
         except Exception:
             self.db.rollback()
             raise
@@ -163,7 +190,10 @@ class AdminProvisioningService:
         for _ in range(self.MAX_PREFIX_ATTEMPTS):
             plain_key = ApiKey.generate_key(prefix=self.KEY_PREFIX)
             prefix = plain_key[:8]
+
             exists = self.db.query(ApiKey.id).filter(ApiKey.prefix == prefix).first()
+
             if not exists:
                 return plain_key, prefix
+
         raise RuntimeError("Unable to generate a unique Project David API-key prefix")
