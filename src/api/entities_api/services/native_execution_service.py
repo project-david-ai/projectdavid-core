@@ -69,13 +69,15 @@ class NativeExecutionService:
         self,
         assistant_id: str,
         user_id: str,
+        *,
+        is_protected_key: bool = False,
     ) -> None:
         """
-        Verifies the user owns or is shared on the assistant.
-        Closes the attack vector: valid user + known assistant_id they don't own.
+        Authorize inference against an assistant.
 
-        Raises HTTPException 403 if access denied.
-        Raises HTTPException 404 if assistant not found.
+        Protected assistants require their exact owner and an authenticated
+        protected service key. Ordinary assistants retain existing owner/
+        shared-user access rules. Missing or protected access denial is 404.
         """
         from fastapi import HTTPException
 
@@ -94,6 +96,15 @@ class NativeExecutionService:
 
                 if not assistant:
                     raise HTTPException(status_code=404, detail="Assistant not found.")
+
+                # Protected assistants are accessible only through the owning
+                # user's protected service credential. Sharing never applies.
+                if assistant.is_protected:
+                    if not is_protected_key or assistant.owner_id != user_id:
+                        raise HTTPException(
+                            status_code=404, detail="Assistant not found."
+                        )
+                    return
 
                 is_owner = assistant.owner_id == user_id
                 is_shared = any(u.id == user_id for u in assistant.users)

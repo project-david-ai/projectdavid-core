@@ -93,7 +93,26 @@ async def get_api_key(
             detail="API Key has expired.",
             headers={"WWW-Authenticate": "APIKey"},
         )
+
     return key
+
+
+async def get_protected_service_key(
+    auth_key: ApiKey = Depends(get_api_key),
+) -> ApiKey:
+    """
+    Require an authenticated, protected API key.
+
+    The credential's user_id identifies the authorized Core user.
+    Protected-key status does not grant cross-user privileges.
+    """
+    if not auth_key.is_protected:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Protected service credentials required.",
+        )
+
+    return auth_key
 
 
 async def get_current_user(api_key_data: ApiKey = Depends(get_api_key)) -> User:
@@ -102,6 +121,7 @@ async def get_current_user(api_key_data: ApiKey = Depends(get_api_key)) -> User:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not resolve user for the provided API key.",
         )
+
     return api_key_data.user
 
 

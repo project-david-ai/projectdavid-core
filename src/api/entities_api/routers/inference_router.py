@@ -220,8 +220,10 @@ async def completions(
                 api_key_header=project_api_key,
                 db=db,
             )
+            authenticated_user_id = authenticated_key.user_id
+            authenticated_is_protected = bool(authenticated_key.is_protected)
 
-        if authenticated_key.user_id != run.user_id:
+        if authenticated_user_id != run.user_id:
             raise HTTPException(
                 status_code=403,
                 detail="API key identity does not match the run owner.",
@@ -242,6 +244,7 @@ async def completions(
         await native.assert_assistant_access(
             assistant_id=stream_request.assistant_id,
             user_id=run.user_id,
+            is_protected_key=authenticated_is_protected,
         )
 
         # For stateful inference, the durable Run is the model authority.
