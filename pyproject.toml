@@ -38,7 +38,7 @@ dependencies = [
   "PyYAML>=6.0",
   "pymysql",
   "projectdavid-common>=0.77.0",
-  "projectdavid-orm>=1.12.0",
+  "projectdavid-orm>=1.15.0"
 ]
 
 [project.optional-dependencies]
