@@ -1,3 +1,10 @@
+## [1.61.9](https://github.com/project-david-ai/projectdavid-core/compare/v1.61.8...v1.61.9) (2026-11-21)
+
+
+### Bug Fixes
+
+* **security:** enforce protected API key boundaries ([dd1e221](https://github.com/project-david-ai/projectdavid-core/commit/dd1e221cbfb4601ff8ac6c124ed6565d97f508d6))
+
 ## [1.61.8](https://github.com/project-david-ai/projectdavid-core/compare/v1.61.7...v1.61.8) (2026-11-21)
 
 
