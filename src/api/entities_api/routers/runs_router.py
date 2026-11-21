@@ -6,16 +6,26 @@ from typing import Any, Dict, Literal, Optional
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from projectdavid_common import UtilsInterface, ValidationInterface
 from projectdavid_common.schemas.enums import StatusEnum
+from projectdavid_orm.projectdavid_orm.execution_ledger import (
+    ExecutionActor,
+    ExecutionEvent,
+    RunDelegation,
+    RunExecutionEpoch,
+)
 from pydantic import ValidationError
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, or_, select
+from sqlalchemy.orm import Session, aliased
 from sse_starlette.sse import EventSourceResponse
 from starlette import status
 
-from src.api.entities_api.db.database import SessionLocal
 from src.api.entities_api.dependencies import get_api_key, get_db
 from src.api.entities_api.models.models import ApiKey as ApiKeyModel
+from src.api.entities_api.models.models import Run
 from src.api.entities_api.models.models import User as UserModel
 from src.api.entities_api.services.actions_service import ActionService
+from src.api.entities_api.services.execution_ledger_service import (
+    ExecutionLedgerService,
+)
 from src.api.entities_api.services.runs_service import RunService
 
 ent_validator = ValidationInterface()
@@ -94,7 +104,7 @@ def update_run_status(
         raise HTTPException(status_code=422, detail=f"Validation error: {e.errors()}")
     except HTTPException as e:
         raise e
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=500, detail="An unexpected error occurred.")
 
 
@@ -169,7 +179,7 @@ def cancel_run(
         return cancelled_run
     except HTTPException as e:
         raise e
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=500, detail="An unexpected error occurred.")
 
 
@@ -321,25 +331,11 @@ def list_runs_for_thread(
             "last_id": runs[-1].id if runs else None,
             "has_more": has_more,
         }
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=500, detail="An unexpected error occurred.")
 
 
 # PROJECTDAVID_EXECUTION_LEDGER_READ_PATCH
-
-from projectdavid_orm.projectdavid_orm.execution_ledger import (
-    ExecutionActor,
-    ExecutionEvent,
-    RunDelegation,
-    RunExecutionEpoch,
-)
-from sqlalchemy import and_, or_, select
-from sqlalchemy.orm import aliased
-
-from src.api.entities_api.models.models import Run
-from src.api.entities_api.services.execution_ledger_service import (
-    ExecutionLedgerService,
-)
 
 
 def _ledger_owned_root(db, run_id, owner_id):
