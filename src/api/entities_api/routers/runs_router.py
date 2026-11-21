@@ -18,7 +18,6 @@ from sqlalchemy.orm import Session, aliased
 from sse_starlette.sse import EventSourceResponse
 from starlette import status
 
-from src.api.entities_api.db.database import SessionLocal
 from src.api.entities_api.dependencies import get_api_key, get_db
 from src.api.entities_api.models.models import ApiKey as ApiKeyModel
 from src.api.entities_api.models.models import Run
@@ -105,7 +104,7 @@ def update_run_status(
         raise HTTPException(status_code=422, detail=f"Validation error: {e.errors()}")
     except HTTPException as e:
         raise e
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=500, detail="An unexpected error occurred.")
 
 
@@ -180,7 +179,7 @@ def cancel_run(
         return cancelled_run
     except HTTPException as e:
         raise e
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=500, detail="An unexpected error occurred.")
 
 
@@ -332,7 +331,7 @@ def list_runs_for_thread(
             "last_id": runs[-1].id if runs else None,
             "has_more": has_more,
         }
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=500, detail="An unexpected error occurred.")
 
 
