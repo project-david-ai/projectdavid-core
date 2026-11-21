@@ -1,503 +1,271 @@
 # Alembic Migration Runbook
 
-This repository uses Alembic in an architecture where SQLAlchemy models live in the separately released `projectdavid-orm` package while migrations live in `projectdavid-core`.
+- **Owner:** `projectdavid-core`
+- **Model source:** the **released** `projectdavid-orm` package
+- **Database:** MySQL
+- **Host-side operator:** `python -m scripts.db_migrate`
 
-That separation makes migration work easy to get wrong.
+This runbook replaces repeated, hand-written PowerShell/Python connection scripts with a small, **local-only** migration runner. It does not eliminate migration review or authorize unattended DDL.
 
-> **Alembic must be reconciled against the released ORM package that Core will actually consume — not merely against a local ORM worktree.**
-
-## 1. Release order
-
-For any schema change that originates in `projectdavid-orm`, use this order:
-
-```text
-projectdavid-orm
-        ↓
-Core Alembic migration / reconciliation
-        ↓
-projectdavid-common
-        ↓
-projectdavid-core
-```
-
-Do not reorder these steps.
-
-- Do not release Common before the required ORM version exists.
-- Do not release Core before the required Common and ORM versions exist.
-- Do not reconcile Alembic against an unreleased ORM implementation and assume production will behave the same way.
-- If Core imports ORM directly, Core must declare the ORM dependency directly.
-
-## 2. Why this order exists
-
-Core owns the Alembic migration history, but Alembic loads its metadata from the installed ORM package.
-
-`migrations/env.py` imports ORM metadata approximately as follows:
-
-```python
-from projectdavid_orm import Base
-from projectdavid_orm.projectdavid_orm import models
-```
-
-Therefore the schema Alembic sees is determined by the **installed `projectdavid-orm` package** in the environment running Alembic.
-
-A local ORM worktree can be correct while the released package is stale. That creates the failure mode this runbook is designed to prevent:
+## 1. The architecture and release order
 
 ```text
-local code says schema A
-released package says schema B
-Alembic migration was generated for A
-production installs B
+projectdavid-orm model change
+  -> ORM tests -> merge -> publish released wheel
+  -> Core Alembic migration, tested against that released wheel
+  -> projectdavid-common release, only if its ORM contract must change
+  -> Core direct dependencies / application changes -> Core CI and release
 ```
 
-## 3. Preconditions
+Core owns Alembic revision history (`migrations/versions/`). ORM owns SQLAlchemy definitions. Core's `migrations/env.py` imports installed ORM metadata from `projectdavid_orm.projectdavid_orm.models`. Therefore **the ORM package installed in the Alembic process is authoritative**, not an ORM source checkout beside Core.
 
-Before touching Alembic:
+**Do not deploy a Core runtime using a new ORM column against a database where that column is absent.** Coordinate each environment's physical schema upgrade before switching its runtime to models that require the new schema. Publishing packages, pushing images, and upgrading databases are distinct operations.
 
-1. Finish the ORM model change.
-2. Run the ORM tests.
-3. Merge the ORM change to `main`.
-4. Release the ORM package.
-5. Confirm the exact released version is installable from PyPI.
-6. Confirm the published package actually contains the expected models, tables, columns, constraints, and relationships.
+If Core directly imports `projectdavid_orm`, Core must declare an explicit dependency on it. Common must be updated and released **only if it actually needs** the new ORM version or contract. Verify any updated Common and Core dependency constraints against published packages; don't rely on editable local worktrees or transitive installations.
 
-Do not proceed merely because CI says the ORM repository built successfully. The released artifact is authoritative.
+## 2. What the runner does and does not do
 
-## 4. Verify the published ORM
-
-Install the released ORM into an isolated temporary location.
+The runner is `scripts/db_migrate.py`, invoked from the **Core repository root**:
 
 ```powershell
-$target = Join-Path $env:TEMP "projectdavid-orm-release-check"
-
-Remove-Item $target -Recurse -Force -ErrorAction SilentlyContinue
-
-python -m pip install `
-    --no-deps `
-    --target $target `
-    "projectdavid-orm==<VERSION>"
+python -m scripts.db_migrate status --env local
+python -m scripts.db_migrate plan --env local
+python -m scripts.db_migrate apply --env local --orm-version 1.15.0
+python -m scripts.db_migrate verify --env local --orm-version 1.15.0 --expect-column api_keys.is_protected
 ```
 
-Then import from that isolated location and inspect the expected model objects.
+Replace `1.15.0` with the exact published ORM version required **for the migration being performed**. Replace the sample expected column with the column relevant to that migration, or omit `--expect-column` for migrations not involving a new column.
 
-For a new table, verify at minimum:
+| Command | Behavior | Writes to database? |
+| --- | --- | --- |
+| `status` | Verify target, installed ORM provenance, live revision and code head | **No** |
+| `plan` | List pending migrations, in execution order, and their source paths | **No** |
+| `apply` | Repeat preflight, require exact released ORM version and an **interactive typed approval**, execute `alembic upgrade head`, verify head | **Yes, only after approval** |
+| `verify` | Confirm head, optional physical column/nullability, run `alembic check` | **No schema writes** |
 
-- model import succeeds;
-- `__tablename__` is correct;
-- expected columns exist;
-- expected foreign keys exist;
-- expected unique constraints exist;
-- expected relationships exist where relevant.
+The runner **does not** install or update ORM, invent migration files, autogenerate unrelated schema changes, edit credentials, stamp revisions, downgrade, start Docker, publish packages, push images, or run production DDL. Its `plan` shows revision files to review; it is **not** a SQL dry run.
 
-Example:
+The supported target is currently `--env local` **only**. Production and staging migration execution require a separate, explicitly reviewed procedure. Never repurpose `.env.migrations` as a production deployment file.
 
-```python
-from projectdavid_orm.projectdavid_orm.models import McpServerRegistration
+## 3. One-time prerequisites on Windows
 
-assert McpServerRegistration.__tablename__ == "mcp_server_registrations"
-```
+1. Open PowerShell in the root of your `projectdavid-core` checkout.
+2. Activate the environment that contains Alembic, SQLAlchemy, PyMySQL and the **released** ORM wheel.
+3. Use an existing MySQL container; **do not rebuild the stack** for migration work.
+4. Ensure `.env.migrations` exists **locally** with `SPECIAL_DB_URL` pointing to a host-mapped loopback endpoint.
+5. Keep `.env.migrations` out of source control, logs and container environments.
+6. Verify a usable database backup exists before any real migration.
 
-If the released wheel does not expose the new schema, stop. Fix and release the ORM package before continuing.
-
-## 5. Create the Core migration
-
-Create the migration in `projectdavid-core`.
-
-The migration must represent only the intended schema change.
-
-Prefer explicit, conservative DDL:
-
-- create tables explicitly;
-- create indexes explicitly;
-- create foreign keys explicitly;
-- create unique constraints explicitly;
-- make downgrade order the exact reverse of upgrade order;
-- use safe existence helpers where repository migration conventions require them;
-- avoid unrelated schema cleanup.
-
-A migration is not a place to repair every historical difference Alembic happens to notice.
-
-One migration should have one schema purpose.
-
-## 6. Verify the migration chain
-
-Before applying anything, inspect the migration graph.
-
-Confirm:
-
-```text
-new revision
-    ↓
-correct down_revision
-    ↓
-existing Core Alembic head
-```
-
-Then verify Alembic sees the intended migration as the current head:
+Example setup:
 
 ```powershell
-alembic heads
-alembic history
+conda activate entities_api
+git rev-parse --show-toplevel
+python -m pip show projectdavid-orm
+docker ps --format "table {{.Names}}\t{{.Status}}"
+docker port my_mysql_cosmic_catalyst
 ```
 
-There should be no accidental second head unless a branch migration is explicitly intended.
+A host URL may use `localhost:3307`, while the container uses `db:3306`. **These are not interchangeable.** The runner reads `SPECIAL_DB_URL` from `.env.migrations`, checks for `mysql+pymysql`, loopback hostname, port **3307 or 3308**, and a nonempty database/user/password. It never falls back to the container's `DATABASE_URL` when called with `--env local`.
 
-## 7. Use the real database engine
+Core's existing Alembic environment reads `DATABASE_URL`, not `SPECIAL_DB_URL`. The runner passes the selected URL **only to its Alembic subprocess environment**; it doesn't edit `.env` or `migrations/env.py`.
 
-Do not validate a MySQL production migration against SQLite.
+### Released ORM package verification
 
-Start the repository's real MySQL service only:
+Before any migration, ensure the target ORM wheel was published and imported from the active environment's `site-packages` (not a local editable checkout):
 
 ```powershell
-docker compose up -d --no-build db
+python -m pip install --upgrade "projectdavid-orm==1.15.0"
+python -c "from importlib.metadata import version; from projectdavid_orm import ApiKey; print(version('projectdavid-orm')); print('is_protected' in ApiKey.__table__.columns)"
 ```
 
-The rule is:
+For future releases, update the version and model assertion. `--orm-version` verifies the installed version **exactly** during `apply`. The runner refuses obvious editable and source-tree shadowing; confirm the target version exists as an actual published PyPI artifact as a separate release gate. It never upgrades packages for you.
 
-> **Start the database without triggering unrelated application image builds.**
+`pip check` is useful for detecting broader environment conflicts; treat unrelated conflicts as their own maintenance task, not an excuse to alter an unrelated migration.
 
-The local compose database may expose a different host endpoint than the container-internal `DATABASE_URL`.
+## 4. Creating a migration
 
-Example:
+1. Finish and publish the intended ORM change first.
+2. Create **one narrowly scoped Alembic revision** under `migrations/versions/`.
+3. Set `down_revision` to the actual existing head; verify `python -m alembic heads` reports exactly one head.
+4. Prefer explicit, reviewed DDL. Do not accept a blanket autogenerate diff as a migration.
+5. Include a downgrade, with a guard against destructive rollback if the new schema may contain live data.
+6. Format, lint, stage and review only the migration file.
+
+Example for the already-used protected-key migration:
 
 ```text
-container: db:3306
-host:      127.0.0.1:3307
+b14a6c9d2e70  (previous head)
+      |
+      v
+c48bd2a910ef  (add api_keys.is_protected)
 ```
 
-When running Alembic from Windows, override only the connection endpoint required by the host process.
-
-Do not rewrite the repository `.env` merely to perform the migration test. Use a process-local or in-memory override.
-
-## 8. Run Alembic against released dependencies
-
-The Alembic process must resolve the released package versions that production Core is expected to consume.
-
-At minimum this normally means:
-
-```text
-projectdavid-orm == released migration target
-projectdavid-common == currently compatible released version
-```
-
-Do not allow a local editable ORM checkout or source `PYTHONPATH` entry to shadow the published package during this gate.
-
-The question being tested is:
-
-> **Can released Core dependencies describe and migrate the database correctly?**
-
-Not:
-
-> Does my development checkout happen to work?
-
-## 9. Inspect the current database revision
-
-Before upgrading:
+The intended physical column is `is_protected BOOLEAN NOT NULL DEFAULT 0`; existing keys begin unprotected. No unrelated tables or indexes belong in that revision.
 
 ```powershell
-alembic current
+python -m alembic heads
+ruff check migrations/versions/c48bd2a910ef_add_api_key_is_protected.py
+pre-commit run --files migrations/versions/c48bd2a910ef_add_api_key_is_protected.py
+git diff --cached --check
+git diff --cached -- migrations/versions/c48bd2a910ef_add_api_key_is_protected.py
 ```
 
-Record the revision.
+**Do not stage unrelated local files**, including untracked SQL work products.
 
-Do not assume the local database is already at the immediate predecessor of the new migration. A real development database may be several revisions behind; that is useful because it tests the actual migration chain.
+## 5. Standard local migration procedure
 
-## 10. Upgrade to head
+Run each command from Core root after the ORM wheel and migration revision are in place.
 
-Run:
+### Inspect the target and revision
 
 ```powershell
-alembic upgrade head
+python -m scripts.db_migrate status --env local --orm-version 1.15.0
 ```
 
-Observe every migration applied.
+Check the printed **database name, loopback host/port, ORM version and import location, database revision, Alembic head and number of pending migrations**. No password is printed.
 
-A valid run may look conceptually like:
+If the target is unexpected, stop. The runner will not silently fall back to `db:3306` or connect to an arbitrary remote database.
 
-```text
-old_revision
-    →
-intermediate_revision
-    →
-migration_predecessor
-    →
-new_revision
-```
-
-Then verify:
+### Review pending work
 
 ```powershell
-alembic current
+python -m scripts.db_migrate plan --env local --orm-version 1.15.0
 ```
 
-The database must report the new migration as head.
+Read the migration source files listed by the plan, in order. Confirm the operations are intentional and the database has a valid backup. `plan` deliberately does not use `alembic revision --autogenerate` or emit unreviewed SQL.
 
-If `upgrade head` fails, stop and diagnose the failing migration. Do not continue into package releases.
-
-## 11. Run `alembic check`
-
-After the database reaches head:
+### Apply — explicit human approval
 
 ```powershell
-alembic check
+python -m scripts.db_migrate apply --env local --orm-version 1.15.0
 ```
 
-This is the reconciliation gate.
-
-### Clean result
-
-Alembic reports no new upgrade operations. Migration reconciliation is complete.
-
-### Additional deltas appear
-
-Do **not** immediately generate another migration.
-
-First classify every delta.
-
-## 12. Classify Alembic drift before acting
-
-Alembic may report historical or dialect-level differences unrelated to the schema change being released.
-
-Examples:
-
-- MySQL `LONGTEXT` versus SQLAlchemy `Text(length=4294967295)`;
-- comments that exist in migration history but not ORM metadata;
-- type renderings that are semantically equivalent;
-- pre-existing drift that predates the current change.
-
-For each unexpected delta, compare:
+For a non-empty plan, the runner prints a target-specific approval phrase resembling:
 
 ```text
-previous released ORM metadata
-current released ORM metadata
-actual database schema
+APPLY entities_db@localhost:3307 c48bd2a910ef
 ```
 
-Ask one question:
+Type the **exact phrase actually shown**. A mismatch, `Ctrl+C`, or non-interactive execution refuses the upgrade. If already at head, `apply` is a no-op. On successful upgrade it reads the database revision again and requires it to match the target head.
 
-> **Did the ORM release being migrated actually introduce this difference?**
+**MySQL DDL is often non-transactional.** Failure may leave a partly changed schema. Do not blindly retry or run `alembic stamp`: inspect the physical state and reconcile manually.
 
-If the metadata definition is identical in both the previous and current released ORM versions, the delta is pre-existing drift. It does not belong in the current migration.
+### Verify — independent database inspection
 
-## 13. Prove pre-existing drift
+```powershell
+python -m scripts.db_migrate verify --env local --orm-version 1.15.0 --expect-column api_keys.is_protected
+```
 
-When `alembic check` reports an unrelated difference:
+`verify` requires the live database at head. Each `--expect-column table.column` additionally checks that the physical column exists and its nullability matches the **installed released ORM metadata**. Repeat `--expect-column` for more columns.
 
-1. install the previous released ORM package in isolation;
-2. inspect the relevant model or column metadata;
-3. install the new released ORM package in isolation;
-4. inspect the same metadata;
-5. compare them directly.
+`verify` also invokes `alembic check`. If it reports differences, the tool stops and asks for **drift classification**; it does not change anything. A migration's physical success and an unrelated historical Alembic drift warning are different findings, and must be recorded separately.
 
-Example:
+## 6. Drift classification — never migrate unrelated noise
+
+If `alembic check` reports changes after the intended schema is present:
+
+1. Identify each reported table, column, type, comment, constraint or index.
+2. Compare **previous released ORM metadata**, **target released ORM metadata**, and **actual MySQL schema**.
+3. If metadata did not change between releases, classify the difference as **pre-existing drift**, not part of this migration.
+4. Record the classification; do not automatically create cleanup migrations.
+5. Create a separate migration only when the change is intentional, required for compatibility, materially incorrect, or explicitly approved as a separate scope.
+
+Typical noise includes MySQL `LONGTEXT` versus SQLAlchemy length-qualified `Text`, dialect type rendering and historical comments. **A failing `alembic check` is not authorization for a blanket autogenerate.**
+
+
+
+### Known local schema drift — ORM 1.15.0
+
+After applying revision `c48bd2a910ef`, the local MySQL
+database reached the correct Alembic head and the physical
+`api_keys.is_protected` column was verified.
+
+However, `alembic check` reported:
+
+- Four assistant indexes:
+  `ix_asst_owner_active_created`,
+  `ix_asst_owner_active_mode`,
+  `ix_asst_owner_active_model`,
+  `ix_asst_owner_active_name`
+- `messages.content`: LONGTEXT versus Text(length=4294967295)
+- `messages.reasoning`: LONGTEXT versus Text(length=4294967295)
+- `training_jobs.cancelled_at`: column comment difference
+
+The complete Assistant, Message and TrainingJob model
+definitions were compared between released ORM versions
+1.14.0 and 1.15.0 and found to be unchanged.
+
+Classification: pre-existing drift, not introduced by the
+protected API-key migration.
+
+These differences are NOT automatically considered harmless.
+They remain outside this migration's scope and require separate
+review if reconciliation becomes necessary.
+
+Do not generate migrations to remove these differences as part
+of the protected API-key work package.
+
+
+
+
+## 7. Failures and recovery
+
+| Symptom | Diagnosis / next action |
+| --- | --- |
+| `projectdavid-orm` version mismatch | Install the intended **released** version into the correct Python environment; don't silently upgrade |
+| ORM path outside `site-packages` or editable install | Local source is shadowing the released wheel; fix environment before migrating |
+| `getaddrinfo` for host `db` | Host is using a container-only hostname; use host-side `.env.migrations` with `localhost:3307` |
+| MySQL `1045 Access denied` | Connection works but username/password/auth grant does not; compare safely with running container configuration and repair host-only config, without printing secrets or resetting credentials blindly |
+| Unknown database revision or multiple heads | Reconcile history before any DDL; **never stamp automatically** |
+| Some revisions pending | Review the whole chain; do not assume database is only one revision behind |
+| `alembic upgrade` fails | Stop, inspect applied DDL and `alembic_version`; MySQL may have partially committed |
+| `alembic check` detects extra operations | Classify current release changes versus pre-existing drift; do not autogenerate fixes |
+| Version at head but expected column missing | Physical schema is inconsistent; stop and reconcile manually |
+| CI fails migration graph test | Repair duplicate/disconnected Alembic heads before promotion |
+
+Never copy a database password or full URL into chat, PRs, shell transcripts or CI logs. A password mismatch does **not** imply that a MySQL account should be recreated or reset.
+
+## 8. CI validation
+
+`tests/unit/test_db_migrate.py` contains **offline-only** checks for safe URL selection, approval refusal, no-op behavior and revision graph integrity. Core's existing CI already runs `pytest tests/` on Python 3.11 and 3.12, so these tests need **no new Actions workflow or Docker service**.
+
+```powershell
+pytest -q tests/unit/test_db_migrate.py
+pre-commit run --files scripts/db_migrate.py tests/unit/test_db_migrate.py ALEMBIC.md
+```
+
+CI **does not** load `.env.migrations`, use a real MySQL connection or execute `apply`. Interactive application remains an operator-controlled step.
+
+## 9. Release and environment-promotion gates
+
+A migration work package is complete for its **local test database** only when all are true:
 
 ```text
-ORM 1.9.1:
-messages.content = Text(length=4294967295)
-
-ORM 1.10.0:
-messages.content = Text(length=4294967295)
-
-Alembic check:
-database LONGTEXT → metadata Text(length=4294967295)
+[ ] Target ORM artifact is published and version is verified.
+[ ] Installed runtime resolves the published wheel, not editable source.
+[ ] Alembic graph has one correct head and down_revision chain.
+[ ] Host connection resolves to the intended local MySQL database.
+[ ] Migration source is reviewed; database backup is verified.
+[ ] Migration applied successfully against real MySQL.
+[ ] Live alembic_version equals intended head.
+[ ] Target physical schema matches ORM metadata.
+[ ] alembic check has run; any historical drift is classified.
+[ ] Only intended files are committed to Core dev and pass CI.
 ```
 
-Conclusion:
+Then, and **only** when required by the dependency graph, release Common, update Core's direct dependencies and runtime requirement surfaces, test with released packages, and promote Core via the existing `dev -> CI -> Auto-PR -> manual merge` workflow.
+
+**Each deployed database is a separate migration target.** A local migration does not modify staging or Azure production. Before activating new-model application code in any environment, schedule and verify that environment's schema migration. Production changes require their own backup, maintenance and approval procedure; this local-only runner does not perform them.
+
+## 10. Guiding principle
 
 ```text
-The metadata did not change in the release.
-Therefore this is pre-existing dialect/schema drift.
-It is not part of the new migration.
+released ORM metadata
++ Core Alembic revision history
++ verified database identity and state
++ explicit operator approval
+= controlled schema migration
 ```
 
-Record the result and leave it out of the release.
-
-This prevents migration pollution.
-
-## 14. Do not create opportunistic cleanup migrations
-
-A migration release is not permission to absorb unrelated Alembic noise.
-
-Do not create a cleanup migration simply because `alembic check` reports something.
-
-Create an additional migration only when one of these is true:
-
-- the current ORM release intentionally changed that schema object;
-- the existing database cannot reach the ORM's required schema without it;
-- the difference is known to be materially incorrect;
-- the cleanup has been explicitly scoped and reviewed as its own migration.
-
-Otherwise, classify it as known drift and move on.
-
-## 15. Migration gate definition
-
-The Core migration gate is closed only when all of the following are true:
-
-```text
-[PASS] Target ORM version is released.
-[PASS] Published ORM artifact contains the intended schema.
-[PASS] Migration revision chain is correct.
-[PASS] Real MySQL database starts without unrelated builds.
-[PASS] Alembic uses the released ORM package.
-[PASS] Database upgrades successfully to head.
-[PASS] Database reports the expected head revision.
-[PASS] `alembic check` has been run.
-[PASS] Any remaining deltas are classified.
-[PASS] Unrelated pre-existing drift is excluded from the migration.
-```
-
-Only then continue the release train.
-
-## 16. Release Common
-
-If `projectdavid-common` depends on the new ORM schema or contracts:
-
-1. bump its ORM minimum;
-2. test against the released ORM version;
-3. release Common;
-4. verify the new Common package is installable from PyPI.
-
-Example:
-
-```text
-projectdavid-orm>=1.10.0
-```
-
-Do not merely update source code and assume Core will resolve it correctly later. Verify the artifact.
-
-## 17. Update Core dependencies
-
-Core must declare every package it imports directly.
-
-If Core imports `projectdavid_orm`, then Core must have its own ORM dependency even if Common also depends on ORM.
-
-Example:
-
-```toml
-dependencies = [
-    "projectdavid-common>=0.74.0",
-    "projectdavid-orm>=1.10.0",
-]
-```
-
-For the API runtime requirement surface, update the corresponding package requirements as well:
-
-```text
-projectdavid-orm>=1.10.0
-projectdavid_common>=0.74.0
-```
-
-Do not rely on transitive dependency luck.
-
-## 18. Validate Core against released packages
-
-Before releasing Core:
-
-1. install the exact released Common and ORM versions in isolation;
-2. prove Core can import them;
-3. prove the new ORM models are visible;
-4. run the maintained Core unit suite in a dependency-complete environment;
-5. run pre-commit;
-6. verify only intended release files changed.
-
-The release candidate must consume the same package chain expected in CI and production.
-
-## 19. Final release sequence
-
-The complete sequence is:
-
-```text
-1. Implement ORM schema.
-2. Test ORM.
-3. Release ORM.
-4. Verify published ORM artifact.
-5. Create/reconcile Core Alembic migration.
-6. Start real MySQL only.
-7. Run Alembic with released ORM.
-8. Upgrade database to head.
-9. Run alembic check.
-10. Classify all remaining drift.
-11. Reject unrelated migration noise.
-12. Release Common with new ORM minimum.
-13. Verify published Common artifact.
-14. Update Core direct Common + ORM minimums.
-15. Test Core against released packages.
-16. Release Core.
-```
-
-That sequence is authoritative.
-
-# Failure rules
-
-## Alembic cannot import a new model
-
-The installed ORM package is stale or being shadowed.
-
-Check:
-
-```text
-import path
-installed package version
-PYTHONPATH
-editable installs
-temporary source paths
-```
-
-Do not modify the migration until the dependency source is known.
-
-## `alembic upgrade head` cannot connect to `db:3306`
-
-Alembic is being executed from the host while the URL contains the Docker-network hostname.
-
-Use the host-mapped endpoint for that process, for example:
-
-```text
-127.0.0.1:3307
-```
-
-Do not permanently mutate application configuration to solve a migration test.
-
-## MySQL takes too long to become healthy
-
-Inspect logs before declaring failure.
-
-A database image upgrade may legitimately perform internal data-dictionary work before becoming ready.
-
-Do not repeatedly recreate or destroy the database unless there is evidence the instance is corrupt.
-
-## `alembic check` reports unrelated operations
-
-Do not generate a migration automatically.
-
-Compare previous and current released ORM metadata first.
-
-If both releases define the object identically, classify the difference as pre-existing drift.
-
-## Local source passes but released package fails
-
-The released artifact wins.
-
-Fix and re-release the package.
-
-Never make Core migration assumptions from unreleased source code.
-
-# Architectural principle
-
-The database migration is part of the **released dependency graph**, not merely part of the source tree.
-
-In this architecture:
-
-```text
-ORM metadata
-    +
-released package version
-    +
-Core migration history
-    +
-real database state
-```
-
-must all agree.
-
-Alembic is the reconciliation mechanism between those four facts.
-
-Treating any one of them in isolation is what makes migration work brittle. Treating them sequentially makes it deterministic.
+Keep the operations deterministic, small and reviewable. Automate discovery and verification; retain human control over irreversible schema changes.
