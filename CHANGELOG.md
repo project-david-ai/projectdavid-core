@@ -1,3 +1,10 @@
+## [1.61.8](https://github.com/project-david-ai/projectdavid-core/compare/v1.61.7...v1.61.8) (2026-11-21)
+
+
+### Bug Fixes
+
+* **core:** harden run lifecycle and expired-run cleanup ([cc2305d](https://github.com/project-david-ai/projectdavid-core/commit/cc2305d8681c494d430b542aaa7636a56872020e))
+
 ## [1.61.7](https://github.com/project-david-ai/projectdavid-core/compare/v1.61.6...v1.61.7) (2026-11-16)
 
 
