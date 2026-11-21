@@ -43,6 +43,11 @@ jobs:
         id: filter
         uses: dorny/paths-filter@v4.0.3
         with:
+          # On existing branch pushes, inspect this push only (not all dev-vs-main drift).
+          # On a newly-created branch, fall back to default-branch comparison.
+          base: ${{ github.event_name == 'push' && !github.event.created && github.event.before || '' }}
+          # A negative pattern must exclude, not count as an alternative match.
+          predicate-quantifier: 'some-with-excludes'
           filters: |
             api:
               - 'src/**'
