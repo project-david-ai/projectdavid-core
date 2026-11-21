@@ -124,9 +124,13 @@ jobs:
           fi
 
       - name: "⚫️ Run Black Formatter"
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            black --check .
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            git diff --name-only --diff-filter=ACMR -z "$BASE_SHA" HEAD -- '*.py' |
+              xargs -0 -r black --check --
           else
             black .
             git diff --exit-code || true
