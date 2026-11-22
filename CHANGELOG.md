@@ -1,3 +1,16 @@
+# [1.62.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.61.9...v1.62.0) (2026-11-22)
+
+
+### Bug Fixes
+
+* **ci:** reconcile protected assistant tests and ORM dependency ([76644eb](https://github.com/project-david-ai/projectdavid-core/commit/76644eb9dc37ee87de5c50848d08a44a553ade13))
+* **core:** restore inference model selection and orchestrator run context ([e715880](https://github.com/project-david-ai/projectdavid-core/commit/e7158805b74893a385ee911f7a437cba9014118c))
+
+
+### Features
+
+* **core:** add protected Playground assistant and execution authorization ([1c87f7c](https://github.com/project-david-ai/projectdavid-core/commit/1c87f7cbdec4c395e2314913ecfa7d4a9a4d6520))
+
 ## [1.61.9](https://github.com/project-david-ai/projectdavid-core/compare/v1.61.8...v1.61.9) (2026-11-21)
 
 
