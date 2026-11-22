@@ -123,6 +123,25 @@ class NativeExecutionService:
 
         await asyncio.to_thread(_check)
 
+    @staticmethod
+    async def resolve_provider_key_for_inference(
+        *,
+        provider_key_id: str,
+        user_id: str,
+        provider: str,
+    ) -> str:
+        """Resolve a registered inference key natively, without an SDK round-trip."""
+        from src.api.entities_api.services.provider_key_service import (
+            ProviderKeyService,
+        )
+
+        return await asyncio.to_thread(
+            ProviderKeyService().resolve_for_inference,
+            provider_key_id=provider_key_id,
+            user_id=user_id,
+            provider=provider,
+        )
+
     # ------------------------------------------------------------------
     # Assistant
     # ------------------------------------------------------------------

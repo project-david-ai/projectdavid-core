@@ -16,8 +16,16 @@ from src.api.entities_api.orchestration.engine.inference_arbiter import Inferenc
 from src.api.entities_api.orchestration.engine.inference_provider_selector import (
     InferenceProviderSelector,
 )
+from src.api.entities_api.services.credential_service import (
+    CredentialConfigurationError,
+)
 from src.api.entities_api.services.native_execution_service import (
     NativeExecutionService,
+)
+from src.api.entities_api.services.provider_key_service import (
+    ProviderKeyConfigurationError,
+    ProviderKeyNotFoundError,
+    ProviderKeyUnavailableError,
 )
 from src.api.entities_api.services.stateless_inference_service import (
     StatelessInferenceService,
@@ -52,6 +60,7 @@ class StatelessCompletionRequest(BaseModel):
         max_length=32,
     )
     api_key: Optional[str] = None
+    provider_key_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
     max_tokens: int = Field(default=256, ge=1, le=4096)
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     top_p: float = Field(default=1.0, gt=0.0, le=1.0)
@@ -78,18 +87,72 @@ class StatelessCompletionRequest(BaseModel):
 
 
 class StatefulCompletionRequest(ValidationInterface.StreamRequest):
-    """Existing stateful contract plus an optional explicit false discriminator."""
+    """Stateful inference contract with an explicit provider key reference."""
 
     stateless: Literal[False] = False
+    provider_key_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
 
 
 CompletionRequest = StatelessCompletionRequest | StatefulCompletionRequest
 
 
-async def _authenticate_stateless_request(api_key_header: Optional[str]) -> None:
-    """Authenticate stateless calls without adding dependencies to stateful calls."""
+async def _authenticate_stateless_request(api_key_header: Optional[str]) -> str:
+    """Authenticate stateless calls and return the trusted owner identity."""
     with SessionLocal() as db:
-        await get_api_key(api_key_header=api_key_header, db=db)
+        authenticated_key = await get_api_key(api_key_header=api_key_header, db=db)
+        return authenticated_key.user_id
+
+
+async def _resolve_provider_api_key(
+    *,
+    model: str,
+    user_id: str,
+    provider_key_id: Optional[str],
+    raw_api_key: Optional[str],
+) -> Optional[str]:
+    """Gate Hyperbolic BYOK before dispatch; leave other providers unchanged.
+
+    Registered credentials never enter cache, model metadata, or HTTP responses.
+    The raw internal key remains local to the current inference invocation.
+    """
+    if not model.strip().lower().startswith("hyperbolic/"):
+        if provider_key_id is not None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Registered provider key selection is not enabled "
+                    "for this model provider."
+                ),
+            )
+        return raw_api_key  # Legacy providers; migrated separately.
+
+    if raw_api_key is not None:
+        raise HTTPException(
+            status_code=422,
+            detail="Direct Hyperbolic API keys are not accepted. Use provider_key_id.",
+        )
+    if not provider_key_id:
+        raise HTTPException(
+            status_code=422,
+            detail="A registered provider_key_id is required for Hyperbolic inference.",
+        )
+
+    try:
+        return await NativeExecutionService.resolve_provider_key_for_inference(
+            provider_key_id=provider_key_id,
+            user_id=user_id,
+            provider="hyperbolic",
+        )
+    except (ProviderKeyNotFoundError, ProviderKeyUnavailableError) as exc:
+        # Do not disclose whether a foreign, revoked, or mismatched key exists.
+        raise HTTPException(
+            status_code=404, detail="Provider key unavailable."
+        ) from exc
+    except (ProviderKeyConfigurationError, CredentialConfigurationError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Provider credential security configuration unavailable.",
+        ) from exc
 
 
 # ── Rust SSE framer (Phase 2 hot-path) ───────────────────────────────────────
@@ -137,7 +200,13 @@ async def completions(
     project_api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
 ):
     if isinstance(stream_request, StatelessCompletionRequest):
-        await _authenticate_stateless_request(project_api_key)
+        authenticated_user_id = await _authenticate_stateless_request(project_api_key)
+        provider_api_key = await _resolve_provider_api_key(
+            model=stream_request.model,
+            user_id=authenticated_user_id,
+            provider_key_id=stream_request.provider_key_id,
+            raw_api_key=stream_request.api_key,
+        )
         logging_utility.info(
             "Stateless completion called — model: %s, stream: false",
             stream_request.model,
@@ -146,7 +215,7 @@ async def completions(
             completion = await StatelessInferenceService(redis=redis).create_completion(
                 model=stream_request.model,
                 messages=stream_request.inference_messages(),
-                provider_api_key=stream_request.api_key,
+                provider_api_key=provider_api_key,
                 max_tokens=stream_request.max_tokens,
                 temperature=stream_request.temperature,
                 top_p=stream_request.top_p,
@@ -253,6 +322,16 @@ async def completions(
         logging_utility.error(f"Ownership check failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Ownership verification failed.")
 
+    # Resolve credentials only AFTER authentication and Run ownership checks.
+    # Do this before dispatch or durable Run model mutation, so credential
+    # rejection is a normal HTTP error rather than a leaked SSE error chunk.
+    provider_api_key = await _resolve_provider_api_key(
+        model=effective_model,
+        user_id=authenticated_user_id,
+        provider_key_id=stream_request.provider_key_id,
+        raw_api_key=stream_request.api_key,
+    )
+
     # ------------------------------------------------------------------
     # PROVIDER SETUP
     # ------------------------------------------------------------------
@@ -314,7 +393,7 @@ async def completions(
             assistant_id=stream_request.assistant_id,
             model=effective_model,
             stream_reasoning=False,
-            api_key=stream_request.api_key,
+            api_key=provider_api_key,
             project_david_api_key=project_api_key,
         ):
             yield chunk
