@@ -1,3 +1,20 @@
+# [1.63.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.62.0...v1.63.0) (2026-11-22)
+
+
+### Bug Fixes
+
+* **core:** require published BYOK credential dependencies ([b4bb2cf](https://github.com/project-david-ai/projectdavid-core/commit/b4bb2cff708d04e53ee0d49ade4a07b0726e9f5d))
+* **core:** resolve PR lint and align BYOK dependencies ([eccda21](https://github.com/project-david-ai/projectdavid-core/commit/eccda21a031913dccbf3af25970585bb0fa34638))
+
+
+### Features
+
+* **core:** add authenticated BYOK provider key management endpoints ([1c38242](https://github.com/project-david-ai/projectdavid-core/commit/1c382429cded37d2e88fdf31a3af60a59529473f))
+* **core:** reconcile persistent provider key HMAC secret ([85ef96c](https://github.com/project-david-ai/projectdavid-core/commit/85ef96c0823ddaf7912f80db379a29a1fb6822ca))
+* **core:** resolve registered Hyperbolic credentials for inference ([5348edb](https://github.com/project-david-ai/projectdavid-core/commit/5348edb9d2463627487c95d7aa851e112cd6648c))
+* **core:** secure provider key lifecycle and credential resolution ([a5787f9](https://github.com/project-david-ai/projectdavid-core/commit/a5787f931fc2dddc49153e96b77e5aa5b875ac42))
+* **db:** add user-scoped provider key migration ([713c43d](https://github.com/project-david-ai/projectdavid-core/commit/713c43d5f5d0f08c61e45e472a4bec1d5a655856))
+
 # [1.62.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.61.9...v1.62.0) (2026-11-22)
 
 
