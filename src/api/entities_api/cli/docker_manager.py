@@ -17,7 +17,7 @@ import traceback
 from enum import Enum
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Callable, Dict, List, Optional, Set
+from typing import Callable, List, Optional
 from urllib.parse import quote_plus
 
 import typer
