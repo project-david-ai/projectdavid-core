@@ -170,6 +170,7 @@ def _run_stateful_with_mocks(
     persisted_model,
     *,
     stream=False,
+    status="queued",
 ):
     run = SimpleNamespace(
         id="run_1",
@@ -177,6 +178,7 @@ def _run_stateful_with_mocks(
         assistant_id="assistant_1",
         thread_id="thread_1",
         model=persisted_model,
+        status=status,
     )
 
     native = MagicMock()
@@ -200,8 +202,14 @@ def _run_stateful_with_mocks(
         "provider-model",
     )
 
+    # The router re-reads and locks the persisted Run before model binding.
+    db = MagicMock()
+    locked_query = (
+        db.query.return_value.filter.return_value.with_for_update.return_value
+    )
+    locked_query.first.return_value = run
     db_ctx = MagicMock()
-    db_ctx.__enter__.return_value = MagicMock()
+    db_ctx.__enter__.return_value = db
 
     async def invoke():
         with (
@@ -248,11 +256,11 @@ def _run_stateful_with_mocks(
 
             return json.loads(response.body)
 
-    return invoke, selector, worker_calls
+    return invoke, selector, worker_calls, run, db
 
 
 def test_stateful_buffered_inference_dispatches_persisted_model():
-    invoke, selector, calls = _run_stateful_with_mocks(
+    invoke, selector, calls, run, db = _run_stateful_with_mocks(
         "hyperbolic/overridden",
         "hyperbolic/overridden",
     )
@@ -264,10 +272,12 @@ def test_stateful_buffered_inference_dispatches_persisted_model():
     assert calls[0]["model"] == "hyperbolic/overridden"
     assert body["model"] == "hyperbolic/overridden"
     assert body["content"] == "model-authority-ok"
+    assert run.model == "hyperbolic/overridden"
+    db.commit.assert_not_called()
 
 
 def test_stateful_streaming_inference_dispatches_persisted_model():
-    invoke, selector, calls = _run_stateful_with_mocks(
+    invoke, selector, calls, run, db = _run_stateful_with_mocks(
         "together-ai/base-model",
         "together-ai/base-model",
         stream=True,
@@ -280,33 +290,55 @@ def test_stateful_streaming_inference_dispatches_persisted_model():
     assert calls[0]["model"] == "together-ai/base-model"
     assert "model-authority-ok" in data
     assert "[DONE]" in data
+    assert run.model == "together-ai/base-model"
+    db.commit.assert_not_called()
 
 
-def test_stateful_mismatch_returns_409_before_provider_dispatch():
-    invoke, selector, calls = _run_stateful_with_mocks(
+def test_inference_model_overrides_queued_run_model_and_is_persisted():
+    invoke, selector, calls, run, db = _run_stateful_with_mocks(
         "together-ai/base-model",
         "hyperbolic/overridden",
     )
 
-    with pytest.raises(HTTPException) as err:
-        asyncio.run(invoke())
+    body = asyncio.run(invoke())
 
-    assert err.value.status_code == 409
-    selector.select_provider.assert_not_called()
-    assert calls == []
+    selector.select_provider.assert_called_once_with(model_id="together-ai/base-model")
+    assert calls[0]["model"] == "together-ai/base-model"
+    assert body["model"] == "together-ai/base-model"
+    assert run.model == "together-ai/base-model"
+    db.commit.assert_called_once()
 
 
-def test_stateful_persisted_missing_model_returns_409():
-    invoke, selector, _ = _run_stateful_with_mocks(
+def test_missing_persisted_model_is_bound_by_first_inference():
+    invoke, selector, calls, run, db = _run_stateful_with_mocks(
         "together-ai/base-model",
         "",
+    )
+
+    body = asyncio.run(invoke())
+
+    assert body["model"] == "together-ai/base-model"
+    assert run.model == "together-ai/base-model"
+    db.commit.assert_called_once()
+    selector.select_provider.assert_called_once_with(model_id="together-ai/base-model")
+    assert calls[0]["model"] == "together-ai/base-model"
+
+
+def test_inference_model_cannot_change_after_run_started():
+    invoke, selector, calls, run, db = _run_stateful_with_mocks(
+        "together-ai/base-model",
+        "hyperbolic/overridden",
+        status="in_progress",
     )
 
     with pytest.raises(HTTPException) as err:
         asyncio.run(invoke())
 
     assert err.value.status_code == 409
-    selector.select_provider.assert_not_called()
+    assert err.value.detail == "Cannot change the Run model after execution begins."
+    assert run.model == "hyperbolic/overridden"
+    db.commit.assert_not_called()
+    assert calls == []
 
 
 def test_native_create_run_forwards_explicit_child_model():
