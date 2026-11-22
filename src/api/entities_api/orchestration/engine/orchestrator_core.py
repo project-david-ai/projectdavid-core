@@ -143,6 +143,7 @@ class OrchestratorCore(
         # Ledger references are request-scoped; the database is durable.
         self._ledger_epoch_id: Optional[str] = None
         self._ledger_actor_id: Optional[str] = None
+        self._active_run_id: Optional[str] = None
 
     tool_response: Optional[bool] = None
     function_call: Optional[dict] = None
@@ -198,7 +199,7 @@ class OrchestratorCore(
         self,
         requested_model: Any,
         *,
-        run_id: str,
+        run_id: Optional[str] = None,
     ) -> None:
         """
         Resolve one supervisor identity per root-Run execution epoch.
@@ -229,6 +230,14 @@ class OrchestratorCore(
                 "Supervisor reservation requires the authenticated " "Run owner."
             )
 
+        # Older provider streams call this method without run_id.
+        # Resolve only from the current process_conversation invocation;
+        # never fall back to an assistant or cross-run identity.
+        active_run_id = self._active_run_id
+        if run_id is not None and active_run_id is not None and run_id != active_run_id:
+            raise RuntimeError("Supervisor reservation run_id differs from active Run.")
+        if run_id is None:
+            run_id = active_run_id
         if not run_id:
             raise RuntimeError("Supervisor reservation requires run_id.")
 
@@ -652,6 +661,7 @@ class OrchestratorCore(
         self._ledger_epoch_id = None
         self._ledger_actor_id = None
         self.ephemeral_supervisor_id = None
+        self._active_run_id = run_id
 
         _original_assistant_id = assistant_id
 
@@ -1060,6 +1070,7 @@ class OrchestratorCore(
             self.ephemeral_supervisor_id = None
             self._ledger_epoch_id = None
             self._ledger_actor_id = None
+            self._active_run_id = None
 
             LOG.info(
                 "ORCHESTRATOR ▸ Identity restored to %s. "

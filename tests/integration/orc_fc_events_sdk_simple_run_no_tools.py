@@ -14,19 +14,17 @@ No deep research.
 
 import os
 import time
+from pathlib import Path
 
 from dotenv import load_dotenv
-from projectdavid import (
-    ContentEvent,
-    Entity,
-    ToolCallRequestEvent,
-)
+from projectdavid import ContentEvent, Entity, ToolCallRequestEvent
 
 # ------------------------------------------------------------
 # Configuration
 # ------------------------------------------------------------
 
-load_dotenv(".tests.env")
+ENV_FILE = Path(__file__).resolve().parent / ".tests.env"
+load_dotenv(ENV_FILE, override=True)
 
 CORE_API_KEY = os.getenv("DEV_PROJECT_DAVID_CORE_TEST_USER_KEY")
 ASSISTANT_ID = os.getenv("ASSISTANT_ID")
@@ -48,7 +46,7 @@ if not MODEL_ID:
     raise RuntimeError("Missing MCP_TEST_MODEL_ID")
 
 if not PROVIDER_API_KEY:
-    raise RuntimeError("Missing TOGETHER_API_KEY")
+    raise RuntimeError("Missing HYPERBOLIC_API_KEY")
 
 # ------------------------------------------------------------
 # SDK Client
@@ -68,7 +66,6 @@ start = time.perf_counter()
 # ------------------------------------------------------------
 
 thread = client.threads.create_thread()
-
 print(f"\nThread: {thread.id}")
 
 # ------------------------------------------------------------
@@ -81,13 +78,13 @@ message = client.messages.create_message(
     content=PROMPT,
     assistant_id=ASSISTANT_ID,
 )
-
 print(f"Message: {message.id}")
 
 # ------------------------------------------------------------
 # 3. Create Run
 # ------------------------------------------------------------
 
+# Model selection belongs to the inference request, not Run creation.
 run = client.runs.create_run(
     assistant_id=ASSISTANT_ID,
     thread_id=thread.id,
@@ -116,17 +113,14 @@ output = []
 
 try:
     for event in stream.stream_events(model=MODEL_ID):
-
         if isinstance(event, ToolCallRequestEvent):
             raise RuntimeError(f"Unexpected tool invocation: {event.tool_name}")
 
         if isinstance(event, ContentEvent) and event.content:
             output.append(event.content)
             print(event.content, end="", flush=True)
-
 finally:
     elapsed = time.perf_counter() - start
-
     print("\n\n" + "-" * 55)
     print(f"Run ID:  {run.id}")
     print(f"Elapsed: {elapsed:.2f}s")
