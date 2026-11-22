@@ -1,4 +1,3 @@
-
 """Focused model-authority regressions for ProjectDavid Core.
 
 Place under tests/unit/ and run with:
@@ -46,13 +45,11 @@ def _create_run_with_mock_db(monkeypatch, *, override, default, resources=None):
 
     assistant = SimpleNamespace(
         model=default,
-        tool_configs=[
-            {"type": "function", "function": {"name": "foo"}}
-        ],
-        tool_resources={
-            "code_interpreter": {"file_ids": ["file_1"]}
-        },
+        tool_configs=[{"type": "function", "function": {"name": "foo"}}],
+        tool_resources={"code_interpreter": {"file_ids": ["file_1"]}},
         owner_id="user_1",
+        deleted_at=None,
+        is_protected=False,
         users=[],
         temperature=0.7,
         top_p=0.9,
@@ -107,9 +104,7 @@ def test_run_inherits_assistant_model_and_resources(monkeypatch):
 
     assert created.model == "together-ai/base-model"
     assert created.tools[0]["function"]["name"] == "foo"
-    assert created.tool_resources == {
-        "code_interpreter": {"file_ids": ["file_1"]}
-    }
+    assert created.tool_resources == {"code_interpreter": {"file_ids": ["file_1"]}}
 
     db.commit.assert_called_once()
 
@@ -175,6 +170,7 @@ def _run_stateful_with_mocks(
     persisted_model,
     *,
     stream=False,
+    status="queued",
 ):
     run = SimpleNamespace(
         id="run_1",
@@ -182,6 +178,7 @@ def _run_stateful_with_mocks(
         assistant_id="assistant_1",
         thread_id="thread_1",
         model=persisted_model,
+        status=status,
     )
 
     native = MagicMock()
@@ -198,17 +195,21 @@ def _run_stateful_with_mocks(
             "content": "model-authority-ok",
         }
 
-    worker = SimpleNamespace(
-        process_conversation=fake_process_conversation
-    )
+    worker = SimpleNamespace(process_conversation=fake_process_conversation)
 
     selector.select_provider.return_value = (
         worker,
         "provider-model",
     )
 
+    # The router re-reads and locks the persisted Run before model binding.
+    db = MagicMock()
+    locked_query = (
+        db.query.return_value.filter.return_value.with_for_update.return_value
+    )
+    locked_query.first.return_value = run
     db_ctx = MagicMock()
-    db_ctx.__enter__.return_value = MagicMock()
+    db_ctx.__enter__.return_value = db
 
     async def invoke():
         with (
@@ -226,7 +227,7 @@ def _run_stateful_with_mocks(
                 inference_router,
                 "get_api_key",
                 new=AsyncMock(
-                    return_value=SimpleNamespace(user_id="user_1")
+                    return_value=SimpleNamespace(user_id="user_1", is_protected=False)
                 ),
             ),
             patch.object(
@@ -246,44 +247,37 @@ def _run_stateful_with_mocks(
             )
 
             if stream:
-                response_chunks = [
-                    chunk
-                    async for chunk in response.body_iterator
-                ]
+                response_chunks = [chunk async for chunk in response.body_iterator]
 
                 return "".join(
-                    (
-                        chunk.decode()
-                        if isinstance(chunk, bytes)
-                        else chunk
-                    )
+                    (chunk.decode() if isinstance(chunk, bytes) else chunk)
                     for chunk in response_chunks
                 )
 
             return json.loads(response.body)
 
-    return invoke, selector, worker_calls
+    return invoke, selector, worker_calls, run, db
 
 
 def test_stateful_buffered_inference_dispatches_persisted_model():
-    invoke, selector, calls = _run_stateful_with_mocks(
+    invoke, selector, calls, run, db = _run_stateful_with_mocks(
         "hyperbolic/overridden",
         "hyperbolic/overridden",
     )
 
     body = asyncio.run(invoke())
 
-    selector.select_provider.assert_called_once_with(
-        model_id="hyperbolic/overridden"
-    )
+    selector.select_provider.assert_called_once_with(model_id="hyperbolic/overridden")
 
     assert calls[0]["model"] == "hyperbolic/overridden"
     assert body["model"] == "hyperbolic/overridden"
     assert body["content"] == "model-authority-ok"
+    assert run.model == "hyperbolic/overridden"
+    db.commit.assert_not_called()
 
 
 def test_stateful_streaming_inference_dispatches_persisted_model():
-    invoke, selector, calls = _run_stateful_with_mocks(
+    invoke, selector, calls, run, db = _run_stateful_with_mocks(
         "together-ai/base-model",
         "together-ai/base-model",
         stream=True,
@@ -291,49 +285,67 @@ def test_stateful_streaming_inference_dispatches_persisted_model():
 
     data = asyncio.run(invoke())
 
-    selector.select_provider.assert_called_once_with(
-        model_id="together-ai/base-model"
-    )
+    selector.select_provider.assert_called_once_with(model_id="together-ai/base-model")
 
     assert calls[0]["model"] == "together-ai/base-model"
     assert "model-authority-ok" in data
     assert "[DONE]" in data
+    assert run.model == "together-ai/base-model"
+    db.commit.assert_not_called()
 
 
-def test_stateful_mismatch_returns_409_before_provider_dispatch():
-    invoke, selector, calls = _run_stateful_with_mocks(
+def test_inference_model_overrides_queued_run_model_and_is_persisted():
+    invoke, selector, calls, run, db = _run_stateful_with_mocks(
         "together-ai/base-model",
         "hyperbolic/overridden",
     )
 
-    with pytest.raises(HTTPException) as err:
-        asyncio.run(invoke())
+    body = asyncio.run(invoke())
 
-    assert err.value.status_code == 409
-    selector.select_provider.assert_not_called()
-    assert calls == []
+    selector.select_provider.assert_called_once_with(model_id="together-ai/base-model")
+    assert calls[0]["model"] == "together-ai/base-model"
+    assert body["model"] == "together-ai/base-model"
+    assert run.model == "together-ai/base-model"
+    db.commit.assert_called_once()
 
 
-def test_stateful_persisted_missing_model_returns_409():
-    invoke, selector, _ = _run_stateful_with_mocks(
+def test_missing_persisted_model_is_bound_by_first_inference():
+    invoke, selector, calls, run, db = _run_stateful_with_mocks(
         "together-ai/base-model",
         "",
+    )
+
+    body = asyncio.run(invoke())
+
+    assert body["model"] == "together-ai/base-model"
+    assert run.model == "together-ai/base-model"
+    db.commit.assert_called_once()
+    selector.select_provider.assert_called_once_with(model_id="together-ai/base-model")
+    assert calls[0]["model"] == "together-ai/base-model"
+
+
+def test_inference_model_cannot_change_after_run_started():
+    invoke, selector, calls, run, db = _run_stateful_with_mocks(
+        "together-ai/base-model",
+        "hyperbolic/overridden",
+        status="in_progress",
     )
 
     with pytest.raises(HTTPException) as err:
         asyncio.run(invoke())
 
     assert err.value.status_code == 409
-    selector.select_provider.assert_not_called()
+    assert err.value.detail == "Cannot change the Run model after execution begins."
+    assert run.model == "hyperbolic/overridden"
+    db.commit.assert_not_called()
+    assert calls == []
 
 
 def test_native_create_run_forwards_explicit_child_model():
     native = object.__new__(NativeExecutionService)
     native.run_svc = MagicMock()
 
-    native.run_svc.create_run.return_value = SimpleNamespace(
-        id="run_child"
-    )
+    native.run_svc.create_run.return_value = SimpleNamespace(id="run_child")
 
     asyncio.run(
         native.create_run(
@@ -371,9 +383,7 @@ def test_research_delegation_persists_model_before_child_stream():
     }
 
     native = SimpleNamespace(
-        create_action=AsyncMock(
-            return_value=SimpleNamespace(id="action_1")
-        ),
+        create_action=AsyncMock(return_value=SimpleNamespace(id="action_1")),
         retrieve_run=AsyncMock(
             return_value=SimpleNamespace(
                 id="run_parent",
@@ -382,17 +392,9 @@ def test_research_delegation_persists_model_before_child_stream():
                 meta_data=parent_metadata,
             )
         ),
-        create_thread=AsyncMock(
-            return_value=SimpleNamespace(id="thread_child")
-        ),
-        create_message=AsyncMock(
-            return_value=SimpleNamespace(id="message_child")
-        ),
-        create_run=AsyncMock(
-            side_effect=RuntimeError(
-                "stop before worker stream"
-            )
-        ),
+        create_thread=AsyncMock(return_value=SimpleNamespace(id="thread_child")),
+        create_message=AsyncMock(return_value=SimpleNamespace(id="message_child")),
+        create_run=AsyncMock(side_effect=RuntimeError("stop before worker stream")),
         update_run_fields=AsyncMock(),
         update_action_status=AsyncMock(),
     )
@@ -406,19 +408,14 @@ def test_research_delegation_persists_model_before_child_stream():
             thread_id="thread_1",
             run_id="run_parent",
             assistant_id="assistant_1",
-            arguments_dict={
-                "task": "research something"
-            },
+            arguments_dict={"task": "research something"},
             tool_call_id="call_1",
             decision="yes",
             inference_api_key="provider-key",
             project_david_api_key="project-key",
         )
 
-        return [
-            json.loads(event)
-            async for event in generator
-        ]
+        return [json.loads(event) async for event in generator]
 
     events = asyncio.run(invoke())
 
@@ -441,14 +438,9 @@ def test_research_delegation_persists_model_before_child_stream():
     }
 
     assert "api_key" not in kwargs["meta_data"]
-    assert (
-        "project_david_api_key"
-        not in kwargs["meta_data"]
-    )
+    assert "project_david_api_key" not in kwargs["meta_data"]
 
-    assert parent_metadata == {
-        "delegated_model": "hyperbolic/delegated"
-    }
+    assert parent_metadata == {"delegated_model": "hyperbolic/delegated"}
 
     assert events[-1]["state"] == "error"
     assert not any(

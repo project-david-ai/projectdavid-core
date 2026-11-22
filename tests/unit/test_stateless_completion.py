@@ -383,8 +383,25 @@ def test_stateful_buffered_completion_retains_existing_processing_path():
     selector = MagicMock()
     selector.select_provider.return_value = (Handler(), "provider/model")
 
-    authenticated_key = SimpleNamespace(user_id="user_1")
+    authenticated_key = SimpleNamespace(user_id="user_1", is_protected=False)
     get_api_key = AsyncMock(return_value=authenticated_key)
+
+    # Stateful inference also verifies the locked persistent Run row.
+    persisted_run = SimpleNamespace(
+        id="run_1",
+        user_id="user_1",
+        thread_id="thread_1",
+        assistant_id="assistant_1",
+        model="together-ai/example/model",
+        status="queued",
+    )
+    db = MagicMock()
+    locked_query = (
+        db.query.return_value.filter.return_value.with_for_update.return_value
+    )
+    locked_query.first.return_value = persisted_run
+    db_ctx = MagicMock()
+    db_ctx.__enter__.return_value = db
 
     with (
         patch.object(
@@ -397,6 +414,7 @@ def test_stateful_buffered_completion_retains_existing_processing_path():
             "get_api_key",
             get_api_key,
         ),
+        patch.object(inference_router, "SessionLocal", return_value=db_ctx),
         patch.object(inference_router, "InferenceArbiter", return_value=MagicMock()),
         patch.object(
             inference_router,
@@ -420,12 +438,14 @@ def test_stateful_buffered_completion_retains_existing_processing_path():
         "model": "together-ai/example/model",
         "elapsed_s": body["elapsed_s"],
     }
+    db.commit.assert_not_called()
     native.retrieve_run.assert_awaited_once_with("run_1")
     get_api_key.assert_awaited_once()
     assert get_api_key.await_args.kwargs["api_key_header"] == "project-key"
     native.assert_assistant_access.assert_awaited_once_with(
         assistant_id="assistant_1",
         user_id="user_1",
+        is_protected_key=False,
     )
     selector.select_provider.assert_called_once_with(
         model_id="together-ai/example/model"

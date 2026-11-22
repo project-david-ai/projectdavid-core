@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from src.api.entities_api.db.database import SessionLocal
 from src.api.entities_api.models.models import Assistant, Run, Thread
+from src.api.entities_api.services.threads_service import ThreadService
 
 validator = ValidationInterface()
 
@@ -147,7 +148,9 @@ class RunService:
     # ──────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _assert_assistant_access(assistant: Assistant, user_id: str) -> None:
+    def _assert_assistant_access(
+        assistant: Assistant, user_id: str, *, is_protected_key: bool = False
+    ) -> None:
         """
         At run creation time, verify the caller owns or is shared on the
         assistant they are trying to run against.
@@ -159,6 +162,17 @@ class RunService:
         Back-fill window: if owner_id is still NULL, falls back to checking the
         many-to-many users relationship — identical logic to AssistantService.
         """
+        if assistant.deleted_at is not None:
+            raise HTTPException(status_code=404, detail="Assistant not found")
+
+        # Protected Playground assistants are strictly owner-only and require
+        # that the caller authenticated with their protected service key.
+        # Ordinary keys, shared users and legacy associations cannot bypass it.
+        if assistant.is_protected:
+            if not is_protected_key or assistant.owner_id != user_id:
+                raise HTTPException(status_code=404, detail="Assistant not found")
+            return
+
         if assistant.owner_id is not None:
             is_owner = assistant.owner_id == user_id
         else:
@@ -180,6 +194,7 @@ class RunService:
     def _lock_thread_for_run_creation(
         db: Session,
         thread_id: str,
+        user_id: str,
     ) -> None:
         # Serialize competing run creation only for this thread.
         # Different thread rows remain independently concurrent.
@@ -192,6 +207,10 @@ class RunService:
                 status_code=404,
                 detail="Thread not found",
             )
+
+        # Match ThreadService's canonical owner / legacy participant guard
+        # before scanning runs or creating a new run on this thread.
+        ThreadService._assert_owner(thread, user_id)
 
         # The Thread row above is the per-thread mutex.
         #
@@ -214,7 +233,11 @@ class RunService:
             )
 
     def create_run(
-        self, run_data: validator.RunCreate, *, user_id: str
+        self,
+        run_data: validator.RunCreate,
+        *,
+        user_id: str,
+        is_protected_key: bool = False,
     ) -> validator.Run:
         with SessionLocal() as db:
             # Acquire the per-thread mutex before any consistent
@@ -224,6 +247,7 @@ class RunService:
             self._lock_thread_for_run_creation(
                 db,
                 run_data.thread_id,
+                user_id,
             )
 
             assistant = (
@@ -235,7 +259,11 @@ class RunService:
                 raise HTTPException(status_code=404, detail="Assistant not found")
 
             # ── Cross-resource ownership check ──────────────────────────────
-            self._assert_assistant_access(assistant, user_id)
+            self._assert_assistant_access(
+                assistant,
+                user_id,
+                is_protected_key=is_protected_key,
+            )
 
             # Resolve tools: explicit Run override or Assistant defaults.
             tools_override = getattr(run_data, "tools", None)

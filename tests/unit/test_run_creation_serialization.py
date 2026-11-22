@@ -1,5 +1,3 @@
-import sys
-import types
 from types import SimpleNamespace
 
 import pytest
@@ -7,18 +5,7 @@ from fastapi import HTTPException
 from projectdavid_common.validation import StatusEnum
 
 from src.api.entities_api.models.models import Run, Thread
-
-# runs_service imports SessionLocal at module import time.
-# This unit suite exercises only the pure locking helper, so keep
-# production database bootstrap completely outside the test.
-_database_stub = types.ModuleType("src.api.entities_api.db.database")
-_database_stub.SessionLocal = None
-sys.modules["src.api.entities_api.db.database"] = _database_stub
-
-from src.api.entities_api.services.runs_service import (  # noqa: E402
-    TERMINAL_RUN_STATUSES,
-    RunService,
-)
+from src.api.entities_api.services.runs_service import TERMINAL_RUN_STATUSES, RunService
 
 
 class _FakeQuery:
@@ -74,13 +61,14 @@ def test_terminal_run_statuses_are_exact():
 
 def test_free_thread_is_locked_and_allowed():
     db = _FakeDb(
-        thread_result=SimpleNamespace(id="thread_a"),
+        thread_result=SimpleNamespace(id="thread_a", owner_id="user_1"),
         run_result=None,
     )
 
     RunService._lock_thread_for_run_creation(
         db,
         "thread_a",
+        "user_1",
     )
 
     assert db.query_calls == [
@@ -94,7 +82,7 @@ def test_free_thread_is_locked_and_allowed():
 
 def test_non_terminal_run_rejects_creation():
     db = _FakeDb(
-        thread_result=SimpleNamespace(id="thread_a"),
+        thread_result=SimpleNamespace(id="thread_a", owner_id="user_1"),
         run_result=SimpleNamespace(
             id="run_active",
             status=StatusEnum.queued,
@@ -105,6 +93,7 @@ def test_non_terminal_run_rejects_creation():
         RunService._lock_thread_for_run_creation(
             db,
             "thread_a",
+            "user_1",
         )
 
     assert exc_info.value.status_code == 409
@@ -124,6 +113,7 @@ def test_missing_thread_is_rejected_before_run_query():
         RunService._lock_thread_for_run_creation(
             db,
             "missing_thread",
+            "user_1",
         )
 
     assert exc_info.value.status_code == 404

@@ -2,6 +2,7 @@
 
 import base64
 import binascii
+import hashlib
 import json
 import re
 import time
@@ -13,6 +14,7 @@ from projectdavid_common import UtilsInterface, ValidationInterface
 from projectdavid_orm.projectdavid_orm.models import AssistantMcpTool
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, or_, select, union_all
+from sqlalchemy.exc import IntegrityError
 
 from src.api.entities_api.db.database import SessionLocal
 from src.api.entities_api.models.models import Assistant, User, VectorStore
@@ -27,6 +29,12 @@ validator = ValidationInterface()
 
 Mode = Literal["standard", "autonomous"]
 MAX_CURSOR = 512
+PLAYGROUND_ASSISTANT_PREFIX = "asst_playground_"
+
+
+def playground_assistant_id(user_id: str) -> str:
+    digest = hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:48]
+    return f"{PLAYGROUND_ASSISTANT_PREFIX}{digest}"
 
 
 class SummaryFilters(BaseModel):
@@ -131,7 +139,10 @@ def summary_query(user_id: str, filters: SummaryFilters):
     assoc = Assistant.users.property.secondary
 
     columns = [a.c[name] for name in AssistantSummary.model_fields]
-    conditions = [a.c.deleted_at.is_(None)]
+    conditions = [
+        a.c.deleted_at.is_(None),
+        a.c.is_protected.is_(False),
+    ]
 
     if filters.assistant_id is not None:
         conditions.append(a.c.id == filters.assistant_id)
@@ -237,6 +248,11 @@ class AssistantService:
         Once the back-fill follow-up migration sets owner_id NOT NULL,
         the fallback branch can be removed.
         """
+        # Protected assistants are not manageable through ordinary user APIs.
+        # Keep this guard separate from trusted internal execution retrieval.
+        if db_asst.is_protected:
+            raise HTTPException(404, "Assistant not found")
+
         if db_asst.owner_id is not None:
             if db_asst.owner_id != user_id:
                 raise HTTPException(
@@ -295,6 +311,12 @@ class AssistantService:
                 assistant.id or UtilsInterface.IdentifierService.generate_assistant_id()
             )
 
+            if assistant_id.startswith(PLAYGROUND_ASSISTANT_PREFIX):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Reserved assistant ID",
+                )
+
             existing = db.query(Assistant).filter(Assistant.id == assistant_id).first()
             if existing:
                 raise HTTPException(
@@ -324,6 +346,7 @@ class AssistantService:
                 engineer=assistant.engineer,
                 decision_telemetry=assistant.decision_telemetry,
                 owner_id=user_id,
+                is_protected=False,
                 deleted_at=None,
             )
 
@@ -331,6 +354,103 @@ class AssistantService:
             db.commit()
             db.refresh(db_assistant)
             return self.map_to_read_model(db_assistant)
+
+    def _read_playground_assistant(
+        self,
+        db_asst: Assistant,
+        user_id: str,
+    ) -> validator.AssistantRead:
+        """Validate the reserved assistant identity before returning it."""
+        if (
+            db_asst.owner_id != user_id
+            or not db_asst.is_protected
+            or db_asst.deleted_at is not None
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Playground assistant identity conflict",
+            )
+
+        return self.map_to_read_model(db_asst)
+
+    def bootstrap_playground_assistant(
+        self,
+        user_id: str,
+        model: str,
+    ) -> validator.AssistantRead:
+        """
+        Create or retrieve the single protected Playground assistant
+        belonging to this Core user.
+
+        The reserved deterministic ID and database primary key make
+        concurrent bootstrap requests converge on one record.
+
+        This method must only be called from a trusted bootstrap path
+        that derives user_id from authenticated credentials.
+        """
+        if not model or not model.strip():
+            raise HTTPException(
+                status_code=422,
+                detail="A model is required",
+            )
+
+        assistant_id = playground_assistant_id(user_id)
+
+        with SessionLocal() as db:
+            user = db.query(User).filter(User.id == user_id).first()
+            if user is None:
+                raise HTTPException(404, "User not found")
+
+            existing = db.query(Assistant).filter(Assistant.id == assistant_id).first()
+
+            if existing is not None:
+                return self._read_playground_assistant(existing, user_id)
+
+            db_asst = Assistant(
+                id=assistant_id,
+                object="assistant",
+                created_at=int(time.time()),
+                name="Playground",
+                description="Internal Playground assistant",
+                model=model.strip(),
+                instructions="",
+                tool_configs=[],
+                tool_resources=None,
+                meta_data=None,
+                top_p=1.0,
+                temperature=1.0,
+                response_format="auto",
+                max_tokens=None,
+                max_turns=1,
+                agent_mode=False,
+                web_access=False,
+                deep_research=False,
+                engineer=False,
+                decision_telemetry=False,
+                owner_id=user_id,
+                is_protected=True,
+                deleted_at=None,
+            )
+
+            db.add(db_asst)
+
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+
+                # A concurrent request may have inserted the same ID.
+                existing = (
+                    db.query(Assistant).filter(Assistant.id == assistant_id).first()
+                )
+
+                if existing is None:
+                    raise
+
+                return self._read_playground_assistant(existing, user_id)
+
+            db.refresh(db_asst)
+            return self._read_playground_assistant(db_asst, user_id)
 
     def retrieve_assistant(
         self,
@@ -400,13 +520,6 @@ class AssistantService:
         assistant_update: validator.AssistantUpdate,
         user_id: str,
     ) -> validator.AssistantRead:
-        try:
-            cache = get_sync_invalidator()
-            cache.invalidate_sync(assistant_id)
-            logging_utility.info(f"Invalidated cache for assistant {assistant_id}")
-        except Exception as e:
-            logging_utility.error(f"Failed to invalidate cache: {e}")
-
         with SessionLocal() as db:
             db_asst = (
                 db.query(Assistant)
@@ -420,6 +533,13 @@ class AssistantService:
                 raise HTTPException(404, "Assistant not found")
 
             self._assert_owner(db_asst, user_id)
+
+            try:
+                cache = get_sync_invalidator()
+                cache.invalidate_sync(assistant_id)
+                logging_utility.info(f"Invalidated cache for assistant {assistant_id}")
+            except Exception as e:
+                logging_utility.error(f"Failed to invalidate cache: {e}")
 
             data = assistant_update.model_dump(exclude_unset=True)
 
@@ -490,6 +610,7 @@ class AssistantService:
                 .filter(
                     Assistant.owner_id == user_id,
                     Assistant.deleted_at.is_(None),
+                    Assistant.is_protected.is_(False),
                 )
                 .all()
             )
@@ -502,7 +623,10 @@ class AssistantService:
             legacy_only = [
                 a
                 for a in user.assistants
-                if a.id not in owned_ids and a.owner_id is None and a.deleted_at is None
+                if a.id not in owned_ids
+                and a.owner_id is None
+                and a.deleted_at is None
+                and not a.is_protected
             ]
 
             all_assistants = owned_by_column + legacy_only
@@ -518,12 +642,6 @@ class AssistantService:
         user_id: str,
         permanent: bool = False,
     ) -> None:
-        try:
-            cache = get_sync_invalidator()
-            cache.invalidate_sync(assistant_id)
-        except Exception as e:
-            logging_utility.error(f"Failed to invalidate cache during delete: {e}")
-
         with SessionLocal() as db:
             db_asst = db.query(Assistant).filter(Assistant.id == assistant_id).first()
 
@@ -531,6 +649,12 @@ class AssistantService:
                 raise HTTPException(404, "Assistant not found")
 
             self._assert_owner(db_asst, user_id)
+
+            try:
+                cache = get_sync_invalidator()
+                cache.invalidate_sync(assistant_id)
+            except Exception as e:
+                logging_utility.error(f"Failed to invalidate cache during delete: {e}")
 
             if permanent:
                 logging_utility.warning(
@@ -556,6 +680,7 @@ class AssistantService:
         self,
         user_id: str,
         assistant_id: str,
+        actor_user_id: str,
     ) -> None:
         with SessionLocal() as db:
             user = db.query(User).filter(User.id == user_id).first()
@@ -578,6 +703,8 @@ class AssistantService:
                     status_code=404,
                     detail="Assistant not found",
                 )
+
+            self._assert_owner(db_asst, actor_user_id)
 
             if db_asst not in user.assistants:
                 user.assistants.append(db_asst)
@@ -590,6 +717,7 @@ class AssistantService:
         self,
         user_id: str,
         assistant_id: str,
+        actor_user_id: str,
     ) -> None:
         with SessionLocal() as db:
             user = db.query(User).filter(User.id == user_id).first()
@@ -612,6 +740,8 @@ class AssistantService:
                     status_code=404,
                     detail="Assistant not found",
                 )
+
+            self._assert_owner(db_asst, actor_user_id)
 
             if db_asst in user.assistants:
                 user.assistants.remove(db_asst)

@@ -42,7 +42,11 @@ def create_run(
     logging_utility.info("[%s] Creating run for thread %s", user_id, run.thread_id)
     run_service = RunService()
     try:
-        new_run = run_service.create_run(run, user_id=user_id)
+        new_run = run_service.create_run(
+            run,
+            user_id=user_id,
+            is_protected_key=bool(auth_key.is_protected),
+        )
         logging_utility.info("Run created successfully: %s", new_run.id)
         return new_run
     except HTTPException as e:

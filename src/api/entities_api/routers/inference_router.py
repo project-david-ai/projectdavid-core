@@ -11,6 +11,7 @@ from redis import Redis
 
 from src.api.entities_api.db.database import SessionLocal
 from src.api.entities_api.dependencies import get_api_key, get_redis
+from src.api.entities_api.models.models import Run
 from src.api.entities_api.orchestration.engine.inference_arbiter import InferenceArbiter
 from src.api.entities_api.orchestration.engine.inference_provider_selector import (
     InferenceProviderSelector,
@@ -186,19 +187,12 @@ async def completions(
     # ------------------------------------------------------------------
     # OWNERSHIP GUARD
     #
-    # The run is the trust anchor. It was created under auth, so its
-    # user_id is reliable. We verify that the thread and assistant IDs
-    # in the request are consistent with the run — this closes the
-    # mismatched-ID attack vector without requiring a second API key.
+    # The Run binds the thread, assistant, and owner. The caller must
+    # authenticate as that owner before execution is permitted.
     #
-    # ARCH NOTE: This endpoint requires two separate credentials:
-    #   - stream_request.api_key → Inference provider key (forwarded to LLM)
-    #   - Project David identity  → Derived from run.user_id (trust anchor)
-    #
-    # We cannot add get_api_key here without breaking the dual-key
-    # constraint: the client cannot simultaneously pass a Project David
-    # key in the header AND an inference provider key in the body through
-    # the current SDK flow. Identity is therefore established via the run.
+    # Credentials stay separate:
+    #   - stream_request.api_key → Inference provider key (JSON body)
+    #   - project_api_key        → Project David key (X-API-Key header)
     #
     # Chain of trust:
     #   1. Run exists and was created under auth (run.user_id is trusted)
@@ -220,8 +214,10 @@ async def completions(
                 api_key_header=project_api_key,
                 db=db,
             )
+            authenticated_user_id = authenticated_key.user_id
+            authenticated_is_protected = bool(authenticated_key.is_protected)
 
-        if authenticated_key.user_id != run.user_id:
+        if authenticated_user_id != run.user_id:
             raise HTTPException(
                 status_code=403,
                 detail="API key identity does not match the run owner.",
@@ -242,18 +238,14 @@ async def completions(
         await native.assert_assistant_access(
             assistant_id=stream_request.assistant_id,
             user_id=run.user_id,
+            is_protected_key=authenticated_is_protected,
         )
 
-        # For stateful inference, the durable Run is the model authority.
-        effective_model = run.model
-        if not isinstance(effective_model, str) or not effective_model.strip():
-            raise HTTPException(status_code=409, detail="Run has no resolved model.")
-        effective_model = effective_model.strip()
-        if stream_request.model != effective_model:
-            raise HTTPException(
-                status_code=409,
-                detail="Request model does not match the persisted Run model.",
-            )
+        # The inference request selects the execution model; Run.model may
+        # still contain the Assistant default until the first inference.
+        effective_model = stream_request.model.strip()
+        if not effective_model:
+            raise HTTPException(status_code=422, detail="Inference model is required.")
 
     except HTTPException:
         raise
@@ -271,11 +263,39 @@ async def completions(
             model_id=effective_model
         )
     except ValueError as e:
-        logging_utility.warning("Invalid Run model for provider routing: %s", e)
+        logging_utility.warning("Invalid inference model for provider routing: %s", e)
         raise HTTPException(status_code=422, detail=str(e)) from e
     except Exception as e:
         logging_utility.error(f"Provider setup failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+    # Bind the validated inference model to the durable Run for accounting.
+    # Only a queued Run may adopt a different model. A row lock prevents
+    # competing writes, and the ownership/identity constraints are rechecked.
+    with SessionLocal() as db:
+        persisted_run = (
+            db.query(Run)
+            .filter(
+                Run.id == stream_request.run_id,
+                Run.user_id == authenticated_user_id,
+                Run.thread_id == stream_request.thread_id,
+                Run.assistant_id == stream_request.assistant_id,
+            )
+            .with_for_update()
+            .first()
+        )
+        if persisted_run is None:
+            raise HTTPException(status_code=404, detail="Run not found.")
+
+        run_status = getattr(persisted_run.status, "value", persisted_run.status)
+        if persisted_run.model != effective_model:
+            if run_status != "queued":
+                raise HTTPException(
+                    status_code=409,
+                    detail="Cannot change the Run model after execution begins.",
+                )
+            persisted_run.model = effective_model
+            db.commit()
 
     # ------------------------------------------------------------------
     # CORE GENERATOR

@@ -1,3 +1,5 @@
+"""Assistant summary filtering, ownership, and protected-resource isolation."""
+
 import unittest
 
 from fastapi import HTTPException
@@ -13,6 +15,16 @@ from src.api.entities_api.services.assistants_service import (
 
 class AssistantSummaryTests(unittest.TestCase):
     def setUp(self):
+        # Core requires an ORM model carrying the protected-Assistant flag.
+        # Do not synthesize this column in tests: doing so would hide a
+        # dependency mismatch between the installed ORM and Core.
+        if "is_protected" not in Assistant.__table__.c:
+            self.fail(
+                "Installed Assistant ORM model lacks is_protected. "
+                "Align the local projectdavid-orm dependency with the "
+                "version required by Core before running these tests."
+            )
+
         self.engine = create_engine("sqlite://")
 
         User.__table__.create(self.engine)
@@ -28,12 +40,13 @@ class AssistantSummaryTests(unittest.TestCase):
             [{"id": "u1"}, {"id": "u2"}],
         )
 
-        for assistant_id, owner_id, deleted_at in [
-            ("a", "u1", None),
-            ("b", "u1", None),
-            ("legacy", None, None),
-            ("foreign", "u2", None),
-            ("deleted", "u1", 200),
+        for assistant_id, owner_id, deleted_at, is_protected in [
+            ("a", "u1", None, False),
+            ("b", "u1", None, False),
+            ("legacy", None, None, False),
+            ("foreign", "u2", None, False),
+            ("deleted", "u1", 200, False),
+            ("protected", "u1", None, True),
         ]:
             self.db.execute(
                 Assistant.__table__.insert().values(
@@ -44,6 +57,7 @@ class AssistantSummaryTests(unittest.TestCase):
                     name=assistant_id,
                     model="test",
                     deleted_at=deleted_at,
+                    is_protected=is_protected,
                 )
             )
 
@@ -51,7 +65,8 @@ class AssistantSummaryTests(unittest.TestCase):
         # - an assistant already included through canonical ownership;
         # - a legacy assistant without a canonical owner;
         # - an assistant canonically owned by another user;
-        # - a soft-deleted assistant.
+        # - a soft-deleted assistant;
+        # - an owned and associated protected assistant (must stay hidden).
         self.db.execute(
             self.associations.insert(),
             [
@@ -61,14 +76,17 @@ class AssistantSummaryTests(unittest.TestCase):
                     "legacy",
                     "foreign",
                     "deleted",
+                    "protected",
                 )
             ],
         )
         self.db.commit()
 
     def tearDown(self):
-        self.db.close()
-        self.engine.dispose()
+        if hasattr(self, "db"):
+            self.db.close()
+        if hasattr(self, "engine"):
+            self.engine.dispose()
 
     def test_ownership_soft_deletion_and_no_duplicates(self):
         page = AssistantService.list_summaries(
@@ -151,6 +169,22 @@ class AssistantSummaryTests(unittest.TestCase):
             [item.id for item in page.items],
             ["b"],
         )
+
+    def test_protected_assistant_is_hidden_even_from_owner(self):
+        page = AssistantService.list_summaries(
+            self.db,
+            "u1",
+            SummaryFilters(),
+        )
+        self.assertNotIn("protected", [item.id for item in page.items])
+
+        direct = AssistantService.list_summaries(
+            self.db,
+            "u1",
+            SummaryFilters(assistant_id="protected"),
+        )
+        self.assertEqual(direct.items, [])
+        self.assertFalse(direct.has_more)
 
 
 if __name__ == "__main__":
