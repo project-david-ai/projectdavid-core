@@ -17,7 +17,7 @@ import traceback
 from enum import Enum
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Callable, Dict, List, Optional, Set
+from typing import Callable, List, Optional
 from urllib.parse import quote_plus
 
 import typer
@@ -104,6 +104,7 @@ class DockerManager:
 
     _GENERATED_ENV_VALUES: dict[str, Callable[[], str]] = {
         "PROJECT_DAVID_CREDENTIAL_KEY": (lambda: Fernet.generate_key().decode("ascii")),
+        "PROJECT_DAVID_PROVIDER_KEY_HMAC_KEY": (lambda: secrets.token_hex(32)),
     }
 
     _ENV_FILE = ".env"
@@ -135,6 +136,7 @@ class DockerManager:
         "SECRET_KEY",
         "SANDBOX_AUTH_SECRET",
         "PROJECT_DAVID_CREDENTIAL_KEY",
+        "PROJECT_DAVID_PROVIDER_KEY_HMAC_KEY",
         "DEFAULT_SECRET_KEY",
         "SMBCLIENT_PASSWORD",
         "SEARXNG_SECRET_KEY",
@@ -259,6 +261,7 @@ class DockerManager:
             "SIGNED_URL_SECRET",
             "SANDBOX_AUTH_SECRET",
             "PROJECT_DAVID_CREDENTIAL_KEY",
+            "PROJECT_DAVID_PROVIDER_KEY_HMAC_KEY",
             "SEARXNG_SECRET_KEY",
             "DISABLE_FIREJAIL",
             "SECRET_KEY",
@@ -635,6 +638,26 @@ class DockerManager:
         existing = self._parse_env_assignments(env_path)
         expected = self._parse_env_assignments(example_path)
 
+        # Cryptographic requirements are authoritative even when an older
+        # .env.example does not declare them.
+        for key in self._GENERATED_ENV_VALUES:
+            expected.setdefault(key, "")
+
+        # Generated security roots are authoritative in Core, not dependent on
+        # whether an older .env.example happens to contain the new key.
+        for key in self._GENERATED_ENV_VALUES:
+            if key in existing and key == "PROJECT_DAVID_PROVIDER_KEY_HMAC_KEY":
+                value = existing[key].strip().strip('"').strip("'")
+                try:
+                    raw_key = bytes.fromhex(value)
+                except ValueError as exc:
+                    raise RuntimeError(f"Invalid persistent secret: {key}") from exc
+                if len(raw_key) != 32 or len(value) != 64:
+                    raise RuntimeError(f"Invalid persistent secret: {key}")
+
+        expected.update(
+            {key: "" for key in self._GENERATED_ENV_VALUES if key not in expected}
+        )
         missing = [key for key in expected if key not in existing]
 
         if not missing:
@@ -758,10 +781,22 @@ class DockerManager:
             val = os.environ.get(key, "")
             if val in self._INSECURE_VALUES:
                 self.log.error(
-                    "Insecure or missing value for '%s'. Delete .env and re-run to regenerate.",
+                    "Insecure or missing value for '%s'. "
+                    "Refusing startup to protect persistent credentials.",
                     key,
                 )
                 failed = True
+
+        hmac_key = os.environ.get("PROJECT_DAVID_PROVIDER_KEY_HMAC_KEY", "")
+
+        if re.fullmatch(r"[0-9a-fA-F]{64}", hmac_key) is None or hmac_key == "0" * 64:
+            self.log.error(
+                "Invalid PROJECT_DAVID_PROVIDER_KEY_HMAC_KEY: "
+                "expected a nonzero 32-byte hexadecimal key. "
+                "Refusing startup without rotating existing secrets."
+            )
+            failed = True
+
         if failed:
             raise SystemExit(1)
 

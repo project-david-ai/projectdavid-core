@@ -155,7 +155,7 @@ class CredentialService:
         return reference
 
     def validate_runtime_configuration(self) -> None:
-        """Validate the credential key only when encrypted MCP auth requires it."""
+        """Validate encryption if active MCP or inference credentials require it."""
 
         with self._session_factory() as db:
             invalid_registration = (
@@ -179,34 +179,49 @@ class CredentialService:
                 .first()
             )
 
-        if authenticated_registration is not None:
-            self._cipher()
-
-    def resolve(
-        self,
-        *,
-        credential_id: str,
-        user_id: str,
-        expected_kind: str | None = None,
-    ) -> dict[str, Any]:
-        """Resolve one credential owned by the specified tenant."""
-
-        with self._session_factory() as db:
-            row = (
-                db.query(Credential)
+            # Credential rows exist before provider-key registrations can be used.
+            # Inspecting the encrypted credential avoids an additional dependency
+            # on the provider_keys table during startup/migration transitions.
+            active_provider_credential = (
+                db.query(Credential.id)
                 .filter(
-                    Credential.id == credential_id,
-                    Credential.owner_id == user_id,
+                    Credential.kind == "inference_provider",
+                    Credential.encrypted_payload != "revoked",
                 )
                 .first()
             )
 
-            if row is None:
-                raise CredentialResolutionError("Credential not found")
+        if (
+            authenticated_registration is not None
+            or active_provider_credential is not None
+        ):
+            self._cipher()
 
-            kind = row.kind
-            version = row.encryption_version
-            ciphertext = row.encrypted_payload
+    def resolve_in_session(
+        self,
+        *,
+        db: Any,
+        credential_id: str,
+        user_id: str,
+        expected_kind: str | None = None,
+    ) -> dict[str, Any]:
+        """Resolve an owned credential inside the caller's existing transaction."""
+
+        row = (
+            db.query(Credential)
+            .filter(
+                Credential.id == credential_id,
+                Credential.owner_id == user_id,
+            )
+            .first()
+        )
+
+        if row is None:
+            raise CredentialResolutionError("Credential not found")
+
+        kind = row.kind
+        version = row.encryption_version
+        ciphertext = row.encrypted_payload
 
         if expected_kind is not None:
             expected = self._validate_kind(expected_kind)
@@ -232,6 +247,23 @@ class CredentialService:
             raise CredentialResolutionError("Credential payload is invalid")
 
         return payload
+
+    def resolve(
+        self,
+        *,
+        credential_id: str,
+        user_id: str,
+        expected_kind: str | None = None,
+    ) -> dict[str, Any]:
+        """Resolve one credential owned by the specified tenant."""
+
+        with self._session_factory() as db:
+            return self.resolve_in_session(
+                db=db,
+                credential_id=credential_id,
+                user_id=user_id,
+                expected_kind=expected_kind,
+            )
 
 
 __all__ = [

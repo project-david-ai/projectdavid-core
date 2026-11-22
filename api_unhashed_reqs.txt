@@ -21,11 +21,10 @@ transformers>=4.33.0,<5.0.0
 # ------------------------------------------------------------------ #
 # Internal packages
 projectdavid[embeddings]>=1.113.1
-projectdavid-orm>=1.15.0
 # <--Depends on projectdavid-orm
 projectdavid-services>=1.2.0
-projectdavid_common>=0.74.0
-
+projectdavid-orm>=1.17.0
+projectdavid-common>=0.80.0
 
 # web search tools
 html2text>=2024.2.26

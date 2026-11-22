@@ -160,7 +160,10 @@ def _stateful(model="together-ai/base-model", *, stream=False):
         assistant_id="assistant_1",
         run_id="run_1",
         message_id="message_1",
-        api_key="provider-key",
+        api_key=None if model.startswith("hyperbolic/") else "provider-key",
+        provider_key_id=(
+            "pkey_model_authority" if model.startswith("hyperbolic/") else None
+        ),
         stream=stream,
     )
 
@@ -184,6 +187,11 @@ def _run_stateful_with_mocks(
     native = MagicMock()
     native.retrieve_run = AsyncMock(return_value=run)
     native.assert_assistant_access = AsyncMock()
+
+    native_service_class = MagicMock(return_value=native)
+    native_service_class.resolve_provider_key_for_inference = AsyncMock(
+        return_value="provider-key"
+    )
 
     selector = MagicMock()
     worker_calls = []
@@ -216,7 +224,7 @@ def _run_stateful_with_mocks(
             patch.object(
                 inference_router,
                 "NativeExecutionService",
-                return_value=native,
+                new=native_service_class,
             ),
             patch.object(
                 inference_router,
@@ -270,6 +278,7 @@ def test_stateful_buffered_inference_dispatches_persisted_model():
     selector.select_provider.assert_called_once_with(model_id="hyperbolic/overridden")
 
     assert calls[0]["model"] == "hyperbolic/overridden"
+    assert calls[0]["api_key"] == "provider-key"
     assert body["model"] == "hyperbolic/overridden"
     assert body["content"] == "model-authority-ok"
     assert run.model == "hyperbolic/overridden"
