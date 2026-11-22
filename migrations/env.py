@@ -14,7 +14,6 @@ if project_dir not in sys.path:
 
 load_dotenv()
 
-from projectdavid_orm import Base
 from projectdavid_orm.projectdavid_orm import models
 
 # Extract metadata directly from the model registry.
