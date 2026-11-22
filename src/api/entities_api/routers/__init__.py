@@ -10,6 +10,9 @@ from src.api.entities_api.routers.files_router import router as files_router
 from src.api.entities_api.routers.inference_router import router as inference_router
 from src.api.entities_api.routers.mcp_router import router as mcp_router
 from src.api.entities_api.routers.messages_router import router as messages_router
+from src.api.entities_api.routers.provider_keys_router import (
+    router as provider_keys_router,
+)
 from src.api.entities_api.routers.routers import router as health_router
 from src.api.entities_api.routers.runs_router import router as runs_router
 from src.api.entities_api.routers.sandbox_auth_router import (
@@ -33,6 +36,7 @@ api_router.include_router(runs_router, tags=["Runs"])
 api_router.include_router(assistants_router, tags=["Assistants"])
 api_router.include_router(messages_router, tags=["Messages"])
 api_router.include_router(mcp_router)
+api_router.include_router(provider_keys_router)
 api_router.include_router(actions_router, tags=["Actions"])
 api_router.include_router(files_router, tags=["Files"])
 api_router.include_router(vectors_router, tags=["Vector Stores"])
