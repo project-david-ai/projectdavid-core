@@ -383,7 +383,7 @@ def test_stateful_buffered_completion_retains_existing_processing_path():
     selector = MagicMock()
     selector.select_provider.return_value = (Handler(), "provider/model")
 
-    authenticated_key = SimpleNamespace(user_id="user_1")
+    authenticated_key = SimpleNamespace(user_id="user_1", is_protected=False)
     get_api_key = AsyncMock(return_value=authenticated_key)
 
     with (
@@ -397,6 +397,7 @@ def test_stateful_buffered_completion_retains_existing_processing_path():
             "get_api_key",
             get_api_key,
         ),
+        patch.object(inference_router, "SessionLocal", return_value=MagicMock()),
         patch.object(inference_router, "InferenceArbiter", return_value=MagicMock()),
         patch.object(
             inference_router,
@@ -426,6 +427,7 @@ def test_stateful_buffered_completion_retains_existing_processing_path():
     native.assert_assistant_access.assert_awaited_once_with(
         assistant_id="assistant_1",
         user_id="user_1",
+        is_protected_key=False,
     )
     selector.select_provider.assert_called_once_with(
         model_id="together-ai/example/model"
