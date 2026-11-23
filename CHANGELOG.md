@@ -1,3 +1,10 @@
+## [1.63.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.63.0...v1.63.1) (2026-11-23)
+
+
+### Bug Fixes
+
+* **core:** harden registered BYOK routing and worker delegation ([67ad0c6](https://github.com/project-david-ai/projectdavid-core/commit/67ad0c6078c1a9a439d3c7de006a163bf678b966))
+
 # [1.63.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.62.0...v1.63.0) (2026-11-22)
 
 
