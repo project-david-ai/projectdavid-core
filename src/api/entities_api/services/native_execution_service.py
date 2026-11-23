@@ -361,9 +361,7 @@ class NativeExecutionService:
         )
 
         def _create():
-            return self.run_svc.create_run(
-                req, user_id=user_id, trusted_metadata=trusted_metadata
-            )
+            return self.run_svc.create_run(req, user_id=user_id)
 
         return await asyncio.to_thread(_create)
 
@@ -398,12 +396,11 @@ class NativeExecutionService:
                     .limit(1)
                 ).scalar_one()
 
-                child_epoch = db.execute(
-                    select(RunExecutionEpoch)
-                    .where(RunExecutionEpoch.run_id == child_run_id)
-                    .order_by(RunExecutionEpoch.epoch_number.desc())
-                    .limit(1)
-                ).scalar_one()
+                child_epoch = ledger.reserve_epoch(
+                    db,
+                    run_id=child_run_id,
+                    root_run_id=parent_epoch.root_run_id,
+                )
 
                 child_meta = child_run.meta_data or {}
                 if (

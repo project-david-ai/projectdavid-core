@@ -211,7 +211,7 @@ class OllamaDefaultBaseWorker(
                 delegation_model = get_delegated_model(requested_model=pre_mapped_model)
                 await self._native_exec.update_run_fields(
                     run_id,
-                    meta_data={"api_key": api_key, "delegated_model": delegation_model},
+                    meta_data={"delegated_model": delegation_model},
                 )
             elif junior_engineer_setting:
                 web_access_setting = False

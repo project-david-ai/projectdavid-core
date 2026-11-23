@@ -7,6 +7,7 @@ import threading
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator, Callable, Dict, Optional
 
+import httpx
 from projectdavid.events import ScratchpadEvent, WebStatusEvent
 from projectdavid_common.utilities.logging_service import LoggingUtility
 from projectdavid_common.validation import StatusEnum
@@ -17,6 +18,72 @@ from src.api.entities_api.services.native_execution_service import (
 from src.api.entities_api.utilities.assistant_manager import AssistantManager
 
 LOG = LoggingUtility()
+
+
+class _RegisteredProviderInferenceClient:
+    """Per-child-invocation adapter to the authenticated Core BYOK SSE contract."""
+
+    def __init__(self, *, base_url: str, core_api_key: str, provider_key_id: str):
+        self.base_url = base_url
+        self.core_api_key = core_api_key
+        self.provider_key_id = provider_key_id
+
+    async def stream_inference_response(
+        self,
+        *,
+        model: str,
+        thread_id: str,
+        message_id: str,
+        run_id: str,
+        assistant_id: str,
+        api_key: str | None = None,
+        timeout: float = 600.0,
+        **kwargs,
+    ) -> AsyncGenerator[dict, None]:
+        if api_key is not None:
+            raise RuntimeError("Registered inference cannot accept a plaintext key")
+        payload = {
+            "model": model,
+            "thread_id": thread_id,
+            "message_id": message_id,
+            "run_id": run_id,
+            "assistant_id": assistant_id,
+            "provider_key_id": self.provider_key_id,
+            "stream": True,
+        }
+        async with httpx.AsyncClient(
+            base_url=self.base_url,
+            timeout=httpx.Timeout(timeout, connect=10.0),
+            headers={"X-API-Key": self.core_api_key},
+        ) as client:
+            async with client.stream(
+                "POST", "/v1/completions", json=payload
+            ) as response:
+                response.raise_for_status()
+                finished = False
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        finished = True
+                        break
+                    try:
+                        chunk = json.loads(data)
+                    except ValueError as exc:
+                        raise RuntimeError(
+                            "Invalid delegated inference stream frame"
+                        ) from exc
+                    if not isinstance(chunk, dict):
+                        raise RuntimeError("Invalid delegated inference stream chunk")
+                    if chunk.get("type") == "error":
+                        raise RuntimeError("Delegated inference stream failed")
+                    yield chunk
+                if not finished:
+                    raise RuntimeError(
+                        "Delegated inference stream ended without completion"
+                    )
+
 
 _TERMINAL_RUN_STATES = {"completed", "failed", "cancelled", "expired"}
 _WORKER_RUN_TIMEOUT = 1200
@@ -363,6 +430,7 @@ class DelegationMixin:
         decision,
         *,
         inference_api_key: Optional[str] = None,
+        provider_key_id: Optional[str] = None,
         project_david_api_key: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
 
@@ -406,10 +474,10 @@ class DelegationMixin:
                     "DELEGATE ABORT: No durable parent Action was created."
                 )
 
-            # Caller-supplied credentials are request-scoped, never DB-backed.
-            if not inference_api_key:
+            # Provider secrets must not be propagated to child HTTP requests.
+            if not provider_key_id and not inference_api_key:
                 raise RuntimeError(
-                    "DELEGATE ABORT: Provider BYOK was not supplied to delegation."
+                    "DELEGATE ABORT: No credential was supplied to delegation."
                 )
             if not project_david_api_key:
                 raise RuntimeError(
@@ -441,6 +509,16 @@ class DelegationMixin:
                     f"DELEGATE ABORT: No delegated model found in run {run_id} meta_data."
                 )
             inference_model = inference_model.strip()
+            if provider_key_id:
+                # A single registered key cannot authorize a different provider.
+                # The child endpoint also revalidates key ownership and provider.
+                parent_provider = str(parent_run.model).strip().lower().split("/", 1)[0]
+                child_provider = inference_model.lower().split("/", 1)[0]
+                if parent_provider != child_provider:
+                    raise RuntimeError(
+                        "DELEGATE ABORT: Delegated model requires a credential "
+                        "registered for its own provider."
+                    )
 
             ephemeral_worker = await self.create_ephemeral_worker_assistant()
             ephemeral_thread = await self.create_ephemeral_thread()
@@ -517,8 +595,16 @@ class DelegationMixin:
                 assistant_id=ephemeral_worker.id,
                 message_id=msg.id,
                 run_id=ephemeral_run.id,
-                api_key=inference_api_key,
+                api_key=None if provider_key_id else inference_api_key,
             )
+            if provider_key_id:
+                # Preserve SDK stream_events semantics (tool validation, retries,
+                # typed events) while replacing only its per-request HTTP transport.
+                sync_stream.inference_client = _RegisteredProviderInferenceClient(
+                    base_url=user_project_david_client.base_url,
+                    core_api_key=project_david_api_key,
+                    provider_key_id=provider_key_id,
+                )
 
             LOG.critical(
                 " WORKER STREAM STARTING - worker=%s thread=%s run=%s model=%s",
@@ -540,11 +626,10 @@ class DelegationMixin:
                 raw_event_count += 1
                 event_type = type(event).__name__
 
-                LOG.critical(
-                    " [RAW EVENT DUMP] Event %s | Type: %s | Payload: %s",
+                LOG.debug(
+                    "[WORKER EVENT] event=%s type=%s",
                     raw_event_count,
                     event_type,
-                    getattr(event, "model_dump", lambda: str(event))(),
                 )
 
                 #  INTERCEPT: ScratchpadEvent

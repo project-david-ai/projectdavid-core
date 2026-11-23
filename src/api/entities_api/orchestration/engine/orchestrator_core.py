@@ -662,6 +662,8 @@ class OrchestratorCore(
         self._ledger_actor_id = None
         self.ephemeral_supervisor_id = None
         self._active_run_id = run_id
+        # Non-secret child-inference reference; do not forward to provider clients.
+        provider_key_id = kwargs.pop("provider_key_id", None)
 
         _original_assistant_id = assistant_id
 
@@ -883,6 +885,7 @@ class OrchestratorCore(
                     tool_call_id=self._current_tool_call_id,
                     model=model,
                     api_key=api_key,
+                    provider_key_id=provider_key_id,
                     project_david_api_key=kwargs.get("project_david_api_key"),
                     decision=self._decision_payload,
                 ):
