@@ -354,7 +354,8 @@ def test_fails_closed_when_provider_key_missing():
         )
 
         assert any(
-            event["state"] == "error" and "Provider BYOK" in event["activity"]
+            event["state"] == "error"
+            and "No credential was supplied" in event["activity"]
             for event in events
         )
 
@@ -398,8 +399,8 @@ def test_explicit_credential_wiring_is_present():
 
     assert 'project_david_api_key=kwargs.get("project_david_api_key")' in core
     assert "project_david_api_key=project_david_api_key" in router
-    assert "inference_api_key=api_key" in router
-
+    assert "provider_key_id=provider_key_id" in router
+    assert "inference_api_key=None if provider_key_id else api_key" in router
     assert 'run_obj.meta_data.get("api_key")' not in delegation
     assert 'run_obj.meta_data.get("project_david_api_key")' not in delegation
     assert 'scrub_meta.pop("api_key"' not in delegation

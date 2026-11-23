@@ -110,38 +110,43 @@ async def _resolve_provider_api_key(
     provider_key_id: Optional[str],
     raw_api_key: Optional[str],
 ) -> Optional[str]:
-    """Gate Hyperbolic BYOK before dispatch; leave other providers unchanged.
+    """Resolve a tenant-owned credential at the authenticated API boundary.
 
-    Registered credentials never enter cache, model metadata, or HTTP responses.
-    The raw internal key remains local to the current inference invocation.
+    Hyperbolic requires registered BYOK. Together and DeepSeek can also use a
+    registered key; their legacy direct-key callers remain compatible.
+    Local providers do not accept externally registered credentials.
     """
-    if not model.strip().lower().startswith("hyperbolic/"):
+    provider = model.strip().lower().split("/", 1)[0]
+    registered_providers = {"hyperbolic", "together-ai", "deepseek-ai"}
+    if provider not in registered_providers:
         if provider_key_id is not None:
             raise HTTPException(
                 status_code=422,
-                detail=(
-                    "Registered provider key selection is not enabled "
-                    "for this model provider."
-                ),
+                detail="Registered keys are not supported for this model provider.",
             )
-        return raw_api_key  # Legacy providers; migrated separately.
+        return raw_api_key
 
-    if raw_api_key is not None:
+    if raw_api_key is not None and (provider == "hyperbolic" or provider_key_id):
         raise HTTPException(
             status_code=422,
-            detail="Direct Hyperbolic API keys are not accepted. Use provider_key_id.",
+            detail="Use provider_key_id instead of a direct provider API key.",
         )
     if not provider_key_id:
-        raise HTTPException(
-            status_code=422,
-            detail="A registered provider_key_id is required for Hyperbolic inference.",
-        )
+        if provider == "hyperbolic":
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "A registered provider_key_id is required "
+                    "for Hyperbolic inference."
+                ),
+            )
+        return raw_api_key  # Transitional compatibility for non-Hyperbolic providers.
 
     try:
         return await NativeExecutionService.resolve_provider_key_for_inference(
             provider_key_id=provider_key_id,
             user_id=user_id,
-            provider="hyperbolic",
+            provider=provider,
         )
     except (ProviderKeyNotFoundError, ProviderKeyUnavailableError) as exc:
         # Do not disclose whether a foreign, revoked, or mismatched key exists.
@@ -395,6 +400,7 @@ async def completions(
             stream_reasoning=False,
             api_key=provider_api_key,
             project_david_api_key=project_api_key,
+            provider_key_id=stream_request.provider_key_id,
         ):
             yield chunk
 

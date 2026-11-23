@@ -82,9 +82,7 @@ def test_unmigrated_provider_retains_legacy_raw_key():
     )
 
 
-@pytest.mark.parametrize(
-    "model", ["vllm/test", "together-ai/meta-llama", "ollama/test"]
-)
+@pytest.mark.parametrize("model", ["vllm/test", "ollama/test"])
 def test_registered_keys_not_forwarded_to_unmigrated_providers(model):
     with pytest.raises(HTTPException) as exc:
         resolve(model=model)
