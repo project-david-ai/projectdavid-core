@@ -205,6 +205,7 @@ class ContextMixin:
         decision_telemetry: bool = False,
         agent_mode: bool = False,
         web_access: bool = False,
+        run_instructions: Optional[str] = None,
     ) -> Dict:
         cache = self.get_assistant_cache()
         cfg = await cache.retrieve(assistant_id)
@@ -243,7 +244,11 @@ class ContextMixin:
         content_blocks = [
             f"Today's date and time: {today}",
             "### ASSISTANT INSTRUCTIONS",
-            cfg.get("instructions", ""),
+            (
+                run_instructions
+                if run_instructions is not None
+                else cfg.get("instructions", "")
+            ),
             "### OPERATIONAL PROTOCOLS",
             platform_instructions,
             "### AVAILABLE TOOLS",
@@ -262,6 +267,7 @@ class ContextMixin:
         agent_mode: bool = False,
         web_access: bool = True,
         deep_research: bool = True,
+        run_instructions: Optional[str] = None,
     ) -> Dict:
         cache = self.get_assistant_cache()
         cfg = await cache.retrieve(assistant_id)
@@ -299,7 +305,11 @@ class ContextMixin:
         content_blocks = [
             f"Today's date and time: {today}",
             "### ASSISTANT INSTRUCTIONS",
-            cfg.get("instructions", ""),
+            (
+                run_instructions
+                if run_instructions is not None
+                else cfg.get("instructions", "")
+            ),
             "### OPERATIONAL PROTOCOLS",
             platform_instructions,
             "### AVAILABLE TOOLS",
@@ -318,6 +328,7 @@ class ContextMixin:
         agent_mode: bool = False,
         web_access: bool = True,
         deep_research: bool = True,
+        run_instructions: Optional[str] = None,
     ) -> Dict:
         cache = self.get_assistant_cache()
         cfg = await cache.retrieve(assistant_id)
@@ -355,7 +366,11 @@ class ContextMixin:
         content_blocks = [
             f"Today's date and time: {today}",
             "### ASSISTANT INSTRUCTIONS",
-            cfg.get("instructions", ""),
+            (
+                run_instructions
+                if run_instructions is not None
+                else cfg.get("instructions", "")
+            ),
             "### OPERATIONAL PROTOCOLS",
             platform_instructions,
             "### AVAILABLE TOOLS",
@@ -374,6 +389,7 @@ class ContextMixin:
         agent_mode: bool = False,
         web_access: bool = True,
         deep_research: bool = True,
+        run_instructions: Optional[str] = None,
     ) -> Dict:
         cache = self.get_assistant_cache()
         cfg = await cache.retrieve(assistant_id)
@@ -411,7 +427,11 @@ class ContextMixin:
         content_blocks = [
             f"Today's date and time: {today}",
             "### ASSISTANT INSTRUCTIONS",
-            cfg.get("instructions", ""),
+            (
+                run_instructions
+                if run_instructions is not None
+                else cfg.get("instructions", "")
+            ),
             "### OPERATIONAL PROTOCOLS",
             platform_instructions,
             "### AVAILABLE TOOLS",
@@ -430,6 +450,7 @@ class ContextMixin:
         agent_mode: bool = False,
         web_access: bool = True,
         deep_research: bool = True,
+        run_instructions: Optional[str] = None,
     ) -> Dict:
         cache = self.get_assistant_cache()
         cfg = await cache.retrieve(assistant_id)
@@ -461,7 +482,11 @@ class ContextMixin:
         content_blocks = [
             f"Today's date and time: {today}",
             "### ASSISTANT INSTRUCTIONS",
-            cfg.get("instructions", ""),
+            (
+                run_instructions
+                if run_instructions is not None
+                else cfg.get("instructions", "")
+            ),
             "### OPERATIONAL PROTOCOLS",
             platform_instructions,
             "### AVAILABLE TOOLS",
@@ -479,6 +504,7 @@ class ContextMixin:
         decision_telemetry: bool = False,
         agent_mode: bool = False,
         web_access: bool = True,
+        run_instructions: Optional[str] = None,
     ) -> Dict:
         cache = self.get_assistant_cache()
         cfg = await cache.retrieve(assistant_id)
@@ -517,7 +543,11 @@ class ContextMixin:
         content_blocks = [
             f"Today's date and time: {today}",
             "### ASSISTANT INSTRUCTIONS",
-            cfg.get("instructions", ""),
+            (
+                run_instructions
+                if run_instructions is not None
+                else cfg.get("instructions", "")
+            ),
             "### OPERATIONAL PROTOCOLS",
             platform_instructions,
             "### AVAILABLE TOOLS",
@@ -547,6 +577,7 @@ class ContextMixin:
         research_worker: bool = False,
         junior_engineer: bool = False,
         tools_enabled: Optional[bool] = None,
+        run_instructions: Optional[str] = None,
     ) -> List[Dict]:
 
         # 1. Build the System Message  ← UNCHANGED
@@ -556,10 +587,13 @@ class ContextMixin:
             cache = self.get_assistant_cache()
             config = await cache.retrieve(assistant_id) or {}
 
+            if run_instructions is not None:
+                config = {**config, "instructions": run_instructions}
             system_msg = build_tool_free_system_message(config)
         elif engineer:
             system_msg = await self._build_senior_engineer_message(
                 assistant_id=assistant_id,
+                run_instructions=run_instructions,
                 decision_telemetry=decision_telemetry,
                 agent_mode=agent_mode,
                 web_access=web_access,
@@ -568,6 +602,7 @@ class ContextMixin:
         elif deep_research:
             system_msg = await self._build_research_supervisor_message(
                 assistant_id=assistant_id,
+                run_instructions=run_instructions,
                 decision_telemetry=decision_telemetry,
                 agent_mode=agent_mode,
                 web_access=web_access,
@@ -576,6 +611,7 @@ class ContextMixin:
         elif research_worker:
             system_msg = await self._build_research_worker_message(
                 assistant_id=assistant_id,
+                run_instructions=run_instructions,
                 decision_telemetry=decision_telemetry,
                 agent_mode=agent_mode,
                 web_access=web_access,
@@ -584,6 +620,7 @@ class ContextMixin:
         elif junior_engineer:
             system_msg = await self._build_junior_engineer_message(
                 assistant_id=assistant_id,
+                run_instructions=run_instructions,
                 decision_telemetry=decision_telemetry,
                 agent_mode=agent_mode,
                 web_access=web_access,
@@ -592,12 +629,14 @@ class ContextMixin:
         elif structured_tool_call:
             system_msg = await self._build_native_function_calls_system_message(
                 assistant_id=assistant_id,
+                run_instructions=run_instructions,
                 decision_telemetry=decision_telemetry,
                 web_access=web_access,
             )
         else:
             system_msg = await self._build_system_message(
                 assistant_id=assistant_id,
+                run_instructions=run_instructions,
                 decision_telemetry=decision_telemetry,
                 agent_mode=agent_mode,
                 web_access=web_access,

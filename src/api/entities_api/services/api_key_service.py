@@ -3,6 +3,7 @@ from typing import List, Optional, Tuple
 
 from fastapi import HTTPException, status
 from projectdavid_common import UtilsInterface, ValidationInterface
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from src.api.entities_api.models.models import ApiKey, User
@@ -144,6 +145,51 @@ class ApiKeyService:
         # Defensive guard: never expose a protected object even if
         # an unexpected query implementation returns one.
         return [key for key in keys if not key.is_protected]
+
+    def protect_existing_key(
+        self,
+        user_id: str,
+        key_prefix: str,
+    ) -> None:
+        """
+        Idempotently protect an existing active Core API key.
+
+        Called only through a trusted administrator endpoint.
+        Does not create, rotate, disclose, or revoke credentials.
+        """
+        try:
+            result = self.db.execute(
+                update(ApiKey)
+                .where(
+                    ApiKey.user_id == user_id,
+                    ApiKey.prefix == key_prefix,
+                    ApiKey.is_active.is_(True),
+                )
+                .values(is_protected=True)
+            )
+
+            if result.rowcount != 1:
+                self.db.rollback()
+                raise HTTPException(
+                    status_code=404,
+                    detail="Key not found.",
+                )
+
+            self.db.commit()
+
+        except HTTPException:
+            raise
+
+        except Exception as exc:
+            self.db.rollback()
+            logging_utility.error(
+                "Failed to protect service credential for user %s",
+                user_id,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="Unable to protect service credential.",
+            ) from exc
 
     def revoke_key(self, user_id: str, key_prefix: str) -> bool:
         """

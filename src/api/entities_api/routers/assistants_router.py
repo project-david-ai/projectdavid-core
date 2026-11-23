@@ -123,6 +123,7 @@ def update_assistant(
             assistant_id,
             assistant_update,
             user_id=auth_key.user_id,
+            is_protected_key=bool(auth_key.is_protected),
         )
     except HTTPException:
         raise

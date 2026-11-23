@@ -519,6 +519,7 @@ class AssistantService:
         assistant_id: str,
         assistant_update: validator.AssistantUpdate,
         user_id: str,
+        is_protected_key: bool = False,
     ) -> validator.AssistantRead:
         with SessionLocal() as db:
             db_asst = (
@@ -532,7 +533,18 @@ class AssistantService:
             if not db_asst:
                 raise HTTPException(404, "Assistant not found")
 
-            self._assert_owner(db_asst, user_id)
+            # The user's protected service key may configure their protected
+            # Playground assistant. Ordinary API keys cannot access it.
+            # Deletion remains blocked independently by _assert_owner.
+            if db_asst.is_protected:
+                if (
+                    not is_protected_key
+                    or db_asst.owner_id != user_id
+                    or db_asst.id != playground_assistant_id(user_id)
+                ):
+                    raise HTTPException(404, "Assistant not found")
+            else:
+                self._assert_owner(db_asst, user_id)
 
             try:
                 cache = get_sync_invalidator()

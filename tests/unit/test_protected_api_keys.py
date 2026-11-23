@@ -4,6 +4,7 @@ import pytest
 from fastapi import HTTPException
 
 from src.api.entities_api.models.models import ApiKey, User
+from src.api.entities_api.routers.admin_router import protect_service_key
 from src.api.entities_api.services.admin_provisioning_service import (
     AdminProvisioningService,
 )
@@ -216,3 +217,114 @@ def test_missing_user_still_returns_404():
         ApiKeyService(db).list_keys_for_user("missing-user")
 
     assert error.value.status_code == 404
+
+
+def test_protect_existing_key_is_scoped_and_repeatable():
+    db = MagicMock()
+    db.execute.return_value.rowcount = 1
+
+    service = ApiKeyService(db)
+
+    for _ in range(2):
+        assert (
+            service.protect_existing_key(
+                user_id="user_test",
+                key_prefix="ea_secret",
+            )
+            is None
+        )
+
+    assert db.execute.call_count == 2
+    assert db.commit.call_count == 2
+    db.rollback.assert_not_called()
+
+    statement = db.execute.call_args.args[0]
+    sql = str(statement).lower()
+    params = statement.compile().params
+
+    assert "update" in sql
+    assert "is_protected" in sql
+    assert "user_id" in sql
+    assert "prefix" in sql
+    assert "is_active" in sql
+
+    assert "user_test" in params.values()
+    assert "ea_secret" in params.values()
+    assert any(value is True for value in params.values())
+
+
+def test_protect_missing_or_inactive_key_returns_404():
+    db = MagicMock()
+    db.execute.return_value.rowcount = 0
+
+    with pytest.raises(HTTPException) as error:
+        ApiKeyService(db).protect_existing_key(
+            user_id="user_test",
+            key_prefix="ea_missing",
+        )
+
+    assert error.value.status_code == 404
+    db.rollback.assert_called_once()
+    db.commit.assert_not_called()
+
+
+def test_protect_database_failure_rolls_back():
+    db = MagicMock()
+    db.execute.side_effect = RuntimeError("database failure")
+
+    with pytest.raises(HTTPException) as error:
+        ApiKeyService(db).protect_existing_key(
+            user_id="user_test",
+            key_prefix="ea_secret",
+        )
+
+    assert error.value.status_code == 500
+    assert error.value.detail == ("Unable to protect service credential.")
+    db.rollback.assert_called_once()
+    db.commit.assert_not_called()
+
+
+@pytest.mark.parametrize("administrator_exists", [True, False])
+def test_protect_endpoint_rejects_unauthorized_admin(
+    administrator_exists,
+):
+    user = make_user() if administrator_exists else None
+
+    if user is not None:
+        user.is_admin = False
+
+    db = MagicMock()
+    db.query.return_value = query_returning(first=user)
+
+    with pytest.raises(HTTPException) as error:
+        protect_service_key(
+            target_user_id="user_test",
+            key_prefix="ea_secret",
+            db=db,
+            auth_key=make_key("ea_request"),
+        )
+
+    assert error.value.status_code == 403
+    db.execute.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_protect_endpoint_admin_success_returns_204():
+    administrator = make_user()
+    administrator.is_admin = True
+
+    db = MagicMock()
+    db.query.return_value = query_returning(first=administrator)
+    db.execute.return_value.rowcount = 1
+
+    response = protect_service_key(
+        target_user_id="user_target",
+        key_prefix="ea_secret",
+        db=db,
+        auth_key=make_key("ea_admin"),
+    )
+
+    assert response.status_code == 204
+    assert response.body == b""
+    db.execute.assert_called_once()
+    db.commit.assert_called_once()
