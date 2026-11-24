@@ -1,3 +1,15 @@
+# [1.64.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.63.1...v1.64.0) (2026-11-24)
+
+
+### Bug Fixes
+
+* **ci:** remove unused deep research config import ([c78c520](https://github.com/project-david-ai/projectdavid-core/commit/c78c5204a2fff22d469116c044e2ce5678fdfa37))
+
+
+### Features
+
+* **core:** enable protected Playground configuration and update runtime safeguards ([c5e1817](https://github.com/project-david-ai/projectdavid-core/commit/c5e1817b6d3f3b15508341580a4445efab370fb5))
+
 ## [1.63.1](https://github.com/project-david-ai/projectdavid-core/compare/v1.63.0...v1.63.1) (2026-11-23)
 
 
