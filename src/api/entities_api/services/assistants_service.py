@@ -133,15 +133,30 @@ def decode_cursor(cursor: str) -> tuple[int, str]:
         raise HTTPException(422, "Invalid assistant cursor") from None
 
 
-def summary_query(user_id: str, filters: SummaryFilters):
+def summary_query(
+    user_id: str,
+    filters: SummaryFilters,
+    is_protected_key: bool = False,
+):
     """Build a bounded, projected query without loading ORM relationships."""
     a = Assistant.__table__
     assoc = Assistant.users.property.secondary
 
     columns = [a.c[name] for name in AssistantSummary.model_fields]
+    visibility = a.c.is_protected.is_(False)
+    if is_protected_key:
+        visibility = or_(
+            visibility,
+            and_(
+                a.c.is_protected.is_(True),
+                a.c.owner_id == user_id,
+                a.c.id == playground_assistant_id(user_id),
+            ),
+        )
+
     conditions = [
         a.c.deleted_at.is_(None),
-        a.c.is_protected.is_(False),
+        visibility,
     ]
 
     if filters.assistant_id is not None:
@@ -276,12 +291,19 @@ class AssistantService:
         db,
         user_id: str,
         filters: SummaryFilters,
+        is_protected_key: bool = False,
     ) -> SummaryPage:
         """Return a bounded page of active assistants visible to this user.
         Apply ownership, filtering, and cursor pagination in SQL before
         serializing summary fields. The caller owns the database session.
         """
-        rows = db.execute(summary_query(user_id, filters)).mappings().all()
+        rows = (
+            db.execute(
+                summary_query(user_id, filters, is_protected_key=is_protected_key)
+            )
+            .mappings()
+            .all()
+        )
 
         has_more = len(rows) > filters.limit
 
@@ -456,6 +478,7 @@ class AssistantService:
         self,
         assistant_id: str,
         user_id: str,
+        is_protected_key: bool = False,
     ) -> validator.AssistantRead:
         """
         Fetch an assistant and enforce ownership.
@@ -479,7 +502,15 @@ class AssistantService:
                     detail="Assistant not found",
                 )
 
-            self._assert_owner(db_asst, user_id)
+            if db_asst.is_protected:
+                if (
+                    not is_protected_key
+                    or db_asst.owner_id != user_id
+                    or db_asst.id != playground_assistant_id(user_id)
+                ):
+                    raise HTTPException(404, "Assistant not found")
+            else:
+                self._assert_owner(db_asst, user_id)
 
             return self.map_to_read_model(db_asst)
 

@@ -71,6 +71,7 @@ def assistant_summaries(
         db=db,
         user_id=auth_key.user_id,
         filters=filters,
+        is_protected_key=bool(auth_key.is_protected),
     )
 
 
@@ -92,6 +93,7 @@ def retrieve_assistant(
         return service.retrieve_assistant(
             assistant_id,
             user_id=auth_key.user_id,
+            is_protected_key=bool(auth_key.is_protected),
         )
     except HTTPException:
         raise
@@ -243,11 +245,7 @@ def delete_assistant(
     except HTTPException:
         raise
     except Exception as exc:
-        logging_utility.error(
-            "Delete assistant error: %s",
-            exc,
-            exc_info=True,
-        )
+        logging_utility.error("Delete assistant error: %s", exc, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Unexpected error",
