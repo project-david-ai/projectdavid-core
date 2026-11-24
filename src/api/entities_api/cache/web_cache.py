@@ -1,5 +1,7 @@
 # src/api/entities_api/cache/web_cache.py
 import asyncio
+import base64
+import binascii
 import hashlib
 import json
 import os
@@ -24,6 +26,24 @@ REDIS_WEB_TTL = int(os.getenv("REDIS_WEB_TTL_SECONDS", "3600"))
 # ✅ ADD: Default Redis URL from your docker-compose environment
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 
+FAVICON_DATA_PREFIX = "data:image/png;base64,"
+MAX_FAVICON_DATA_LENGTH = 8192
+
+
+def _valid_favicon(value: object) -> bool:
+    """Accept only bounded PNG data URIs; the resolver owns image decoding."""
+    if (
+        not isinstance(value, str)
+        or len(value) > MAX_FAVICON_DATA_LENGTH
+        or not value.startswith(FAVICON_DATA_PREFIX)
+    ):
+        return False
+    try:
+        payload = base64.b64decode(value[len(FAVICON_DATA_PREFIX) :], validate=True)
+    except (ValueError, binascii.Error):
+        return False
+    return payload.startswith(b"\x89PNG\r\n\x1a\n")
+
 
 class WebSessionCache:
     """
@@ -42,6 +62,38 @@ class WebSessionCache:
         """
         url_hash = hashlib.md5(url.encode("utf-8"), usedforsecurity=False).hexdigest()
         return f"web_session:{url_hash}"
+
+    def _favicon_key(self, url: str) -> str:
+        # Exact page URL, not a shared origin: declared icons may differ by page.
+        return f"web_favicon:{hashlib.sha256(url.encode('utf-8')).hexdigest()}"
+
+    async def get_favicon(self, url: str) -> Optional[str]:
+        key = self._favicon_key(url)
+        if isinstance(self.redis, AsyncRedis):
+            raw = await self.redis.get(key)
+        else:
+            raw = await asyncio.to_thread(self.redis.get, key)
+        if isinstance(raw, bytes):
+            try:
+                raw = raw.decode("ascii")
+            except UnicodeDecodeError:
+                return None
+        return raw if _valid_favicon(raw) else None
+
+    async def save_favicon(self, url: str, favicon: Optional[str]) -> None:
+        key = self._favicon_key(url)
+        if favicon is None:
+            if isinstance(self.redis, AsyncRedis):
+                await self.redis.delete(key)
+            else:
+                await asyncio.to_thread(self.redis.delete, key)
+            return
+        if not _valid_favicon(favicon):
+            return
+        if isinstance(self.redis, AsyncRedis):
+            await self.redis.set(key, favicon, ex=REDIS_WEB_TTL)
+        else:
+            await asyncio.to_thread(self.redis.set, key, favicon, ex=REDIS_WEB_TTL)
 
     async def get_session(self, url: str) -> Optional[Dict]:
         """Retrieves the full session data (all chunks) for a URL."""

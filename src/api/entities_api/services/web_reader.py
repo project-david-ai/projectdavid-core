@@ -1,14 +1,20 @@
 # src/api/entities_api/services/web_reader.py
+import asyncio
 import logging
 import os
 import re
-from typing import List
+from typing import List, Optional
 
 import html2text
 from playwright.async_api import async_playwright
 
 # Import your cache class
 from src.api.entities_api.cache.web_cache import WebSessionCache
+from src.api.entities_api.services.favicon_resolver import (
+    favicon_enabled,
+    favicon_origin,
+    resolve_favicon,
+)
 
 logger = logging.getLogger("UniversalWebReader")
 
@@ -18,9 +24,9 @@ class UniversalWebReader:
     The 'Eyes' of the agent.
 
     ARCHITECTURE CHANGE:
-    This service no longer executes local 'curl' or 'requests'.
-    It strictly offloads all fetching to the 'browserless/chromium' container
+    Page content is fetched by the 'browserless/chromium' container
     via WebSocket (CDP). This keeps the API container secure and lightweight.
+    Optional favicon metadata is retrieved separately by the bounded resolver.
     """
 
     def __init__(self, cache_service: WebSessionCache):
@@ -92,6 +98,42 @@ class UniversalWebReader:
     async def search(self, url: str, query: str) -> str:
         logger.info(f"🔍 Searching {url} for query: '{query}'")
         return await self.cache.search_session(url, query)
+
+    async def get_favicon(self, url: str) -> Optional[str]:
+        """Return cached presentation metadata without fetching a page or icon."""
+        if not favicon_enabled() or favicon_origin(url) is None:
+            return None
+        try:
+            return await asyncio.wait_for(self.cache.get_favicon(url), timeout=0.25)
+        except Exception:
+            return None
+
+    async def _cache_page_favicon(
+        self, requested_url: str, final_url: str, declared_icon: Optional[str]
+    ) -> None:
+        """Best-effort side channel; never alter the agent-facing content."""
+        if not favicon_enabled():
+            return
+        try:
+            origin = favicon_origin(requested_url)
+            if origin is None:
+                return
+            if favicon_origin(final_url) != origin:
+                # Do not label the requested host with a different site's icon.
+                await asyncio.wait_for(
+                    self.cache.save_favicon(requested_url, None), timeout=0.25
+                )
+                return
+            if await self.get_favicon(requested_url) is not None:
+                return
+            icon = await resolve_favicon(final_url, declared_icon)
+            if icon is not None:
+                await asyncio.wait_for(
+                    self.cache.save_favicon(requested_url, icon), timeout=0.25
+                )
+        except Exception:
+            # Metadata/cache failures cannot fail the web reader.
+            return
 
     # --- INTERNAL HELPERS ---
 
@@ -190,7 +232,9 @@ class UniversalWebReader:
                         title: document.title,
                         image: getMeta('og:image') || getMeta('twitter:image'),
                         description: getMeta('og:description') || getMeta('description'),
-                        site_name: getMeta('og:site_name')
+                        site_name: getMeta('og:site_name'),
+                        page_url: location.href,
+                        favicon: document.querySelector('link[rel~="icon" i]')?.href || ''
                     }
                 }"""
                 )
@@ -241,6 +285,11 @@ class UniversalWebReader:
                     rich_header += f"> *{metadata['description']}*\n\n"
 
                 full_content = f"# {metadata['title']}\n\n{rich_header}{markdown_body}"
+
+                if favicon_enabled() and len(full_content.strip()) >= 50:
+                    await self._cache_page_favicon(
+                        url, metadata.get("page_url", ""), metadata.get("favicon")
+                    )
 
                 return full_content
 

@@ -782,6 +782,10 @@ class NativeExecutionService:
         LOG.info(f"NativeExec ▸ read_url: {url} (force_refresh={force_refresh})")
         return await self.web_reader.read(url, force_refresh=force_refresh)
 
+    async def get_web_favicon(self, url: str) -> Optional[str]:
+        """Return cached web presentation metadata without network retrieval."""
+        return await self.web_reader.get_favicon(url)
+
     async def scroll_url(self, url: str, page: int) -> str:
         LOG.info(f"NativeExec ▸ scroll_url: {url} page={page}")
         return await self.web_reader.scroll(url, page)

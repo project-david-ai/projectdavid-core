@@ -682,6 +682,16 @@ class DelegationMixin:
                     if event.tool is not None:
                         payload["tool"] = event.tool
 
+                    # Preserve nested delegation provenance; older SDK events
+                    # fall back to the actual immediate child Run identity.
+                    payload["origin_run_id"] = (
+                        getattr(event, "origin_run_id", None) or ephemeral_run.id
+                    )
+                    for field in ("tool_call_id", "url", "favicon"):
+                        value = getattr(event, field, None)
+                        if value is not None:
+                            payload[field] = value
+
                     yield json.dumps(payload)
                     continue
 

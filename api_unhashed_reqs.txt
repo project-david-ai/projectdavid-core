@@ -20,7 +20,7 @@ transformers>=4.33.0,<5.0.0
 
 # ------------------------------------------------------------------ #
 # Internal packages
-projectdavid[embeddings]>=1.113.1
+projectdavid[embeddings]>=1.117.1
 # <--Depends on projectdavid-orm
 projectdavid-services>=1.2.0
 projectdavid-orm>=1.17.0
@@ -30,6 +30,7 @@ projectdavid-common>=0.80.0
 html2text>=2024.2.26
 playwright>=1.41.0
 requests>=2.31.0
+Pillow==13.0.0
 
 #sandbox sec
 jwt
