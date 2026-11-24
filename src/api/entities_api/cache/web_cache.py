@@ -7,7 +7,6 @@ import json
 import os
 from typing import Dict, Optional, Union
 
-from fastapi import Depends
 from redis import Redis as SyncRedis
 
 try:
