@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from projectdavid_common import ValidationInterface
 from projectdavid_common.schemas.api_key_schemas import (
     ApiKeyCreateRequest,
@@ -152,3 +152,37 @@ def admin_create_api_key_for_user(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Admin failed to create API key for user {target_user_id}: An internal error occurred.",
         )
+
+
+@admin_router.put(
+    "/users/{target_user_id}/keys/{key_prefix}/protection",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def protect_service_key(
+    target_user_id: str,
+    key_prefix: str,
+    db: Session = Depends(get_db),
+    auth_key: ApiKeyModel = Depends(get_api_key),
+):
+    """
+    Protect an existing active service credential.
+
+    Administrator-only.
+    Repeatable without changing the credential identity.
+    """
+    requesting_user = (
+        db.query(UserModel).filter(UserModel.id == auth_key.user_id).first()
+    )
+
+    if not requesting_user or not requesting_user.is_admin:
+        raise HTTPException(
+            status_code=403,
+            detail="Admin privileges required.",
+        )
+
+    ApiKeyService(db).protect_existing_key(
+        user_id=target_user_id,
+        key_prefix=key_prefix,
+    )
+
+    return Response(status_code=204)

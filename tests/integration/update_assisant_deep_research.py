@@ -1,6 +1,5 @@
 import os
 
-from config_orc_fc import config
 from dotenv import load_dotenv
 from projectdavid import Entity
 
@@ -22,8 +21,8 @@ update_assistant = client.assistants.update_assistant(
     assistant_id=os.getenv("ASSISTANT_ID"),
     agent_mode=False,
     decision_telemetry=False,
-    web_access=False,
-    deep_research=False,
+    web_access=True,
+    deep_research=True,
     engineer=False,
 )
 

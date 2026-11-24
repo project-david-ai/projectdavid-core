@@ -270,8 +270,10 @@ class DeepSeekBaseWorker(
             # ------------------------------------------------------------------
             # CAPTURE REAL USER ID
             # ------------------------------------------------------------------
+            run_instructions = None
             try:
                 run = await self._native_exec.retrieve_run(run_id)
+                run_instructions = run.instructions
                 self._run_user_id = run.user_id
 
                 meta = run.meta_data or {}
@@ -324,6 +326,12 @@ class DeepSeekBaseWorker(
             ctx = await self._set_up_context_window(
                 assistant_id=self.assistant_id,
                 thread_id=thread_id,
+                # Use the persisted Run snapshot without mutating the assistant cache.
+                run_instructions=(
+                    run_instructions
+                    if self.assistant_id == _original_assistant_id
+                    else None
+                ),
                 trunk=True,
                 force_refresh=force_refresh,
                 agent_mode=agent_mode_setting,
