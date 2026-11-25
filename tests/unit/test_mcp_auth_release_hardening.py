@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import socket
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
@@ -346,6 +347,7 @@ def test_discovery_router_uses_typed_pydantic_response() -> None:
 
 def test_real_bearer_discovery_attachment_and_execution(
     session_factory: sessionmaker,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def exercise() -> None:
         token = "auth1c-real-loopback-secret"
@@ -358,6 +360,11 @@ def test_real_bearer_discovery_attachment_and_execution(
         )
 
         async with _serve(_secured_mcp_server(token)) as url:
+            # Explicit, test-local sovereign exception for the ephemeral listener.
+            monkeypatch.setenv(
+                "PROJECT_DAVID_MCP_PRIVATE_ORIGINS",
+                json.dumps({url.rsplit("/", 1)[0]: ["127.0.0.1/32"]}),
+            )
             registration = service.register_server(
                 validator.McpServerRegistrationCreate(
                     name=("secure-loopback"),

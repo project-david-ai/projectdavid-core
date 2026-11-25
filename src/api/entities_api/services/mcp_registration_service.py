@@ -18,10 +18,15 @@ from projectdavid_orm.projectdavid_orm.models import (
     Credential,
     McpServerRegistration,
 )
+from pydantic import SecretStr
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 
 from src.api.entities_api.db.database import SessionLocal
 from src.api.entities_api.models.models import Assistant
+from src.api.entities_api.orchestration.mcp_outbound_transport import (
+    McpOutboundTransport,
+)
 from src.api.entities_api.orchestration.mcp_remote_client import RemoteMcpClient
 from src.api.entities_api.orchestration.mcp_tool_discovery import (
     McpDiscoveredTool,
@@ -31,6 +36,7 @@ from src.api.entities_api.orchestration.mcp_tool_discovery import (
 )
 from src.api.entities_api.orchestration.mcp_tool_executor import McpToolExecutor
 from src.api.entities_api.orchestration.tool_abi import ToolDefinition
+from src.api.entities_api.services.assistants_service import playground_assistant_id
 from src.api.entities_api.services.credential_service import (
     CredentialConfigurationError,
     CredentialResolutionError,
@@ -92,7 +98,7 @@ class McpRegistrationService:
         auth_type: str,
         credential_id: str | None,
     ) -> AsyncIterator[RemoteMcpClient]:
-        http_client: httpx2.AsyncClient | None = None
+        headers: dict[str, str] = {}
 
         if auth_type == "bearer":
             if credential_id is None:
@@ -115,14 +121,25 @@ class McpRegistrationService:
             if not isinstance(token, str) or not token:
                 raise RuntimeError("MCP authentication is unavailable")
 
-            http_client = httpx2.AsyncClient(
-                headers={
-                    "Authorization": f"Bearer {token}",
-                }
-            )
+            headers["Authorization"] = f"Bearer {token}"
         elif auth_type != "none":
             raise RuntimeError("Unsupported MCP authentication configuration")
 
+        # Every discovery and runtime connection uses the same egress policy,
+        # including unauthenticated registrations. The SDK borrows this client.
+        transport = McpOutboundTransport(
+            url,
+            resolution_timeout=min(timeout_seconds, 10.0),
+        )
+        http_client = httpx2.AsyncClient(
+            headers=headers,
+            transport=transport,
+            trust_env=False,
+            follow_redirects=False,
+            timeout=httpx2.Timeout(
+                timeout_seconds, read=300.0, connect=min(timeout_seconds, 10.0)
+            ),
+        )
         try:
             async with self._client_factory(
                 url,
@@ -131,8 +148,7 @@ class McpRegistrationService:
             ) as client:
                 yield client
         finally:
-            if http_client is not None:
-                await http_client.aclose()
+            await http_client.aclose()
 
     @staticmethod
     def _normalize_url(url: object) -> str:
@@ -231,11 +247,56 @@ class McpRegistrationService:
             )
 
     @staticmethod
+    def _can_access_protected_assistant(
+        assistant: Assistant,
+        *,
+        user_id: str,
+        is_protected_key: bool,
+    ) -> bool:
+        # Match AssistantService's protected Playground authorization.
+        return (
+            is_protected_key
+            and assistant.owner_id == user_id
+            and assistant.id == playground_assistant_id(user_id)
+        )
+
+    @staticmethod
+    def _assert_registration_mutation_allowed(
+        db: Any,
+        *,
+        assistant_ids: set[str],
+        user_id: str,
+        is_protected_key: bool,
+    ) -> None:
+        if not assistant_ids:
+            return
+
+        protected_assistants = (
+            db.query(Assistant)
+            .filter(
+                Assistant.id.in_(assistant_ids),
+                Assistant.is_protected.is_(True),
+            )
+            .all()
+        )
+        for assistant in protected_assistants:
+            if not McpRegistrationService._can_access_protected_assistant(
+                assistant,
+                user_id=user_id,
+                is_protected_key=is_protected_key,
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail="MCP server cannot be modified with this API key",
+                )
+
+    @staticmethod
     def _owned_assistant(
         db: Any,
         *,
         assistant_id: str,
         user_id: str,
+        is_protected_key: bool = False,
     ) -> Assistant:
         assistant = (
             db.query(Assistant)
@@ -252,10 +313,18 @@ class McpRegistrationService:
                 detail="Assistant not found",
             )
 
-        McpRegistrationService._assert_assistant_owner(
-            assistant,
-            user_id,
-        )
+        if assistant.is_protected:
+            if not McpRegistrationService._can_access_protected_assistant(
+                assistant,
+                user_id=user_id,
+                is_protected_key=is_protected_key,
+            ):
+                raise HTTPException(404, "Assistant not found")
+        else:
+            McpRegistrationService._assert_assistant_owner(
+                assistant,
+                user_id,
+            )
 
         return assistant
 
@@ -266,15 +335,17 @@ class McpRegistrationService:
         server_id: str,
         user_id: str,
         require_enabled: bool = False,
+        lock: bool = False,
     ) -> McpServerRegistration:
-        registration = (
-            db.query(McpServerRegistration)
-            .filter(
-                McpServerRegistration.id == server_id,
-                McpServerRegistration.owner_id == user_id,
-            )
-            .first()
+        query = db.query(McpServerRegistration).filter(
+            McpServerRegistration.id == server_id,
+            McpServerRegistration.owner_id == user_id,
         )
+        if lock:
+            # Serialize registration mutation with attachment writes. Acquire
+            # before reading attachment state in the write transaction.
+            query = query.with_for_update()
+        registration = query.first()
 
         if registration is None:
             raise HTTPException(
@@ -448,6 +519,7 @@ class McpRegistrationService:
         server_id: str,
         registration: validator.McpServerRegistrationUpdate,
         user_id: str,
+        is_protected_key: bool = False,
     ) -> validator.McpServerRegistrationRead:
         """Update mutable registration configuration."""
 
@@ -484,6 +556,7 @@ class McpRegistrationService:
                 db,
                 server_id=server_id,
                 user_id=user_id,
+                lock=True,
             )
 
             attachments = (
@@ -493,6 +566,12 @@ class McpRegistrationService:
             )
 
             assistant_ids = {attachment.assistant_id for attachment in attachments}
+            self._assert_registration_mutation_allowed(
+                db,
+                assistant_ids=assistant_ids,
+                user_id=user_id,
+                is_protected_key=is_protected_key,
+            )
 
             for field in (
                 "name",
@@ -519,11 +598,89 @@ class McpRegistrationService:
 
         return result
 
+    def rotate_server_credential(
+        self,
+        *,
+        server_id: str,
+        user_id: str,
+        token: SecretStr,
+        is_protected_key: bool = False,
+    ) -> validator.McpServerRegistrationRead:
+        """Explicitly replace a bearer token without changing tool bindings."""
+        plaintext = token.get_secret_value()
+        if not plaintext or any(not 33 <= ord(char) <= 126 for char in plaintext):
+            raise HTTPException(422, "Invalid MCP bearer token")
+
+        with self._session_factory() as db:
+            row = self._owned_registration(
+                db, server_id=server_id, user_id=user_id, lock=True
+            )
+            attachments = (
+                db.query(AssistantMcpTool)
+                .filter(AssistantMcpTool.registration_id == row.id)
+                .all()
+            )
+            assistant_ids = {attachment.assistant_id for attachment in attachments}
+            self._assert_registration_mutation_allowed(
+                db,
+                assistant_ids=assistant_ids,
+                user_id=user_id,
+                is_protected_key=is_protected_key,
+            )
+            if row.auth_type != "bearer":
+                raise HTTPException(
+                    409, "MCP server does not use bearer authentication"
+                )
+            if row.credential_id is None:
+                raise HTTPException(409, "MCP credential reference is missing")
+
+            # Do not rotate a shared credential through a single registration.
+            # Normal registration creation always allocates its own credential.
+            shared = (
+                db.query(McpServerRegistration.id)
+                .filter(
+                    McpServerRegistration.credential_id == row.credential_id,
+                    McpServerRegistration.id != row.id,
+                )
+                .first()
+            )
+            if shared is not None:
+                raise HTTPException(409, "MCP credential is shared by registrations")
+
+            try:
+                self._credential_service.replace_in_session(
+                    db=db,
+                    credential_id=row.credential_id,
+                    user_id=user_id,
+                    expected_kind="bearer",
+                    payload={"token": plaintext},
+                )
+            except CredentialConfigurationError:
+                db.rollback()
+                raise HTTPException(
+                    503, "MCP credential storage is unavailable"
+                ) from None
+            except CredentialResolutionError:
+                db.rollback()
+                raise HTTPException(
+                    409, "MCP credential reference is invalid"
+                ) from None
+
+            row.updated_at = func.now()
+            db.commit()
+            db.refresh(row)
+            result = self._registration_read(row)
+
+        for assistant_id in assistant_ids:
+            self._invalidate_assistant_cache(assistant_id)
+        return result
+
     def delete_server(
         self,
         *,
         server_id: str,
         user_id: str,
+        is_protected_key: bool = False,
     ) -> None:
         """Delete a registration and its assistant-facing capabilities."""
 
@@ -534,6 +691,7 @@ class McpRegistrationService:
                 db,
                 server_id=server_id,
                 user_id=user_id,
+                lock=True,
             )
 
             credential_id = registration.credential_id
@@ -542,6 +700,13 @@ class McpRegistrationService:
                 db.query(AssistantMcpTool)
                 .filter(AssistantMcpTool.registration_id == registration.id)
                 .all()
+            )
+
+            self._assert_registration_mutation_allowed(
+                db,
+                assistant_ids={attachment.assistant_id for attachment in attachments},
+                user_id=user_id,
+                is_protected_key=is_protected_key,
             )
 
             aliases_by_assistant: dict[
@@ -845,6 +1010,7 @@ class McpRegistrationService:
         assistant_id: str,
         attachment: validator.AssistantMcpToolsAttach,
         user_id: str,
+        is_protected_key: bool = False,
         _retry_on_integrity: bool = True,
     ) -> list[validator.AssistantMcpToolRead]:
         """Attach selected remote MCP tools and inject function definitions."""
@@ -856,6 +1022,7 @@ class McpRegistrationService:
                 db,
                 assistant_id=assistant_id,
                 user_id=user_id,
+                is_protected_key=is_protected_key,
             )
 
             registration = self._owned_registration(
@@ -926,17 +1093,19 @@ class McpRegistrationService:
 
         try:
             with self._session_factory() as db:
-                assistant = self._owned_assistant(
-                    db,
-                    assistant_id=assistant_id,
-                    user_id=user_id,
-                )
-
                 registration = self._owned_registration(
                     db,
                     server_id=attachment.server_id,
                     user_id=user_id,
                     require_enabled=True,
+                    lock=True,
+                )
+
+                assistant = self._owned_assistant(
+                    db,
+                    assistant_id=assistant_id,
+                    user_id=user_id,
+                    is_protected_key=is_protected_key,
                 )
 
                 rows = (
@@ -1043,6 +1212,7 @@ class McpRegistrationService:
                     assistant_id=assistant_id,
                     attachment=attachment,
                     user_id=user_id,
+                    is_protected_key=is_protected_key,
                     _retry_on_integrity=False,
                 )
 
@@ -1061,22 +1231,25 @@ class McpRegistrationService:
         assistant_id: str,
         attachment: validator.AssistantMcpToolsDetach,
         user_id: str,
+        is_protected_key: bool = False,
     ) -> None:
         """Detach selected MCP tools; already-detached tools are a no-op."""
 
         requested_names = tuple(attachment.tools)
 
         with self._session_factory() as db:
-            assistant = self._owned_assistant(
-                db,
-                assistant_id=assistant_id,
-                user_id=user_id,
-            )
-
             registration = self._owned_registration(
                 db,
                 server_id=attachment.server_id,
                 user_id=user_id,
+                lock=True,
+            )
+
+            assistant = self._owned_assistant(
+                db,
+                assistant_id=assistant_id,
+                user_id=user_id,
+                is_protected_key=is_protected_key,
             )
 
             rows = (
@@ -1110,6 +1283,7 @@ class McpRegistrationService:
         *,
         assistant_id: str,
         user_id: str,
+        is_protected_key: bool = False,
     ) -> list[validator.AssistantMcpToolRead]:
         """List durable MCP attachments for an owned assistant."""
 
@@ -1118,6 +1292,7 @@ class McpRegistrationService:
                 db,
                 assistant_id=assistant_id,
                 user_id=user_id,
+                is_protected_key=is_protected_key,
             )
 
             rows = (

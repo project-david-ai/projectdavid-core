@@ -3,15 +3,18 @@
 import asyncio
 import base64
 import io
-import ipaddress
 import os
 import re
-import socket
 from typing import Optional
 from urllib.parse import urljoin, urlsplit
 
 import httpx
 from PIL import Image
+
+from src.api.entities_api.services.outbound_network_policy import (
+    public_address,
+    resolve_addresses,
+)
 
 MAX_DOWNLOAD = 256 * 1024
 MAX_DIMENSION = 512
@@ -86,51 +89,11 @@ def favicon_candidate(
 
 
 def _public_address(value: str) -> bool:
-    try:
-        address = ipaddress.ip_address(value)
-    except ValueError:
-        return False
-    if (
-        not address.is_global
-        or address.is_multicast
-        or address.is_reserved
-        or address.is_unspecified
-        or address.is_loopback
-        or address.is_link_local
-    ):
-        return False
-    if isinstance(address, ipaddress.IPv6Address):
-        # Exclude transition mechanisms and scoped addresses. Restrict IPv6 to
-        # ordinary global unicast; IPv4-embedded destinations are not needed.
-        if (
-            address.scope_id
-            or address.ipv4_mapped
-            or address.sixtofour
-            or address.teredo
-        ):
-            return False
-        if (
-            address not in ipaddress.IPv6Network("2000::/3")
-            or address in ipaddress.IPv6Network("2001::/23")
-            or address in ipaddress.IPv6Network("3fff::/20")
-        ):
-            return False
-    elif address in ipaddress.IPv4Network(
-        "192.0.0.0/24"
-    ) or address in ipaddress.IPv4Network("192.88.99.0/24"):
-        return False
-    return True
+    return public_address(value)
 
 
 async def _resolve_public(host: str) -> Optional[str]:
-    records = await asyncio.get_running_loop().getaddrinfo(
-        host,
-        443,
-        family=socket.AF_UNSPEC,
-        type=socket.SOCK_STREAM,
-        proto=socket.IPPROTO_TCP,
-    )
-    addresses = [record[4][0] for record in records]
+    addresses = await resolve_addresses(host, 443)
     if not addresses or not all(_public_address(address) for address in addresses):
         return None
     # Pin one verified address; never let the HTTP layer resolve the hostname again.
