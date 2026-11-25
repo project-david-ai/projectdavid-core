@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 
 from src.api.entities_api.db.database import SessionLocal
 from src.api.entities_api.models.models import Assistant, User, VectorStore
+from src.api.entities_api.services.erasure_state import require_mutable_user
 from src.api.entities_api.services.logging_service import LoggingUtility
 from src.api.entities_api.services.mcp_tool_config import (
     merge_user_tools_preserving_managed,
@@ -38,6 +39,7 @@ def playground_assistant_id(user_id: str) -> str:
 
 
 class SummaryFilters(BaseModel):
+    include_playground: bool = True
     limit: int = Field(default=50, ge=1, le=100)
     cursor: str | None = Field(
         default=None,
@@ -144,7 +146,7 @@ def summary_query(
 
     columns = [a.c[name] for name in AssistantSummary.model_fields]
     visibility = a.c.is_protected.is_(False)
-    if is_protected_key:
+    if is_protected_key and filters.include_playground:
         visibility = or_(
             visibility,
             and_(
@@ -419,10 +421,7 @@ class AssistantService:
         assistant_id = playground_assistant_id(user_id)
 
         with SessionLocal() as db:
-            user = db.query(User).filter(User.id == user_id).first()
-            if user is None:
-                raise HTTPException(404, "User not found")
-
+            require_mutable_user(db, user_id)
             existing = db.query(Assistant).filter(Assistant.id == assistant_id).first()
 
             if existing is not None:
@@ -461,6 +460,8 @@ class AssistantService:
             except IntegrityError:
                 db.rollback()
 
+                # Reacquire the erasure fence after rolling back the transaction.
+                require_mutable_user(db, user_id)
                 # A concurrent request may have inserted the same ID.
                 existing = (
                     db.query(Assistant).filter(Assistant.id == assistant_id).first()
