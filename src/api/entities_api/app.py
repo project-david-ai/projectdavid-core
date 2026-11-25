@@ -1,9 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from projectdavid_common import UtilsInterface
-from projectdavid_orm.projectdavid_orm.base import Base
 
-from src.api.entities_api.db.database import engine, wait_for_databases
+from src.api.entities_api.db.database import wait_for_databases
 from src.api.entities_api.observability.tracing import setup_tracing
 from src.api.entities_api.routers import api_router
 from src.api.entities_api.services.credential_service import CredentialService
