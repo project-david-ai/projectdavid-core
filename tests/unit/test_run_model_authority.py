@@ -40,6 +40,11 @@ def _run_request(model=None, resources=None):
 
 def _create_run_with_mock_db(monkeypatch, *, override, default, resources=None):
     db = MagicMock()
+    # The account exists and has no erasure receipt.
+    db.execute.return_value.scalar_one_or_none.side_effect = [
+        SimpleNamespace(id="user_1"),
+        None,
+    ]
     db_ctx = MagicMock()
     db_ctx.__enter__.return_value = db
 
@@ -174,6 +179,7 @@ def _run_stateful_with_mocks(
     *,
     stream=False,
     status="queued",
+    response_consumer=None,
 ):
     run = SimpleNamespace(
         id="run_1",
@@ -253,6 +259,9 @@ def _run_stateful_with_mocks(
                 redis=MagicMock(),
                 project_api_key="project-key",
             )
+
+            if response_consumer is not None:
+                return await response_consumer(response)
 
             if stream:
                 response_chunks = [chunk async for chunk in response.body_iterator]
@@ -457,3 +466,85 @@ def test_research_delegation_persists_model_before_child_stream():
         for event in events
         if event.get("type") == "research_status"
     )
+
+
+def test_buffered_error_closes_execution_before_returning():
+    invoke, selector, _, _, _ = _run_stateful_with_mocks(
+        "together-ai/base-model", "together-ai/base-model"
+    )
+    finalized = []
+
+    async def worker(**kwargs):
+        try:
+            yield {"type": "error", "message": "inference failed"}
+            pytest.fail("Buffered execution must stop consuming after an error")
+        finally:
+            finalized.append(True)
+
+    selector.select_provider.return_value = (
+        SimpleNamespace(process_conversation=worker),
+        "provider-model",
+    )
+
+    async def check():
+        with pytest.raises(HTTPException) as error:
+            await invoke()
+        assert error.value.status_code == 500
+        assert error.value.detail == "inference failed"
+        # Assert before asyncio.run() can finalize orphaned generators.
+        assert finalized == [True]
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize("exit_path", ["explicit-close", "send-failure", "cancel"])
+def test_stream_shutdown_closes_suspended_execution(exit_path):
+    finalized = []
+
+    async def worker(**kwargs):
+        try:
+            yield {"type": "content", "content": "first chunk"}
+            pytest.fail("Execution must not resume after the consumer stops")
+        finally:
+            await asyncio.sleep(0)
+            finalized.append(True)
+
+    async def consume(response):
+        if exit_path == "explicit-close":
+            first = await anext(response.body_iterator)
+            assert "first chunk" in first
+            await response.body_iterator.aclose()
+        elif exit_path == "send-failure":
+
+            async def send(message):
+                if message["type"] == "http.response.body":
+                    raise OSError("client disconnected")
+
+            with pytest.raises(OSError, match="client disconnected"):
+                await response.stream_response(send)
+        else:
+            from anyio import CancelScope
+
+            with CancelScope() as scope:
+
+                async def send(message):
+                    if message["type"] == "http.response.body":
+                        scope.cancel()
+                        await asyncio.sleep(0)
+
+                await response.stream_response(send)
+
+        # Assert before event-loop shutdown can run delayed finalizers.
+        assert finalized == [True]
+
+    invoke, selector, _, _, _ = _run_stateful_with_mocks(
+        "together-ai/base-model",
+        "together-ai/base-model",
+        stream=True,
+        response_consumer=consume,
+    )
+    selector.select_provider.return_value = (
+        SimpleNamespace(process_conversation=worker),
+        "provider-model",
+    )
+    asyncio.run(invoke())

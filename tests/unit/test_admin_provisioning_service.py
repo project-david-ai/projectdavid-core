@@ -25,14 +25,21 @@ class TestAdminProvisioningService:
             oauth_provider="project-black-bird",
             provider_user_id="usr_local",
         )
+
         stale = ApiKey(
             key_name="project-black-bird",
             hashed_key="old-hash",
             prefix="ea_old12",
             user_id=user.id,
             is_active=True,
+            is_protected=False,
         )
+
         db = MagicMock()
+
+        # Existing account has no pending or completed erasure receipt.
+        db.execute.return_value.scalar_one_or_none.return_value = None
+
         db.query.side_effect = [
             query_returning(first=user),
             query_returning(first=user),
@@ -52,13 +59,19 @@ class TestAdminProvisioningService:
         assert result.keys_revoked == 1
         assert stale.is_active is False
         assert result.api_key.is_active is True
+        assert result.api_key.is_protected is False
         assert result.api_key.user_id == user.id
         assert result.api_key.key_name == "project-black-bird"
         assert result.plain_key.startswith("ea_")
+        assert result.user.full_name == "Current Name"
+
+        db.execute.assert_called_once()
         db.commit.assert_called_once()
+        db.rollback.assert_not_called()
 
     def test_creates_verified_mapped_user(self) -> None:
         db = MagicMock()
+
         db.query.side_effect = [
             query_returning(first=None),
             query_returning(first=None),
@@ -79,4 +92,9 @@ class TestAdminProvisioningService:
         assert result.user.oauth_provider == "project-black-bird"
         assert result.user.provider_user_id == "usr_blackbird"
         assert result.keys_revoked == 0
+        assert result.api_key.is_active is True
+        assert result.api_key.is_protected is False
+
+        db.execute.assert_not_called()
         db.commit.assert_called_once()
+        db.rollback.assert_not_called()

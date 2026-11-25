@@ -10,21 +10,22 @@ import traceback
 
 from dotenv import load_dotenv
 from fastapi import WebSocket
-from projectdavid import Entity
+from sandbox.services.core_artifacts import create_workspace, upload_artifact
 from sandbox.services.logging_service import LoggingUtility
 
 load_dotenv()
 
 
 class StreamingCodeExecutionHandler:
-    def __init__(self):
+    def __init__(self, owner_id: str):
         self.logging_utility = LoggingUtility()
         self.active_processes = {}
 
         # ───────────────────────── DIRS ──────────────────────────
         self.root_dir = os.getcwd()
-        self.generated_files_dir = os.path.abspath(
-            os.path.join(self.root_dir, "generated_files")
+        self.owner_id = owner_id
+        self.generated_files_dir = create_workspace(
+            os.path.join(self.root_dir, "account_executions"), owner_id
         )
         self.mpl_cache_dir = os.path.abspath(os.path.join(self.root_dir, "mpl_cache"))
 
@@ -108,10 +109,12 @@ class StreamingCodeExecutionHandler:
         return self.required_imports + "\n" + code
 
     async def execute_code_streaming(
-        self, websocket: WebSocket, code: str, user_id: str = "test_user"
+        self, websocket: WebSocket, code: str, user_id: str
     ) -> None:
         tmp_path = None
         try:
+            if user_id != self.owner_id:
+                raise ValueError("Sandbox execution owner mismatch.")
             full_code = self.normalize_code(code)
 
             # Syntax Check before execution
@@ -192,6 +195,10 @@ class StreamingCodeExecutionHandler:
                     pass
             self.last_executed_script_path = None
             try:
+                os.rmdir(self.generated_files_dir)
+            except OSError:
+                pass
+            try:
                 await websocket.close()
             except Exception:
                 pass
@@ -236,39 +243,16 @@ class StreamingCodeExecutionHandler:
 
     async def _upload_generated_files(self, user_id: str) -> list:
         uploaded_files = []
-        try:
-            # Re-initialize client to ensure fresh connection/auth if needed
-            client = Entity(
-                api_key=os.getenv("ADMIN_API_KEY"),
-                base_url="http://fastapi_cosmic_catalyst:9000",
-            )
-        except Exception as e:
-            self.logging_utility.error("Failed to init ProjectDavid client: %s", e)
-            return []
 
         async def upload_single_file(filename, file_path):
-            if os.path.isdir(file_path):
+            if os.path.islink(file_path) or not os.path.isfile(file_path):
                 return None
             try:
-                # Assuming 'assistants' is the correct bucket/purpose
-                upload = await asyncio.to_thread(
-                    client.files.upload_file, file_path=file_path, purpose="assistants"
+                return await upload_artifact(user_id, filename, file_path)
+            except Exception:
+                self.logging_utility.warning(
+                    "Sandbox artifact upload failed: %s", filename
                 )
-
-                # Get signed URL immediately
-                signed_url = await asyncio.to_thread(
-                    client.files.get_signed_url,
-                    file_id=upload.id,
-                    use_real_filename=True,
-                )
-
-                return {
-                    "filename": filename,
-                    "id": upload.id,
-                    "url": signed_url,
-                }
-            except Exception as e:
-                self.logging_utility.error("Upload failed for %s: %s", filename, str(e))
                 return None
 
         tasks = []

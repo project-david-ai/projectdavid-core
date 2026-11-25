@@ -8,7 +8,6 @@ Asynchronous Version: All blocking I/O is offloaded to threads or awaited.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from typing import Any, Dict, List, Optional
@@ -20,6 +19,7 @@ from src.api.entities_api.constants.assistant import (
 )
 from src.api.entities_api.constants.platform import ERROR_NO_CONTENT
 from src.api.entities_api.services.logging_service import LoggingUtility
+from src.api.entities_api.services.request_activity import run_tracked_sync
 
 LOG = LoggingUtility()
 logger = logging.getLogger(__name__)
@@ -37,8 +37,8 @@ class PlatformToolHandlersMixin:
                                          follow-up instructions before submission
         _handle_code_interpreter()     — parses result JSON, extracts output text
         _handle_computer()             — passes shell output or ERROR_NO_CONTENT
-        _process_platform_tool_calls() — main entry point: creates Action record,
-                                         updates run status, calls platform service,
+        _process_platform_tool_calls() — main entry point: updates run status,
+                                         creates Action record, calls platform service,
                                          routes to per-tool handler
 
     Requires on self:
@@ -58,7 +58,7 @@ class PlatformToolHandlersMixin:
         _submit_platform_tool_output() raises TypeError if
         ConsumerToolHandlersMixin is not in the MRO — explicit guard,
         same pattern as ToolRoutingMixin → JsonUtilsMixin.
-        _process_platform_tool_calls() uses asyncio.to_thread for the blocking
+        _process_platform_tool_calls() uses run_tracked_sync for the blocking
         platform service call — do not call it from a sync context.
         All DB operations (Action creation, run status) now use self._native_exec
         consistently with ConsumerToolHandlersMixin and CodeInterpreterMixin.
@@ -191,36 +191,31 @@ class PlatformToolHandlersMixin:
         tool_name = content.get("name")
         arguments = content.get("arguments", {})
 
-        # 1. Create Action record via _native_exec
-        try:
-            action = await self._native_exec.create_action(
-                tool_name=tool_name,
-                run_id=run_id,
-                tool_call_id=tool_call_id,
-                function_args=arguments,
-                decision=decision,
-            )
-        except Exception as e:
-            LOG.error(f"PLATFORM-HANDLER ▸ Action creation failed: {e}")
-            return
+        # 1. Admission must succeed before creating an Action or dispatching
+        # a platform tool. RunService serializes this transition against
+        # account quarantine. Propagate failures to the orchestration caller.
+        await self._native_exec.update_run_status(
+            run_id,
+            ValidationInterface.StatusEnum.pending_action.value,
+        )
+
+        # 2. Create the Action only after successful admission.
+        action = await self._native_exec.create_action(
+            tool_name=tool_name,
+            run_id=run_id,
+            tool_call_id=tool_call_id,
+            function_args=arguments,
+            decision=decision,
+        )
 
         LOG.debug(
             "Action %s created for %s", getattr(action, "id", "unknown"), tool_name
         )
 
-        # 2. Update Run Status to pending_action via _native_exec
-        try:
-            await self._native_exec.update_run_status(
-                run_id,
-                ValidationInterface.StatusEnum.pending_action.value,
-            )
-        except Exception as e:
-            LOG.warning(f"PLATFORM-HANDLER ▸ Run status update failed: {e}")
-
         # 3. Call the Platform Service — blocking, offloaded to thread
         platform = self.platform_tool_service
         try:
-            result = await asyncio.to_thread(
+            result = await run_tracked_sync(
                 platform.call_function, tool_name, arguments
             )
         except Exception as e:

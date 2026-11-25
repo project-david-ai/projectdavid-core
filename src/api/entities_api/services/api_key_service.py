@@ -7,6 +7,7 @@ from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from src.api.entities_api.models.models import ApiKey, User
+from src.api.entities_api.services.erasure_state import require_mutable_user
 
 logging_utility = UtilsInterface.LoggingUtility()
 validator = ValidationInterface()
@@ -55,22 +56,16 @@ class ApiKeyService:
         key_prefix: str = "ea_",
     ) -> Tuple[str, ApiKey]:
         """
-        Create an ordinary API key for a user.
+        Create an ordinary API key for a non-quarantined user.
 
         User-facing key creation never creates protected service credentials.
+
+        The user-row lock serializes credential issuance against account
+        erasure and remains held until commit or rollback.
         """
-        user = self.db.query(User).filter(User.id == user_id).first()
-
-        if not user:
-            logging_utility.error(
-                f"Attempted to create API key for non-existent user: {user_id}"
-            )
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"User with ID '{user_id}' not found.",
-            )
-
         try:
+            user = require_mutable_user(self.db, user_id)
+
             plain_key_str, unique_prefix = self._generate_unique_key_and_prefix(
                 desired_prefix=key_prefix
             )
@@ -97,17 +92,22 @@ class ApiKeyService:
 
             logging_utility.info(
                 f"API Key created successfully (Prefix: {db_api_key.prefix}) "
-                f"for User ID: {user.id}"
+                f"for User ID: {user_id}"
             )
 
-            return (plain_key_str, db_api_key)
+            return plain_key_str, db_api_key
+
+        except HTTPException:
+            self.db.rollback()
+            raise
 
         except Exception as e:
             self.db.rollback()
             logging_utility.error(
-                f"Error creating API key for user {user_id}: {e}",
-                exc_info=True,
+                "An error occurred while creating an API key.",
+                exc_info=False,
             )
+
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="An error occurred while creating the API key.",
@@ -156,8 +156,12 @@ class ApiKeyService:
 
         Called only through a trusted administrator endpoint.
         Does not create, rotate, disclose, or revoke credentials.
+
+        Credential protection is prohibited during account erasure.
         """
         try:
+            require_mutable_user(self.db, user_id)
+
             result = self.db.execute(
                 update(ApiKey)
                 .where(
@@ -169,7 +173,6 @@ class ApiKeyService:
             )
 
             if result.rowcount != 1:
-                self.db.rollback()
                 raise HTTPException(
                     status_code=404,
                     detail="Key not found.",
@@ -178,14 +181,13 @@ class ApiKeyService:
             self.db.commit()
 
         except HTTPException:
+            self.db.rollback()
             raise
 
         except Exception as exc:
             self.db.rollback()
-            logging_utility.error(
-                "Failed to protect service credential for user %s",
-                user_id,
-            )
+            logging_utility.error("Failed to protect service credential.")
+
             raise HTTPException(
                 status_code=500,
                 detail="Unable to protect service credential.",

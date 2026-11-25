@@ -2,10 +2,12 @@
 import asyncio
 import json
 import os
-from typing import Any, Dict, List, Union
+from typing import Dict, List, Union
 
 from projectdavid_common.utilities.logging_service import LoggingUtility
 from redis import Redis as SyncRedis
+
+from src.api.entities_api.services.request_activity import run_tracked_sync
 
 try:
     from redis.asyncio import Redis as AsyncRedis
@@ -93,7 +95,7 @@ class MessageCache:
         if isinstance(self.redis, AsyncRedis):
             raw_list = await self.redis.lrange(key, 0, -1)
         else:
-            raw_list = await asyncio.to_thread(self.redis.lrange, key, 0, -1)
+            raw_list = await run_tracked_sync(self.redis.lrange, key, 0, -1)
 
         if raw_list:
             return [json.loads(m) for m in raw_list]
@@ -128,10 +130,10 @@ class MessageCache:
                 await pipe.expire(key, REDIS_HISTORY_TTL)
                 await pipe.execute()
         else:
-            await asyncio.to_thread(self.redis.delete, key)
+            await run_tracked_sync(self.redis.delete, key)
             if serialized:
-                await asyncio.to_thread(self.redis.rpush, key, *serialized)
-            await asyncio.to_thread(self.redis.expire, key, REDIS_HISTORY_TTL)
+                await run_tracked_sync(self.redis.rpush, key, *serialized)
+            await run_tracked_sync(self.redis.expire, key, REDIS_HISTORY_TTL)
 
     async def append_message(self, thread_id: str, message: Dict):
         key = self._cache_key(thread_id)
@@ -142,16 +144,16 @@ class MessageCache:
             await self.redis.ltrim(key, -200, -1)
             await self.redis.expire(key, REDIS_HISTORY_TTL)
         else:
-            await asyncio.to_thread(self.redis.rpush, key, data)
-            await asyncio.to_thread(self.redis.ltrim, key, -200, -1)
-            await asyncio.to_thread(self.redis.expire, key, REDIS_HISTORY_TTL)
+            await run_tracked_sync(self.redis.rpush, key, data)
+            await run_tracked_sync(self.redis.ltrim, key, -200, -1)
+            await run_tracked_sync(self.redis.expire, key, REDIS_HISTORY_TTL)
 
     async def delete_history(self, thread_id: str):
         key = self._cache_key(thread_id)
         if isinstance(self.redis, AsyncRedis):
             await self.redis.delete(key)
         else:
-            await asyncio.to_thread(self.redis.delete, key)
+            await run_tracked_sync(self.redis.delete, key)
 
     # ------------------------------------------------------------------
     # Synchronous Methods

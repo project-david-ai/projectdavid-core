@@ -17,6 +17,8 @@ import weakref
 from dataclasses import dataclass
 from typing import Any, AsyncContextManager
 
+from src.api.entities_api.services.request_activity import create_tracked_task
+
 from .mcp_remote_client import RemoteMcpClient
 from .mcp_tool_executor import McpToolExecutor
 from .tool_abi import ToolCallEnvelope, ToolResultEnvelope
@@ -44,12 +46,15 @@ class _McpSessionActor:
         self,
         client_context: AsyncContextManager[RemoteMcpClient],
     ) -> None:
-        loop = asyncio.get_running_loop()
-
         self._client_context = client_context
         self._queue: asyncio.Queue[_Invocation | None] = asyncio.Queue()
-        self._ready: asyncio.Future[None] = loop.create_future()
-        self._task = asyncio.create_task(self._serve())
+        self._closing = False
+        self._task = create_tracked_task(self._serve)
+        self._task.add_done_callback(self._on_done)
+
+    def _on_done(self, task: asyncio.Task[None]) -> None:
+        # Cancellation before the first coroutine step skips _serve entirely.
+        self._cancel_pending()
 
     @property
     def task(self) -> asyncio.Task[None]:
@@ -58,9 +63,6 @@ class _McpSessionActor:
     async def _serve(self) -> None:
         try:
             async with self._client_context as client:
-                if not self._ready.done():
-                    self._ready.set_result(None)
-
                 while True:
                     invocation = await self._queue.get()
 
@@ -88,16 +90,10 @@ class _McpSessionActor:
                             invocation.future.set_result(result)
 
         except asyncio.CancelledError:
-            if not self._ready.done():
-                self._ready.cancel()
-
             self._cancel_pending()
             raise
 
         except Exception as exc:  # noqa: BLE001
-            if not self._ready.done():
-                self._ready.set_exception(exc)
-
             self._fail_pending(exc)
 
     def _cancel_pending(self) -> None:
@@ -127,16 +123,17 @@ class _McpSessionActor:
         call: ToolCallEnvelope,
         progress_callback: Any | None,
     ) -> ToolResultEnvelope:
-        await self._ready
-
-        if self._task.done():
-            raise RuntimeError("MCP run session terminated unexpectedly")
+        if self._closing or self._task.done():
+            raise RuntimeError("MCP run session is closing or terminated")
 
         future: asyncio.Future[ToolResultEnvelope] = (
             asyncio.get_running_loop().create_future()
         )
 
-        await self._queue.put(
+        # Queue immediately: the actor opens its connection before consuming
+        # invocations. Startup failure is delivered through _fail_pending.
+        # No separate readiness future or extra scheduling handoff is needed.
+        self._queue.put_nowait(
             _Invocation(
                 executor=executor,
                 call=call,
@@ -148,22 +145,20 @@ class _McpSessionActor:
         return await future
 
     async def close(self, *, cancel: bool = False) -> None:
-        if self._task.done():
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-            return
-
-        if cancel:
-            self._task.cancel()
-        else:
-            await self._queue.put(None)
-
+        if not self._task.done():
+            if not self._closing:
+                self._closing = True
+                if cancel:
+                    self._task.cancel()
+                else:
+                    self._queue.put_nowait(None)
+            # A second close waits for the same shutdown, without injecting
+            # another cancellation into an in-progress context teardown.
         try:
-            await self._task
+            await asyncio.shield(self._task)
         except asyncio.CancelledError:
-            pass
+            if not self._task.cancelled():
+                raise
 
 
 class McpRunSessionManager:
@@ -217,11 +212,25 @@ class McpRunSessionManager:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
-            async with self._registry_lock:
-                if self._actors.get(key) is actor:
-                    self._actors.pop(key, None)
-
+            # A failed invocation must not orphan a still-live session.
+            await self._close_selected([(key, actor)], cancel=True)
             return executor.failure_result(exc)
+
+    async def _close_selected(
+        self,
+        selected: list[tuple[McpRunSessionKey, _McpSessionActor]],
+        *,
+        cancel: bool,
+    ) -> None:
+        for key, actor in selected:
+            try:
+                await actor.close(cancel=cancel)
+            finally:
+                # Preserve live actors so another close can retry. Never remove
+                # a replacement actor created after this one terminated.
+                async with self._registry_lock:
+                    if actor.task.done() and self._actors.get(key) is actor:
+                        self._actors.pop(key, None)
 
     async def close_run(
         self,
@@ -235,12 +244,7 @@ class McpRunSessionManager:
                 for key, actor in self._actors.items()
                 if key.run_id == run_id
             ]
-
-            for key, _ in selected:
-                self._actors.pop(key, None)
-
-        for _, actor in selected:
-            await actor.close(cancel=cancel)
+        await self._close_selected(selected, cancel=cancel)
 
     async def close_all(
         self,
@@ -248,11 +252,8 @@ class McpRunSessionManager:
         cancel: bool = False,
     ) -> None:
         async with self._registry_lock:
-            actors = list(self._actors.values())
-            self._actors.clear()
-
-        for actor in actors:
-            await actor.close(cancel=cancel)
+            selected = list(self._actors.items())
+        await self._close_selected(selected, cancel=cancel)
 
 
 _RUNTIME_MANAGERS_LOCK = threading.RLock()

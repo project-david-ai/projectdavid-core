@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import mimetypes
 import os
@@ -15,6 +14,7 @@ from projectdavid_common.utilities.tool_validator import ToolValidator
 from projectdavid_common.validation import StatusEnum
 
 from src.api.entities_api.services.logging_service import LoggingUtility
+from src.api.entities_api.services.request_activity import run_tracked_sync
 
 LOG = LoggingUtility()
 
@@ -269,11 +269,12 @@ class ShellExecutionMixin:
             try:
                 file_url = file_meta.get("url")
                 try:
-                    file_url = await asyncio.to_thread(
-                        self.project_david_client.files.get_signed_url,
-                        file_id=file_id,
-                        use_real_filename=True,
-                    )
+                    if not file_url:
+                        file_url = await run_tracked_sync(
+                            self.project_david_client.files.get_signed_url,
+                            file_id=file_id,
+                            use_real_filename=True,
+                        )
                 except Exception as url_err:
                     LOG.warning(
                         "[FILE_DEBUG] Could not refresh signed URL for %s: %s — "

@@ -35,6 +35,7 @@ Import map
     entities_api.models.models.AuditLog      → projectdavid_orm.ormInterface.AuditLog
 """
 from projectdavid_orm import (
+    AccountErasure,
     Action,
     ApiKey,
     Assistant,
@@ -54,6 +55,7 @@ from projectdavid_orm import (
 )
 
 __all__ = [
+    "AccountErasure",
     "Action",
     "ApiKey",
     "Assistant",

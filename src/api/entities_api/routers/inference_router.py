@@ -1,7 +1,9 @@
 import json
 import time
+from contextlib import asynccontextmanager
 from typing import Dict, List, Literal, Optional
 
+from anyio import CancelScope
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from projectdavid_common import ValidationInterface
@@ -33,6 +35,28 @@ from src.api.entities_api.services.stateless_inference_service import (
 
 router = APIRouter()
 logging_utility = LoggingUtility()
+
+
+@asynccontextmanager
+async def _closing_execution(iterator):
+    """Close a suspended execution generator before leaving its consumer."""
+    try:
+        yield iterator
+    finally:
+        # Starlette may cancel its streaming task when the client disconnects.
+        # Shield explicit generator finalization from that cancellation scope.
+        with CancelScope(shield=True):
+            await iterator.aclose()
+
+
+class _ExecutionStreamingResponse(StreamingResponse):
+    """Finalize the response iterator in the task that consumed it."""
+
+    async def stream_response(self, send):
+        # In particular, send() can fail while the iterator is suspended at
+        # a yield. An async-for alone does not close it on that failure.
+        async with _closing_execution(self.body_iterator):
+            await super().stream_response(send)
 
 
 class StatelessCompletionMessage(BaseModel):
@@ -391,7 +415,7 @@ async def completions(
     # ------------------------------------------------------------------
     async def event_generator():
         run_id = stream_request.run_id
-        async for chunk in general_handler_instance.process_conversation(
+        execution = general_handler_instance.process_conversation(
             thread_id=stream_request.thread_id,
             message_id=stream_request.message_id,
             run_id=run_id,
@@ -401,8 +425,10 @@ async def completions(
             api_key=provider_api_key,
             project_david_api_key=project_api_key,
             provider_key_id=stream_request.provider_key_id,
-        ):
-            yield chunk
+        )
+        async with _closing_execution(execution):
+            async for chunk in execution:
+                yield chunk
 
     # ------------------------------------------------------------------
     # PATH A: STREAMING (default)
@@ -420,9 +446,10 @@ async def completions(
             error_occurred = False
 
             try:
-                async for chunk in event_generator():
-                    chunk_count += 1
-                    yield _frame_chunk(chunk, run_id)
+                async with _closing_execution(event_generator()) as execution:
+                    async for chunk in execution:
+                        chunk_count += 1
+                        yield _frame_chunk(chunk, run_id)
 
                 if not error_occurred:
                     yield "data: [DONE]\n\n"
@@ -440,7 +467,7 @@ async def completions(
                     f"Stream finished: {chunk_count} chunks in {elapsed:.2f}s"
                 )
 
-        return StreamingResponse(
+        return _ExecutionStreamingResponse(
             stream_generator(),
             media_type="text/event-stream",
             headers={
@@ -474,35 +501,36 @@ async def completions(
     error_message = None
 
     try:
-        async for chunk in event_generator():
-            if isinstance(chunk, str):
-                try:
-                    parsed = json.loads(chunk)
-                except Exception:
-                    parsed = {"type": "content", "content": chunk}
-            elif isinstance(chunk, dict):
-                parsed = chunk
-            else:
-                parsed = {"type": "content", "content": str(chunk)}
+        async with _closing_execution(event_generator()) as execution:
+            async for chunk in execution:
+                if isinstance(chunk, str):
+                    try:
+                        parsed = json.loads(chunk)
+                    except Exception:
+                        parsed = {"type": "content", "content": chunk}
+                elif isinstance(chunk, dict):
+                    parsed = chunk
+                else:
+                    parsed = {"type": "content", "content": str(chunk)}
 
-            chunk_type = parsed.get("type", "content")
+                chunk_type = parsed.get("type", "content")
 
-            if chunk_type == "content":
-                content_parts.append(parsed.get("content", ""))
+                if chunk_type == "content":
+                    content_parts.append(parsed.get("content", ""))
 
-            elif chunk_type == "error":
-                error_message = parsed.get("message") or parsed.get(
-                    "error", "Unknown error"
-                )
-                logging_utility.error(
-                    f"[{run_id}] Buffered mode — error chunk received: {error_message}"
-                )
-                break
+                elif chunk_type == "error":
+                    error_message = parsed.get("message") or parsed.get(
+                        "error", "Unknown error"
+                    )
+                    logging_utility.error(
+                        f"[{run_id}] Buffered mode — error chunk received: {error_message}"
+                    )
+                    break
 
-            else:
-                logging_utility.info(
-                    f"[{run_id}] Buffered side-effect: type={chunk_type}"
-                )
+                else:
+                    logging_utility.info(
+                        f"[{run_id}] Buffered side-effect: type={chunk_type}"
+                    )
 
     except Exception as e:
         logging_utility.error(f"Buffered generator error: {e}", exc_info=True)

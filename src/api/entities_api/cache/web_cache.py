@@ -9,6 +9,8 @@ from typing import Dict, Optional, Union
 
 from redis import Redis as SyncRedis
 
+from src.api.entities_api.services.request_activity import run_tracked_sync
+
 try:
     import redis.asyncio as redis_async_lib  # Renamed for clarity in get_redis
     from redis.asyncio import Redis as AsyncRedis
@@ -71,7 +73,7 @@ class WebSessionCache:
         if isinstance(self.redis, AsyncRedis):
             raw = await self.redis.get(key)
         else:
-            raw = await asyncio.to_thread(self.redis.get, key)
+            raw = await run_tracked_sync(self.redis.get, key)
         if isinstance(raw, bytes):
             try:
                 raw = raw.decode("ascii")
@@ -85,14 +87,14 @@ class WebSessionCache:
             if isinstance(self.redis, AsyncRedis):
                 await self.redis.delete(key)
             else:
-                await asyncio.to_thread(self.redis.delete, key)
+                await run_tracked_sync(self.redis.delete, key)
             return
         if not _valid_favicon(favicon):
             return
         if isinstance(self.redis, AsyncRedis):
             await self.redis.set(key, favicon, ex=REDIS_WEB_TTL)
         else:
-            await asyncio.to_thread(self.redis.set, key, favicon, ex=REDIS_WEB_TTL)
+            await run_tracked_sync(self.redis.set, key, favicon, ex=REDIS_WEB_TTL)
 
     async def get_session(self, url: str) -> Optional[Dict]:
         """Retrieves the full session data (all chunks) for a URL."""
@@ -101,7 +103,7 @@ class WebSessionCache:
         if isinstance(self.redis, AsyncRedis):
             raw = await self.redis.get(key)
         else:
-            raw = await asyncio.to_thread(self.redis.get, key)
+            raw = await run_tracked_sync(self.redis.get, key)
 
         return json.loads(raw) if raw else None
 
@@ -125,7 +127,7 @@ class WebSessionCache:
         if isinstance(self.redis, AsyncRedis):
             await self.redis.set(key, data, ex=REDIS_WEB_TTL)
         else:
-            await asyncio.to_thread(self.redis.set, key, data, ex=REDIS_WEB_TTL)
+            await run_tracked_sync(self.redis.set, key, data, ex=REDIS_WEB_TTL)
 
     async def get_page_view(self, url: str, page_index: int) -> str:
         """

@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.api.entities_api.models.models import ApiKey, User
+from src.api.entities_api.services.erasure_state import erasure_state
 
 
 @dataclass(frozen=True)
@@ -121,6 +122,27 @@ class AdminProvisioningService:
                 self.db.flush()
 
             else:
+                # The user row is already locked by the identity lookup.
+                # Maintain the canonical lock order:
+                #   1. User row.
+                #   2. Erasure receipt.
+                #   3. API credentials.
+                #
+                # Use a locking read to avoid observing a stale MySQL
+                # transaction snapshot.
+                if (
+                    erasure_state(
+                        self.db,
+                        user.id,
+                        for_update=True,
+                    )
+                    is not None
+                ):
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Account deletion is pending or complete.",
+                    )
+
                 user.email = email
                 user.email_verified = True
                 user.full_name = full_name

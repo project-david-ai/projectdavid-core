@@ -23,6 +23,7 @@ from src.api.entities_api.services.logging_service import LoggingUtility
 from src.api.entities_api.services.mcp_registration_service import (
     McpRegistrationService,
 )
+from src.api.entities_api.services.request_activity import run_tracked_sync
 
 load_dotenv()
 LOG = LoggingUtility()
@@ -41,9 +42,9 @@ class ConsumerToolHandlersMixin:
         _handover_to_consumer()   — async generator, records Action and yields
                                     tool_call_manifest for SDK-managed tools
         finalize_conversation()   — async, saves assistant reply and marks run
-                                    complete via asyncio.to_thread
+                                    complete via run_tracked_sync
         handle_error()            — async, saves terminal error and marks run failed
-        _save_assistant_message() — sync internal helper called via to_thread,
+        _save_assistant_message() — sync internal helper called via run_tracked_sync,
                                     uses _native_exec.message_svc and run_svc
                                     directly to avoid async context issues
 
@@ -667,7 +668,7 @@ class ConsumerToolHandlersMixin:
 
         LOG.info("TOOL-ROUTER Persisting assistant output for run %s", run_id)
 
-        await asyncio.to_thread(
+        await run_tracked_sync(
             self._save_assistant_message,
             thread_id,
             assistant_id,
@@ -692,7 +693,7 @@ class ConsumerToolHandlersMixin:
         """Persist terminal error output, fail the epoch, release MCP state."""
 
         try:
-            await asyncio.to_thread(
+            await run_tracked_sync(
                 self._save_assistant_message,
                 thread_id,
                 assistant_id,
