@@ -4,7 +4,11 @@ from dotenv import load_dotenv
 from projectdavid import Entity
 
 
-load_dotenv(".tests.env")
+from pathlib import Path
+
+ENV_FILE = Path(__file__).resolve().parent / ".tests.env"
+
+load_dotenv(ENV_FILE, override=True)
 
 
 base_url = os.getenv("PROJECT_DAVID_PLATFORM_BASE_URL")
