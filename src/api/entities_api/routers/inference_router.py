@@ -352,10 +352,16 @@ async def completions(
         )
         if str(worker_role).lower() == "true":
             max_turns = assistant.max_turns
-            if type(max_turns) is not int or max_turns < 1:
+
+            if (
+                not isinstance(max_turns, int)
+                or isinstance(max_turns, bool)
+                or max_turns < 1
+            ):
                 raise HTTPException(
                     status_code=500, detail="Invalid research worker turn budget."
                 )
+
             execution_options["max_turns"] = max_turns
             logging_utility.info(
                 "RESEARCH WORKER BUDGET run=%s model=%s max_turns=%s",

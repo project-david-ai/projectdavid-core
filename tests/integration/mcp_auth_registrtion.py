@@ -1,10 +1,8 @@
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 from projectdavid import Entity
-
-
-from pathlib import Path
 
 ENV_FILE = Path(__file__).resolve().parent / ".tests.env"
 

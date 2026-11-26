@@ -1,6 +1,5 @@
-import asyncio
 import uuid
-from typing import Any, Optional
+from typing import Any
 
 from entities_api.platform_tools.definitions.delegation.delegate_research_task import (
     delegate_research_task,

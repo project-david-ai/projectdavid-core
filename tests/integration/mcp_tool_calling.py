@@ -15,13 +15,11 @@ import inspect
 import json
 import os
 import time
-from urllib.parse import urlsplit
-
 from functools import partial
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
-
 from projectdavid import (
     ContentEvent,
     DecisionEvent,
@@ -29,7 +27,6 @@ from projectdavid import (
     ReasoningEvent,
     ToolCallRequestEvent,
 )
-
 
 # ------------------------------------------------------------------
 # 0. CONFIGURATION
