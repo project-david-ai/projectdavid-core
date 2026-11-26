@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator, Callable, Dict, Optional
 
 import httpx
+from projectdavid import ContentEvent, ReasoningEvent
 from projectdavid.events import ScratchpadEvent, WebStatusEvent
 from projectdavid_common.utilities.logging_service import LoggingUtility
 from projectdavid_common.validation import StatusEnum
@@ -772,10 +773,12 @@ class DelegationMixin:
                     continue
                 passed_guard2 += 1
 
-                chunk_content = getattr(event, "content", None) or getattr(
-                    event, "text", None
-                )
-                chunk_reasoning = getattr(event, "reasoning", None)
+                # Typed SDK events are the authority: ReasoningEvent also has
+                # a content attribute and must never be relabelled as prose.
+                if isinstance(event, ReasoningEvent):
+                    chunk_reasoning = getattr(event, "reasoning", None) or event.content
+                else:
+                    chunk_reasoning = None
 
                 if chunk_reasoning:
                     yield json.dumps(
@@ -789,6 +792,9 @@ class DelegationMixin:
                         }
                     )
 
+                if not isinstance(event, ContentEvent):
+                    continue
+                chunk_content = event.content
                 if chunk_content and isinstance(chunk_content, str):
                     captured_stream_content += chunk_content
                     yield json.dumps(
@@ -798,6 +804,7 @@ class DelegationMixin:
                                 "type": "content",
                                 "content": chunk_content,
                                 "run_id": run_id,
+                                "origin_run_id": ephemeral_run.id,
                             },
                         }
                     )

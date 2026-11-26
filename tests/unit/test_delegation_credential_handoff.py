@@ -29,6 +29,14 @@ class _WebStatusEvent:
     pass
 
 
+class _ContentEvent(SimpleNamespace):
+    pass
+
+
+class _ReasoningEvent(SimpleNamespace):
+    pass
+
+
 def _delegation_type():
     source = (
         Path(__file__).resolve().parents[2]
@@ -74,6 +82,8 @@ def _delegation_type():
         "StatusEnum": _StatusEnum,
         "ScratchpadEvent": _ScratchpadEvent,
         "WebStatusEvent": _WebStatusEvent,
+        "ContentEvent": _ContentEvent,
+        "ReasoningEvent": _ReasoningEvent,
         "_TERMINAL_RUN_STATES": {
             "completed",
             "failed",
@@ -193,10 +203,9 @@ def _harness():
         observations.outputs.append(kwargs)
 
     async def fake_events(*args, **kwargs):
-        yield SimpleNamespace(
-            content="Result from worker",
-            reasoning=None,
-        )
+        yield _ReasoningEvent(content="Private reasoning")
+        yield SimpleNamespace(content="Unclassified payload")
+        yield _ContentEvent(content="Result from worker")
 
     class Stream:
         def setup(self, **kwargs):
@@ -255,6 +264,22 @@ def test_two_research_delegations_reuse_request_credentials():
                 project_david_api_key=project_key,
             )
             assert events[-1]["state"] == "completed"
+            chunks = [
+                event["chunk"]
+                for event in events
+                if event.get("stream_type") == "delegation"
+            ]
+            assert [chunk for chunk in chunks if chunk["type"] == "content"] == [
+                {
+                    "type": "content",
+                    "content": "Result from worker",
+                    "run_id": "run_parent",
+                    "origin_run_id": "run_child",
+                }
+            ]
+            assert [
+                chunk["content"] for chunk in chunks if chunk["type"] == "reasoning"
+            ] == ["Private reasoning"]
 
         assert observed.sdk_keys == [
             "project_first",
@@ -268,6 +293,9 @@ def test_two_research_delegations_reuse_request_credentials():
 
         assert len(observed.outputs) == 2
         assert all(output["is_error"] is False for output in observed.outputs)
+        assert all(
+            output["content"] == "Result from worker" for output in observed.outputs
+        )
 
         assert observed.cleaned == [
             "worker_1",

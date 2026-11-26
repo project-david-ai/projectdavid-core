@@ -250,4 +250,4 @@ def test_scratchpad_platform_schema_hides_resource_identity():
 
 def test_research_worker_has_multi_turn_budget():
     assert RESEARCH_WORKER_MAX_TURNS > 1
-    assert RESEARCH_WORKER_MAX_TURNS == 8
+    assert RESEARCH_WORKER_MAX_TURNS == 24

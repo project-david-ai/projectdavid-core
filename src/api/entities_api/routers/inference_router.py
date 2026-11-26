@@ -339,6 +339,31 @@ async def completions(
             is_protected_key=authenticated_is_protected,
         )
 
+        # Research workers execute with their persisted Assistant budget.
+        # Resolve it server-side after authorization, independently of the
+        # SDK transport. Preserve existing budgets for other execution roles.
+        execution_options = {}
+        assistant = await native.retrieve_assistant(run.assistant_id)
+        if assistant is None:
+            raise HTTPException(status_code=404, detail="Assistant not found.")
+        metadata = assistant.meta_data or {}
+        worker_role = metadata.get(
+            "is_research_worker", metadata.get("research_worker_calling", False)
+        )
+        if str(worker_role).lower() == "true":
+            max_turns = assistant.max_turns
+            if type(max_turns) is not int or max_turns < 1:
+                raise HTTPException(
+                    status_code=500, detail="Invalid research worker turn budget."
+                )
+            execution_options["max_turns"] = max_turns
+            logging_utility.info(
+                "RESEARCH WORKER BUDGET run=%s model=%s max_turns=%s",
+                run.id,
+                stream_request.model,
+                max_turns,
+            )
+
         # The inference request selects the execution model; Run.model may
         # still contain the Assistant default until the first inference.
         effective_model = stream_request.model.strip()
@@ -425,6 +450,7 @@ async def completions(
             api_key=provider_api_key,
             project_david_api_key=project_api_key,
             provider_key_id=stream_request.provider_key_id,
+            **execution_options,
         )
         async with _closing_execution(execution):
             async for chunk in execution:

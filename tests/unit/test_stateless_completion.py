@@ -375,9 +375,13 @@ def test_stateful_buffered_completion_retains_existing_processing_path():
         )
     )
     native.assert_assistant_access = AsyncMock()
+    native.retrieve_assistant = AsyncMock(
+        return_value=SimpleNamespace(meta_data={}, max_turns=200)
+    )
 
     class Handler:
         async def process_conversation(self, **kwargs):
+            assert "max_turns" not in kwargs
             yield {"type": "content", "content": "Existing behavior"}
 
     selector = MagicMock()
@@ -440,6 +444,7 @@ def test_stateful_buffered_completion_retains_existing_processing_path():
     }
     db.commit.assert_not_called()
     native.retrieve_run.assert_awaited_once_with("run_1")
+    native.retrieve_assistant.assert_awaited_once_with("assistant_1")
     get_api_key.assert_awaited_once()
     assert get_api_key.await_args.kwargs["api_key_header"] == "project-key"
     native.assert_assistant_access.assert_awaited_once_with(

@@ -13,7 +13,7 @@ from projectdavid import Entity
 from projectdavid_common import UtilsInterface, ValidationInterface
 from projectdavid_orm.projectdavid_orm.models import AssistantMcpTool
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, or_, select, union_all
+from sqlalchemy import and_, func, not_, or_, select, union_all
 from sqlalchemy.exc import IntegrityError
 
 from src.api.entities_api.db.database import SessionLocal
@@ -135,6 +135,32 @@ def decode_cursor(cursor: str) -> tuple[int, str]:
         raise HTTPException(422, "Invalid assistant cursor") from None
 
 
+def research_inventory_exclusion():
+    """Presentation-only classification; never use this for access or deletion.
+
+    Legacy supervisors were created without role metadata. Match the exact
+    historical factory signature, not the worker_ prefix alone. Keep this
+    compatibility clause until those records have been retired.
+    """
+    metadata = Assistant.meta_data
+    marked = or_(
+        *(
+            func.coalesce(metadata[key].as_string(), "") == "true"
+            for key in (
+                "is_research_ephemeral",
+                "is_research_worker",
+                "research_worker_calling",
+            )
+        )
+    )
+    legacy_supervisor = and_(
+        func.coalesce(Assistant.name, "").regexp_match(r"^worker_[0-9a-f]{8}$"),
+        func.coalesce(Assistant.description, "") == "Temp research supervisor",
+        Assistant.deep_research.is_(True),
+    )
+    return not_(or_(marked, legacy_supervisor))
+
+
 def summary_query(
     user_id: str,
     filters: SummaryFilters,
@@ -159,6 +185,7 @@ def summary_query(
     conditions = [
         a.c.deleted_at.is_(None),
         visibility,
+        research_inventory_exclusion(),
     ]
 
     if filters.assistant_id is not None:

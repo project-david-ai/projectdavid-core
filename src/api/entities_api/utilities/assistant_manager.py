@@ -78,6 +78,7 @@ class AssistantManager:
             description="Temp research supervisor",
             tools=[{"type": "scratchpad"}, delegate_research_task],
             deep_research=True,
+            meta_data={"is_research_ephemeral": "true"},
         )
 
     async def create_ephemeral_senior_engineer(self, user_id: str):
@@ -93,7 +94,7 @@ class AssistantManager:
     async def create_ephemeral_worker_assistant(self, user_id: str):
         """
         Temporary research worker.
-        Injects research_worker_calling=True into meta_data so
+        Injects is_research_worker="true" into meta_data so
         QwenBaseWorker can identify its role on load.
         """
         return await self._native_exec.create_assistant(
@@ -107,7 +108,7 @@ class AssistantManager:
             web_access=True,
             deep_research=False,
             max_turns=RESEARCH_WORKER_MAX_TURNS,
-            meta_data={"is_research_worker": "true"},
+            meta_data={"is_research_worker": "true", "is_research_ephemeral": "true"},
         )
 
     async def create_ephemeral_thread(self, user_id: str):
