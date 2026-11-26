@@ -17,8 +17,7 @@ def create_app(init_db: bool = True) -> FastAPI:
     logging_utility.info("Creating FastAPI app")
 
     app = FastAPI(
-        title="Entities",
-        description="API for AI inference",
+        title="Project David API",
         version="1.0.0",
         docs_url="/mydocs",
         redoc_url="/altredoc",
