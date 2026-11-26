@@ -116,7 +116,6 @@ stream.setup(
     assistant_id=ASSISTANT_ID,
     message_id=message.id,
     run_id=run.id,
-    api_key=API_KEY,
 )
 
 print(f"\n{CYAN}[▶] UNIFIED STREAM: SDK-Managed Turns{RESET}")
@@ -127,7 +126,7 @@ last_tick = time.perf_counter()
 
 try:
     # This ONE loop now handles Turn 1 (Tool Call) AND Turn 2 (Answer)
-    for event in stream.stream_events(provider=PROVIDER_KW, model=MODEL_ID):
+    for event in stream.stream_events(model=MODEL_ID):
 
         # Timing logic
         current_tick = time.perf_counter()
