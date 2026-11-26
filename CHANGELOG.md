@@ -1,3 +1,22 @@
+# [1.65.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.64.0...v1.65.0) (2026-11-26)
+
+
+### Bug Fixes
+
+* **core:** enforce protected resource reconciliation and isolation ([472e2ff](https://github.com/project-david-ai/projectdavid-core/commit/472e2ff96e22925592736ec6519b5aca0dca9189))
+* **core:** remove unused web cache import ([bffc44f](https://github.com/project-david-ai/projectdavid-core/commit/bffc44f63c54aa315520209081c07a46637fa305))
+* **core:** resolve lint violations and preserve ORM exports ([6897aee](https://github.com/project-david-ai/projectdavid-core/commit/6897aee26a98dc592980e4df37049c9ab4762769))
+* **core:** resolve research and MCP lint violations ([7adc752](https://github.com/project-david-ai/projectdavid-core/commit/7adc7521f06834767c7e7686e01eaa4947183844))
+* **research:** enforce worker budgets, preserve commentary attribution and exclude ephemeral agents ([cbbbfd2](https://github.com/project-david-ai/projectdavid-core/commit/cbbbfd2597c325076a52fd85597afb2a3c853059))
+
+
+### Features
+
+* **core:** add secure native web favicons and tool-call correlation ([1e2f8d6](https://github.com/project-david-ai/projectdavid-core/commit/1e2f8d6f1f35373f8deedccdf57292e231a5be31))
+* **core:** expose protected playground assistant to owner-scoped observability ([b1bbc80](https://github.com/project-david-ai/projectdavid-core/commit/b1bbc80bcb5c18e2a414dc2cad978f1a89504f72))
+* **core:** implement durable account erasure and runtime reconciliation ([473570f](https://github.com/project-david-ai/projectdavid-core/commit/473570f4bad1de4c15dc7964e001af47a93fce71))
+* **mcp:** harden outbound transport, credential rotation and protected agent authorization ([9621ac9](https://github.com/project-david-ai/projectdavid-core/commit/9621ac9525295455c7cddb4374cc2067543ece72))
+
 # [1.64.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.63.1...v1.64.0) (2026-11-24)
 
 
