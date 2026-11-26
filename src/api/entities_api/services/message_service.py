@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
 from projectdavid_common import UtilsInterface, ValidationInterface
+from projectdavid_orm import File
 
 from src.api.entities_api.db.database import SessionLocal
 from src.api.entities_api.models.models import Message, Thread
@@ -15,7 +16,6 @@ logging_utility = LoggingUtility()
 
 
 class MessageService:
-
     def __init__(self):
         self.message_chunks: Dict[str, List[str]] = {}
         logging_utility.info(f"Initialized MessageService. Source: {__file__}")
@@ -46,6 +46,46 @@ class MessageService:
             )
         return db_thread
 
+    @staticmethod
+    def _owned_attachment_exists(db: Any, file_id: str, user_id: str) -> bool:
+        """Resolve only non-deleted file references belonging to the thread owner."""
+        if not user_id:
+            return False
+        return (
+            db.query(File.id)
+            .filter(
+                File.id == file_id,
+                File.user_id == user_id,
+                File.deleted_at.is_(None),
+            )
+            .first()
+            is not None
+        )
+
+    @staticmethod
+    def _assert_attachment_owners(
+        db: Any,
+        attachments: List[Dict[str, Any]],
+        user_id: str,
+    ) -> None:
+        """Authorize customer-supplied file references before persistence."""
+        for attachment in attachments:
+            file_id = attachment.get("file_id")
+
+            if not file_id:
+                if attachment.get("type") == "image":
+                    raise HTTPException(
+                        status_code=422,
+                        detail="Image attachment requires a file_id.",
+                    )
+                continue
+
+            if not MessageService._owned_attachment_exists(db, file_id, user_id):
+                raise HTTPException(
+                    status_code=404,
+                    detail="Attachment file not found.",
+                )
+
     def _assert_message_owner(
         self, db: Any, message_id: str, user_id: str
     ) -> "Message":
@@ -65,6 +105,8 @@ class MessageService:
         db: Any,
         text_content: str,
         attachments: List[Dict[str, Any]],
+        *,
+        user_id: Optional[str],
     ) -> Any:
         """
         Resolve file_ids → base64 and return a Qwen multimodal content array:
@@ -75,16 +117,16 @@ class MessageService:
                 ...
             ]
 
-        Expired / deleted files are silently skipped.
-        If every attachment has expired the original plain text string is
-        returned so the message still reaches the model.
+        Foreign, missing, deleted or unavailable files are skipped.
+        If no attachment can be resolved, return the original plain text.
+        A thread without an authoritative owner cannot hydrate attachments.
 
         NOTE: called ONLY at LLM consumption time — never when populating Redis.
         """
         from src.api.entities_api.services.file_service import FileService
 
         image_attachments = [a for a in (attachments or []) if a.get("type") == "image"]
-        if not image_attachments:
+        if not image_attachments or not user_id:
             return text_content
 
         file_svc = FileService(db)
@@ -96,12 +138,19 @@ class MessageService:
             if not file_id:
                 continue
 
-            b64 = file_svc.get_file_as_base64_internal(file_id)
-            if b64 is None:
+            if not self._owned_attachment_exists(db, file_id, user_id):
+                continue
+
+            try:
+                b64 = file_svc.get_file_as_base64(file_id, user_id=user_id)
+            except HTTPException:
+                # Preserve the existing best-effort hydration behaviour.
                 logging_utility.warning(
-                    "_hydrate_attachments: file_id=%s not found or expired, skipping.",
-                    file_id,
+                    "_hydrate_attachments: authorized file unavailable, skipping."
                 )
+                continue
+
+            if b64 is None:
                 continue
 
             mime = _detect_mime_from_b64(b64)
@@ -112,7 +161,7 @@ class MessageService:
 
         if resolved == 0:
             logging_utility.warning(
-                "_hydrate_attachments: all attachments expired, returning plain text."
+                "_hydrate_attachments: no attachments available, returning plain text."
             )
             return text_content
 
@@ -124,6 +173,8 @@ class MessageService:
         hydrate_images: bool = False,
         include_attachments: bool = False,
         db: Any = None,
+        *,
+        user_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Shared formatting loop used by all three paths:
@@ -139,7 +190,7 @@ class MessageService:
         hydrate_images=True, include_attachments=False
             → file_ids resolved to base64 Qwen content arrays
             → LLM PATH — called at LLM consumption time only
-            → db must be provided
+            → db and authoritative thread owner must be provided
         """
         formatted_messages: List[Dict[str, Any]] = []
 
@@ -187,7 +238,9 @@ class MessageService:
 
             if hydrate_images and attachments and db is not None:
                 # LLM path: resolve file_ids → base64 content array
-                content = self._hydrate_attachments(db, db_message.content, attachments)
+                content = self._hydrate_attachments(
+                    db, db_message.content, attachments, user_id=user_id
+                )
                 formatted_messages.append({"role": role, "content": content})
 
             elif include_attachments and attachments:
@@ -320,6 +373,7 @@ class MessageService:
                 hydrate_images=True,
                 include_attachments=False,
                 db=db,
+                user_id=db_thread.owner_id,
             )
 
     def submit_tool_output_internal(
@@ -348,7 +402,7 @@ class MessageService:
                 db.add(db_message)
                 db.commit()
                 db.refresh(db_message)
-            except Exception as e:
+            except Exception:
                 db.rollback()
                 raise HTTPException(status_code=500, detail="Failed to create message")
 
@@ -370,6 +424,11 @@ class MessageService:
         )
         with SessionLocal() as db:
             self._assert_thread_owner(db, message.thread_id, user_id)
+            self._assert_attachment_owners(
+                db,
+                message.attachments or [],
+                user_id,
+            )
 
             db_message = Message(
                 id=UtilsInterface.IdentifierService.generate_message_id(),
@@ -445,17 +504,21 @@ class MessageService:
         assistant_id: str,
         sender_id: str,
         is_last_chunk: bool = False,
+        *,
+        user_id: Optional[str] = None,
     ) -> Optional[validator.MessageRead]:
-        if thread_id not in self.message_chunks:
-            self.message_chunks[thread_id] = []
-        self.message_chunks[thread_id].append(content)
-
-        if not is_last_chunk:
-            return None
-
-        complete_message = "".join(self.message_chunks.pop(thread_id, []))
-
         with SessionLocal() as db:
+            if user_id is not None:
+                self._assert_thread_owner(db, thread_id, user_id)
+
+            if thread_id not in self.message_chunks:
+                self.message_chunks[thread_id] = []
+            self.message_chunks[thread_id].append(content)
+
+            if not is_last_chunk:
+                return None
+
+            complete_message = "".join(self.message_chunks.pop(thread_id, []))
             db_message = Message(
                 id=UtilsInterface.IdentifierService.generate_message_id(),
                 assistant_id=assistant_id,
@@ -473,7 +536,7 @@ class MessageService:
                 db.add(db_message)
                 db.commit()
                 db.refresh(db_message)
-            except Exception as e:
+            except Exception:
                 db.rollback()
                 raise HTTPException(status_code=500, detail="Failed to save message")
 
@@ -500,6 +563,7 @@ class MessageService:
                 hydrate_images=True,
                 include_attachments=False,
                 db=db,
+                user_id=user_id,
             )
 
     def submit_tool_output(
@@ -525,7 +589,7 @@ class MessageService:
                 db.add(db_message)
                 db.commit()
                 db.refresh(db_message)
-            except Exception as e:
+            except Exception:
                 db.rollback()
                 raise HTTPException(status_code=500, detail="Failed to create message")
 

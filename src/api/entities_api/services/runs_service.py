@@ -505,7 +505,7 @@ class RunService:
                 run_id,
                 list(kwargs.keys()),
             )
-            return self.retrieve_run(run_id)
+            return self.retrieve_run(run_id, user_id=user_id)
 
         with SessionLocal() as db:
             run = self._get_run_or_404(run_id, db)

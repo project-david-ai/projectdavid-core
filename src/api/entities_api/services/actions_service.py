@@ -21,6 +21,24 @@ class ActionService:
         logging_utility.info("ActionService initialized.")
 
     @staticmethod
+    def _assert_run_owner(db, run_id: str, user_id: str) -> None:
+        run = db.query(Run).filter(Run.id == run_id, Run.user_id == user_id).first()
+        if run is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+
+    @staticmethod
+    def _get_action_or_404(db, action_id: str, user_id: Optional[str] = None) -> Action:
+        query = db.query(Action).filter(Action.id == action_id)
+        if user_id is not None:
+            query = query.join(Run, Action.run_id == Run.id).filter(
+                Run.user_id == user_id
+            )
+        action = query.first()
+        if action is None:
+            raise HTTPException(status_code=404, detail="Action not found")
+        return action
+
+    @staticmethod
     def _normalize_confidence(payload: Optional[Dict[str, Any]]) -> Optional[float]:
         """
         Extracts and sanitizes confidence score from decision payload.
@@ -103,7 +121,7 @@ class ActionService:
             db.commit()
 
     def create_action(
-        self, action_data: validator.ActionCreate
+        self, action_data: validator.ActionCreate, *, user_id: Optional[str] = None
     ) -> validator.ActionRead:
         """
         Creates a new action.
@@ -116,6 +134,8 @@ class ActionService:
         )
 
         with SessionLocal() as db:
+            if user_id is not None:
+                self._assert_run_owner(db, action_data.run_id, user_id)
             try:
                 # [FIX 1] Move Logic Inside Try Block
                 # If this fails (e.g. AttributeError), it will now be caught by the generic Exception handler below
@@ -178,14 +198,12 @@ class ActionService:
                     detail=f"Server Error during action creation: {str(e)}",
                 )
 
-    def get_action(self, action_id: str) -> validator.ActionRead:
-        """Retrieve an action by its ID with the new tool_name field."""
+    def get_action(
+        self, action_id: str, *, user_id: Optional[str] = None
+    ) -> validator.ActionRead:
+        """Retrieve an action by ID, scoped to its Run owner for HTTP callers."""
         with SessionLocal() as db:
-            action = db.query(Action).filter(Action.id == action_id).first()
-            if not action:
-                raise HTTPException(
-                    status_code=404, detail=f"Action {action_id} not found"
-                )
+            action = self._get_action_or_404(db, action_id, user_id)
 
             return validator.ActionRead(
                 id=action.id,
@@ -203,12 +221,14 @@ class ActionService:
             )
 
     def update_action_status(
-        self, action_id: str, action_update: validator.ActionUpdate
+        self,
+        action_id: str,
+        action_update: validator.ActionUpdate,
+        *,
+        user_id: Optional[str] = None,
     ) -> validator.ActionRead:
         with SessionLocal() as db:
-            action = db.query(Action).filter(Action.id == action_id).first()
-            if not action:
-                raise HTTPException(status_code=404, detail="Action not found")
+            action = self._get_action_or_404(db, action_id, user_id)
 
             action.status = action_update.status
             action.result = action_update.result
@@ -231,9 +251,15 @@ class ActionService:
             )
 
     def get_actions_by_status(
-        self, run_id: str, status: Optional[str] = "pending"
+        self,
+        run_id: str,
+        status: Optional[str] = "pending",
+        *,
+        user_id: Optional[str] = None,
     ) -> List[validator.ActionRead]:
         with SessionLocal() as db:
+            if user_id is not None:
+                self._assert_run_owner(db, run_id, user_id)
             actions = (
                 db.query(Action)
                 .filter(Action.run_id == run_id, Action.status == status)
@@ -253,11 +279,15 @@ class ActionService:
                 for action in actions
             ]
 
-    def get_pending_actions(self, run_id=None) -> List[Dict[str, Any]]:
+    def get_pending_actions(
+        self, run_id=None, *, user_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """
         Retrieves pending actions using the Action ORM model directly.
         """
         with SessionLocal() as db:
+            if user_id is not None:
+                self._assert_run_owner(db, run_id, user_id)
             target_statuses = ["pending", "action_required", "requires_action"]
 
             # 1. Select Action objects
@@ -289,10 +319,8 @@ class ActionService:
                 for action in actions
             ]
 
-    def delete_action(self, action_id: str) -> None:
+    def delete_action(self, action_id: str, *, user_id: Optional[str] = None) -> None:
         with SessionLocal() as db:
-            action = db.query(Action).filter(Action.id == action_id).first()
-            if not action:
-                raise HTTPException(status_code=404, detail="Action not found")
+            action = self._get_action_or_404(db, action_id, user_id)
             db.delete(action)
             db.commit()

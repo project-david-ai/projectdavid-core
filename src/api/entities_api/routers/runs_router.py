@@ -199,12 +199,13 @@ async def stream_run_events(
 ):
     run_svc = RunService()
     action_svc = ActionService()
+    owner_id = auth_key.user_id
 
     # ── Ownership verified once at connection time, before the stream opens. ──
     # Raises 403 immediately if the caller doesn't own this run.
     # The internal poll loop below omits user_id — no repeated auth overhead.
     try:
-        run_svc.retrieve_run(run_id, user_id=auth_key.user_id)  # ← FIXED
+        run_svc.retrieve_run(run_id, user_id=owner_id)
     except HTTPException as e:
         raise e
 
@@ -218,7 +219,7 @@ async def stream_run_events(
                 yield {"event": "error", "data": '{"msg":"run not found"}'}
                 break
             if run.status == StatusEnum.pending_action:
-                pending = action_svc.get_pending_actions(run_id)
+                pending = action_svc.get_pending_actions(run_id, user_id=owner_id)
                 if pending:
                     for act in pending:
                         data = act.dict() if hasattr(act, "dict") else act

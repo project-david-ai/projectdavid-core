@@ -164,9 +164,8 @@ async def save_assistant_message(
     logging_utility.info(
         f"[{auth_key.user_id}] Saving assistant chunk for thread {message.thread_id}"
     )
-    # NOTE: save_assistant_message_chunk is an internal/trusted-caller path used
-    # by the execution engine — it does not perform end-user ownership checks.
-    # The endpoint still requires a valid API key for authentication.
+    # HTTP callers must own the thread. Native execution calls the service
+    # directly and does not use this HTTP boundary.
     svc = MessageService()
     try:
         new_message = svc.save_assistant_message_chunk(
@@ -176,6 +175,7 @@ async def save_assistant_message(
             assistant_id=message.assistant_id,
             sender_id=message.sender_id,
             is_last_chunk=True,
+            user_id=auth_key.user_id,
         )
         if new_message:
             logging_utility.info(f"Saved assistant message ID {new_message.id}")

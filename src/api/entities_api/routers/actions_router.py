@@ -1,6 +1,7 @@
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi import status as http_status
 from projectdavid_common import ValidationInterface
 from projectdavid_common.utilities.logging_service import LoggingUtility
 from sqlalchemy.orm import Session
@@ -24,7 +25,7 @@ def create_action(
     )
     action_service = ActionService()
     try:
-        new_action = action_service.create_action(action)
+        new_action = action_service.create_action(action, user_id=auth_key.user_id)
         logging_utility.info(
             f"User '{auth_key.user_id}' - Action created successfully with ID: {new_action.id}"
         )
@@ -39,7 +40,7 @@ def create_action(
             f"User '{auth_key.user_id}' - An unexpected error occurred while creating action: {str(e)}"
         )
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred.",
         )
 
@@ -55,7 +56,7 @@ def get_action(
     )
     action_service = ActionService()
     try:
-        action = action_service.get_action(action_id)
+        action = action_service.get_action(action_id, user_id=auth_key.user_id)
         logging_utility.info(
             f"User '{auth_key.user_id}' - Action retrieved successfully with ID: {action_id}"
         )
@@ -70,7 +71,7 @@ def get_action(
             f"User '{auth_key.user_id}' - An unexpected error occurred while retrieving action {action_id}: {str(e)}"
         )
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred.",
         )
 
@@ -87,7 +88,9 @@ def update_action_status(
     )
     action_service = ActionService()
     try:
-        updated_action = action_service.update_action_status(action_id, action_update)
+        updated_action = action_service.update_action_status(
+            action_id, action_update, user_id=auth_key.user_id
+        )
         logging_utility.info(
             f"User '{auth_key.user_id}' - Action status updated successfully for action ID: {action_id}"
         )
@@ -102,7 +105,7 @@ def update_action_status(
             f"User '{auth_key.user_id}' - An unexpected error occurred while updating action status {action_id}: {str(e)}"
         )
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred.",
         )
 
@@ -121,7 +124,9 @@ def get_actions_by_status(
     )
     action_service = ActionService()
     try:
-        actions = action_service.get_actions_by_status(run_id, status)
+        actions = action_service.get_actions_by_status(
+            run_id, status, user_id=auth_key.user_id
+        )
         logging_utility.info(
             f"User '{auth_key.user_id}' - Actions retrieved successfully for run ID: {run_id} with status: {status}"
         )
@@ -136,7 +141,7 @@ def get_actions_by_status(
             f"User '{auth_key.user_id}' - An unexpected error occurred while retrieving actions for run {run_id} with status {status}: {str(e)}"
         )
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred.",
         )
 
@@ -156,7 +161,9 @@ def get_pending_actions(
     )
     action_service = ActionService()
     try:
-        pending_actions = action_service.get_pending_actions(run_id)
+        pending_actions = action_service.get_pending_actions(
+            run_id, user_id=auth_key.user_id
+        )
         logging_utility.info(
             f"User '{auth_key.user_id}' - Successfully retrieved {len(pending_actions)} pending action(s) for run_id: {run_id}."
         )
@@ -171,12 +178,12 @@ def get_pending_actions(
             f"User '{auth_key.user_id}' - An unexpected error occurred while listing pending actions: {str(e)}"
         )
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred.",
         )
 
 
-@router.delete("/actions/{action_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/actions/{action_id}", status_code=http_status.HTTP_204_NO_CONTENT)
 def delete_action(
     action_id: str,
     db: Session = Depends(get_db),
@@ -187,7 +194,7 @@ def delete_action(
     )
     action_service = ActionService()
     try:
-        action_service.delete_action(action_id)
+        action_service.delete_action(action_id, user_id=auth_key.user_id)
         logging_utility.info(
             f"User '{auth_key.user_id}' - Action deleted successfully with ID: {action_id}"
         )
@@ -202,6 +209,6 @@ def delete_action(
             f"User '{auth_key.user_id}' - An unexpected error occurred while deleting action {action_id}: {str(e)}"
         )
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred.",
         )
