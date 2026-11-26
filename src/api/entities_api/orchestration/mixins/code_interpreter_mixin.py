@@ -1,7 +1,6 @@
 # src/api/entities_api/orchestration/mixins/code_interpreter_mixin.py
 from __future__ import annotations
 
-import asyncio
 import json
 import mimetypes
 import os
@@ -14,6 +13,7 @@ from projectdavid_common import ToolValidator
 from projectdavid_common.validation import StatusEnum
 
 from src.api.entities_api.services.logging_service import LoggingUtility
+from src.api.entities_api.services.request_activity import run_tracked_sync
 
 LOG = LoggingUtility()
 
@@ -162,7 +162,7 @@ class CodeInterpreterMixin:
                     return None
 
             while True:
-                chunk_str = await asyncio.to_thread(safe_next, sync_iter)
+                chunk_str = await run_tracked_sync(safe_next, sync_iter)
                 if chunk_str is None:
                     break
 
@@ -323,7 +323,7 @@ class CodeInterpreterMixin:
                 # Still utilizing the SDK for file storage/signed URLs
                 file_url = file_meta.get("url")
                 if not file_url:
-                    file_url = await asyncio.to_thread(
+                    file_url = await run_tracked_sync(
                         self.project_david_client.files.get_signed_url,
                         file_id=file_id,
                         use_real_filename=True,

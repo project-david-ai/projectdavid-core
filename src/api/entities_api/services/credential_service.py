@@ -89,6 +89,45 @@ class CredentialService:
 
         return payload
 
+    def _encrypt_payload(self, payload: dict[str, Any]) -> str:
+        normalized_payload = self._validate_payload(payload)
+        serialized = json.dumps(
+            normalized_payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        return self._cipher().encrypt(serialized).decode("ascii")
+
+    def replace_in_session(
+        self,
+        *,
+        db: Any,
+        credential_id: str,
+        user_id: str,
+        expected_kind: str,
+        payload: dict[str, Any],
+    ) -> None:
+        """Replace an owned credential without changing its durable reference."""
+        row = (
+            db.query(Credential)
+            .filter(
+                Credential.id == credential_id,
+                Credential.owner_id == user_id,
+                Credential.kind == self._validate_kind(expected_kind),
+            )
+            .with_for_update()
+            .first()
+        )
+        if row is None:
+            raise CredentialResolutionError("Credential not found or kind mismatch")
+        if row.encryption_version != self.ENCRYPTION_VERSION:
+            raise CredentialResolutionError("Unsupported credential encryption version")
+
+        # Encrypt before changing the row; the caller owns commit/rollback.
+        row.encrypted_payload = self._encrypt_payload(payload)
+        db.flush()
+
     def create_in_session(
         self,
         *,
@@ -103,16 +142,7 @@ class CredentialService:
             raise ValueError("Credential owner is required")
 
         normalized_kind = self._validate_kind(kind)
-        normalized_payload = self._validate_payload(payload)
-
-        serialized = json.dumps(
-            normalized_payload,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
-
-        ciphertext = self._cipher().encrypt(serialized).decode("ascii")
+        ciphertext = self._encrypt_payload(payload)
 
         credential_id = UtilsInterface.IdentifierService.generate_prefixed_id("cred")
 

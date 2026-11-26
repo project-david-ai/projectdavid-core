@@ -1,7 +1,8 @@
 """Authenticated MCP registration management API."""
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from projectdavid_common import UtilsInterface, ValidationInterface
+from projectdavid_common.schemas.mcp_schemas import McpServerAuth
 from sqlalchemy.orm import Session
 
 from src.api.entities_api.dependencies import get_api_key, get_db
@@ -80,6 +81,62 @@ def update_mcp_server(
         server_id=server_id,
         registration=registration,
         user_id=auth_key.user_id,
+        is_protected_key=bool(auth_key.is_protected),
+    )
+
+
+async def _rotation_auth(request: Request) -> McpServerAuth:
+    # FastAPI's default validation errors may reflect raw input. Parse this
+    # credential-bearing body here and return only a fixed, sanitized error.
+    try:
+        auth = McpServerAuth.model_validate(await request.json())
+    except ValueError:
+        raise HTTPException(422, "Invalid MCP bearer token request") from None
+    if auth.type != "bearer" or auth.token is None:
+        raise HTTPException(422, "Bearer authentication is required")
+    return auth
+
+
+@router.put(
+    "/mcp/servers/{server_id}/credential",
+    response_model=validator.McpServerRegistrationRead,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["type", "token"],
+                        "additionalProperties": False,
+                        "properties": {
+                            "type": {"type": "string", "enum": ["bearer"]},
+                            "token": {
+                                "type": "string",
+                                "format": "password",
+                                "writeOnly": True,
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    },
+)
+def rotate_mcp_server_credential(
+    server_id: str,
+    db: Session = Depends(get_db),
+    auth_key: ApiKeyModel = Depends(get_api_key),
+    auth: McpServerAuth = Depends(_rotation_auth),
+):
+    if auth.token is None:
+        raise HTTPException(422, "Bearer authentication is required")
+
+    return McpRegistrationService().rotate_server_credential(
+        server_id=server_id,
+        user_id=auth_key.user_id,
+        token=auth.token,
+        is_protected_key=bool(auth_key.is_protected),
     )
 
 
@@ -98,6 +155,7 @@ def delete_mcp_server(
     McpRegistrationService().delete_server(
         server_id=server_id,
         user_id=auth_key.user_id,
+        is_protected_key=bool(auth_key.is_protected),
     )
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -152,6 +210,7 @@ def list_assistant_mcp_tools(
     return McpRegistrationService().list_assistant_tools(
         assistant_id=assistant_id,
         user_id=auth_key.user_id,
+        is_protected_key=bool(auth_key.is_protected),
     )
 
 
@@ -173,6 +232,7 @@ async def attach_assistant_mcp_tools(
         assistant_id=assistant_id,
         attachment=attachment,
         user_id=auth_key.user_id,
+        is_protected_key=bool(auth_key.is_protected),
     )
 
 
@@ -195,6 +255,7 @@ def detach_assistant_mcp_tools(
         assistant_id=assistant_id,
         attachment=attachment,
         user_id=auth_key.user_id,
+        is_protected_key=bool(auth_key.is_protected),
     )
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)

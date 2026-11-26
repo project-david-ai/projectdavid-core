@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from threading import Event, Thread
+from threading import Event
 from typing import Any, Callable, Generator, Optional
 
 import redis as redis_py
@@ -22,6 +22,11 @@ from src.api.entities_api.constants.assistant import (
     DEFAULT_REMINDER_MESSAGE,
 )
 from src.api.entities_api.services.logging_service import LoggingUtility
+from src.api.entities_api.services.request_activity import (
+    create_tracked_task,
+    run_tracked_sync,
+    start_tracked_thread,
+)
 
 LOG = LoggingUtility()
 
@@ -105,7 +110,7 @@ class StreamingMixin:
 
             LOG.debug("Cancellation monitor thread for %s has exited.", run_id)
 
-        Thread(target=monitor, daemon=True).start()
+        start_tracked_thread(monitor)
         return stop_event
 
     def check_cancellation_flag(self) -> bool:
@@ -143,27 +148,22 @@ class StreamingMixin:
                 else:
                     redis_safe_chunk[k] = v
 
-            loop = asyncio.get_running_loop()
-
             # Run sync redis ops in executor so we don't block event loop
-            await loop.run_in_executor(
-                None,
-                lambda: redis.xadd(
-                    stream_key, redis_safe_chunk, maxlen=maxlen, approximate=True
-                ),
+            await run_tracked_sync(
+                redis.xadd,
+                stream_key,
+                redis_safe_chunk,
+                maxlen=maxlen,
+                approximate=True,
             )
 
             # Handle TTL
             ttl_flag = f"{stream_key}::ttl_set"
-            exists = await loop.run_in_executor(None, lambda: redis.exists(ttl_flag))
+            exists = await run_tracked_sync(redis.exists, ttl_flag)
 
             if not exists:
-                await loop.run_in_executor(
-                    None, lambda: redis.expire(stream_key, ttl_seconds)
-                )
-                await loop.run_in_executor(
-                    None, lambda: redis.set(ttl_flag, "1", ex=ttl_seconds)
-                )
+                await run_tracked_sync(redis.expire, stream_key, ttl_seconds)
+                await run_tracked_sync(redis.set, ttl_flag, "1", ex=ttl_seconds)
 
         except Exception as exc:
             LOG.warning(
@@ -263,8 +263,10 @@ class StreamingMixin:
 
             # Fire-and-forget the Redis shunt
             if loop and loop.is_running():
-                loop.create_task(
-                    self._shunt_to_redis_stream(self.redis, redis_key, parsed)
+                create_tracked_task(
+                    lambda chunk=parsed: self._shunt_to_redis_stream(
+                        self.redis, redis_key, chunk
+                    )
                 )
 
         if assistant_reply:

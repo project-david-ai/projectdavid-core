@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
 
 from fastapi import HTTPException
+from smb.smb_structs import OperationFailure
 from smb.SMBConnection import SMBConnection
 
 from src.api.entities_api.models.models import File
@@ -129,9 +130,18 @@ class SambaClient:
         except Exception as e:
             raise Exception(f"Failed to download file to bytes: {str(e)}")
 
-    def delete_file(self, remote_path: str):
+    def delete_file(self, remote_path: str, *, missing_ok: bool = False):
         try:
             self.conn.deleteFiles(self.share, remote_path)
+        except OperationFailure as exc:
+            # Inspect the terminal SMB status, never exception prose. Only a
+            # missing object/path is idempotent success; access/network errors
+            # must retain the caller's durable storage reference.
+            messages = getattr(exc, "smb_messages", ())
+            code = getattr(messages[-1], "status", None) if messages else None
+            if missing_ok and code in (0xC0000034, 0xC000003A):
+                return
+            raise
         except Exception as e:
             raise Exception(f"Failed to delete file: {str(e)}")
 

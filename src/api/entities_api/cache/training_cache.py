@@ -31,6 +31,8 @@ from typing import Dict, List, Optional, Union
 from projectdavid_common.utilities.logging_service import LoggingUtility
 from redis import Redis as SyncRedis
 
+from src.api.entities_api.services.request_activity import run_tracked_sync
+
 try:
     from redis.asyncio import Redis as AsyncRedis
 except ImportError:
@@ -100,7 +102,7 @@ class TrainingCache:
         if isinstance(self.redis, AsyncRedis):
             await self.redis.lpush(TRAINING_QUEUE_KEY, data)
         else:
-            await asyncio.to_thread(self.redis.lpush, TRAINING_QUEUE_KEY, data)
+            await run_tracked_sync(self.redis.lpush, TRAINING_QUEUE_KEY, data)
 
         LOG.info("TrainingCache: enqueued job %s for user %s", job_id, user_id)
 
@@ -108,7 +110,7 @@ class TrainingCache:
         """Return the number of jobs currently waiting in the queue."""
         if isinstance(self.redis, AsyncRedis):
             return await self.redis.llen(TRAINING_QUEUE_KEY)
-        return await asyncio.to_thread(self.redis.llen, TRAINING_QUEUE_KEY)
+        return await run_tracked_sync(self.redis.llen, TRAINING_QUEUE_KEY)
 
     # ------------------------------------------------------------------
     # Queue — consumer side (called by TrainingWorker)
@@ -194,7 +196,7 @@ class TrainingCache:
         if isinstance(self.redis, AsyncRedis):
             await self.redis.set(key, data, ex=REDIS_TRAINING_STATUS_TTL)
         else:
-            await asyncio.to_thread(
+            await run_tracked_sync(
                 self.redis.set, key, data, ex=REDIS_TRAINING_STATUS_TTL
             )
 
@@ -236,7 +238,7 @@ class TrainingCache:
         if isinstance(self.redis, AsyncRedis):
             raw = await self.redis.get(key)
         else:
-            raw = await asyncio.to_thread(self.redis.get, key)
+            raw = await run_tracked_sync(self.redis.get, key)
 
         if not raw:
             return None
@@ -252,7 +254,7 @@ class TrainingCache:
         if isinstance(self.redis, AsyncRedis):
             await self.redis.delete(key)
         else:
-            await asyncio.to_thread(self.redis.delete, key)
+            await run_tracked_sync(self.redis.delete, key)
 
     async def get_queue_snapshot(self) -> List[Dict]:
         """
@@ -262,7 +264,7 @@ class TrainingCache:
         if isinstance(self.redis, AsyncRedis):
             raw_list = await self.redis.lrange(TRAINING_QUEUE_KEY, 0, -1)
         else:
-            raw_list = await asyncio.to_thread(
+            raw_list = await run_tracked_sync(
                 self.redis.lrange, TRAINING_QUEUE_KEY, 0, -1
             )
 

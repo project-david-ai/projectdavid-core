@@ -34,6 +34,7 @@ import time
 import uuid
 from typing import Any, Mapping, Optional
 
+from fastapi import HTTPException
 from projectdavid_orm.projectdavid_orm.execution_ledger import (
     EvidenceRetentionHold,
     ExecutionActor,
@@ -45,6 +46,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.api.entities_api.models.models import Action, Run
+from src.api.entities_api.services.erasure_state import require_mutable_user
 
 
 class ExecutionLedgerError(RuntimeError):
@@ -68,10 +70,11 @@ class ExecutionLedgerService:
     Transactional persistence service for agent execution lineage.
 
     Lock ordering:
-        reserve_epoch:       Run -> latest epoch
-        reserve_actor:       epoch -> actor
-        activate_actor:      epoch -> actor
-        link_delegation:     parent epoch -> child epoch
+        Admission prefix:    User -> erasure receipt
+        reserve_epoch:       prefix -> Run -> root Run (if distinct) -> latest epoch
+        reserve_actor:       prefix -> epoch -> actor
+        activate_actor:      prefix -> epoch -> actor
+        link_delegation:     prefix -> parent epoch -> child epoch
         append_event:        epoch -> latest event
         complete_epoch:      epoch
         retire_actor:        epoch -> actor
@@ -202,6 +205,20 @@ class ExecutionLedgerService:
         return result
 
     @staticmethod
+    def _require_admissible_owner(db: Session, owner_id: Optional[str]) -> None:
+        """Fence new work against quarantine for the caller's transaction."""
+        if not owner_id:
+            raise LedgerConflict("Execution has no owner")
+        try:
+            require_mutable_user(db, owner_id)
+        except HTTPException as exc:
+            if exc.status_code in (404, 409):
+                raise LedgerConflict(
+                    "Execution owner is unavailable for admission"
+                ) from exc
+            raise
+
+    @staticmethod
     def _require_run(
         db: Session,
         run_id: str,
@@ -211,7 +228,7 @@ class ExecutionLedgerService:
         stmt = select(Run).where(Run.id == run_id)
 
         if lock:
-            stmt = stmt.with_for_update()
+            stmt = stmt.with_for_update().execution_options(populate_existing=True)
 
         run = db.execute(stmt).scalar_one_or_none()
 
@@ -230,7 +247,7 @@ class ExecutionLedgerService:
         stmt = select(RunExecutionEpoch).where(RunExecutionEpoch.id == epoch_id)
 
         if lock:
-            stmt = stmt.with_for_update()
+            stmt = stmt.with_for_update().execution_options(populate_existing=True)
 
         epoch = db.execute(stmt).scalar_one_or_none()
 
@@ -249,7 +266,7 @@ class ExecutionLedgerService:
         stmt = select(ExecutionActor).where(ExecutionActor.id == actor_id)
 
         if lock:
-            stmt = stmt.with_for_update()
+            stmt = stmt.with_for_update().execution_options(populate_existing=True)
 
         actor = db.execute(stmt).scalar_one_or_none()
 
@@ -284,12 +301,22 @@ class ExecutionLedgerService:
         root_id = root_run_id or run_id
         self._validate_identifier(root_id, "root_run_id")
 
+        owner_id = self._require_run(db, run_id).user_id
+        self._require_admissible_owner(db, owner_id)
         run = self._require_run(db, run_id, lock=True)
+        if run.user_id != owner_id:
+            raise LedgerConflict("Run ownership changed during admission")
 
         if root_id == run_id:
             root = run
         else:
+            # Reject a foreign root before acquiring its row lock.
             root = self._require_run(db, root_id)
+            if root.user_id != owner_id:
+                raise LedgerConflict(
+                    "Delegated Run and root Run belong to different users"
+                )
+            root = self._require_run(db, root_id, lock=True)
 
         if run.user_id != root.user_id:
             raise LedgerConflict("Delegated Run and root Run belong to different users")
@@ -300,11 +327,14 @@ class ExecutionLedgerService:
             .order_by(RunExecutionEpoch.epoch_number.desc())
             .limit(1)
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
 
         latest = db.execute(stmt).scalar_one_or_none()
 
         if latest is not None:
+            if latest.owner_user_id != owner_id:
+                raise LedgerConflict("Existing execution epoch has a different owner")
             if latest.root_run_id != root_id:
                 raise LedgerConflict(
                     "Existing execution epoch has a different root Run"
@@ -368,11 +398,11 @@ class ExecutionLedgerService:
             48,
         )
 
-        epoch = self._require_epoch(
-            db,
-            epoch_id,
-            lock=True,
-        )
+        owner_id = self._require_epoch(db, epoch_id).owner_user_id
+        self._require_admissible_owner(db, owner_id)
+        epoch = self._require_epoch(db, epoch_id, lock=True)
+        if epoch.owner_user_id != owner_id:
+            raise LedgerConflict("Epoch ownership changed during admission")
 
         if epoch.state not in self.ACTIVE_EPOCH_STATES:
             raise LedgerConflict("Cannot reserve an actor on a terminal epoch")
@@ -384,6 +414,7 @@ class ExecutionLedgerService:
                 ExecutionActor.slot == slot,
             )
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
 
         existing = db.execute(stmt).scalar_one_or_none()
@@ -462,18 +493,21 @@ class ExecutionLedgerService:
         if epoch_id is None:
             raise LedgerNotFound(f"Execution actor not found: {actor_id}")
 
-        # Lock epoch first to serialize with terminal transitions.
-        epoch = self._require_epoch(
-            db,
-            epoch_id,
-            lock=True,
-        )
+        # Account admission precedes the epoch and actor locks.
+        owner_id = self._require_epoch(db, epoch_id).owner_user_id
+        self._require_admissible_owner(db, owner_id)
+        epoch = self._require_epoch(db, epoch_id, lock=True)
+        if epoch.owner_user_id != owner_id:
+            raise LedgerConflict("Epoch ownership changed during admission")
 
         actor = self._require_actor(
             db,
             actor_id,
             lock=True,
         )
+
+        if actor.epoch_id != epoch_id:
+            raise LedgerConflict("Actor epoch changed during admission")
 
         if epoch.state not in self.ACTIVE_EPOCH_STATES:
             raise LedgerConflict("Cannot activate an actor on a terminal epoch")
@@ -581,17 +615,14 @@ class ExecutionLedgerService:
             - Parent Action belongs to the parent Run
             - Initiating actor, if supplied, belongs to parent epoch
         """
-        parent = self._require_epoch(
-            db,
-            parent_epoch_id,
-            lock=True,
-        )
-
-        child = self._require_epoch(
-            db,
-            child_epoch_id,
-            lock=True,
-        )
+        owner_id = self._require_epoch(db, parent_epoch_id).owner_user_id
+        if self._require_epoch(db, child_epoch_id).owner_user_id != owner_id:
+            raise LedgerConflict("Delegation epochs belong to different owners")
+        self._require_admissible_owner(db, owner_id)
+        parent = self._require_epoch(db, parent_epoch_id, lock=True)
+        child = self._require_epoch(db, child_epoch_id, lock=True)
+        if parent.owner_user_id != owner_id or child.owner_user_id != owner_id:
+            raise LedgerConflict("Delegation epochs belong to different owners")
 
         if parent.run_id == child.run_id:
             raise LedgerConflict("Delegation must target a different Run")

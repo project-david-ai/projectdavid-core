@@ -91,7 +91,9 @@ class VectorStoreManager(BaseVectorStore):
         if not self.client.collection_exists(store_name):
             return {"name": store_name, "status": "absent"}
         try:
-            self.client.delete_collection(collection_name=store_name)
+            confirmed = self.client.delete_collection(collection_name=store_name)
+            if confirmed is not True or self.client.collection_exists(store_name):
+                raise VectorStoreError("Collection deletion was not confirmed")
             return {"name": store_name, "status": "deleted"}
         except Exception as e:
             log.error("Delete failed: %s", e)

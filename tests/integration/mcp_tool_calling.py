@@ -2,20 +2,24 @@
 Live MCP Execution Integration Test
 -----------------------------------
 Purpose:
-1. Use an existing assistant with real DeepWiki MCP tools attached.
-2. Run inference against a TogetherAI-backed Project David model.
+1. Register or reuse DeepWiki, discover and attach its required tool.
+2. Run inference against the configured Project David model.
 3. Force the model to use DeepWiki.
 4. Do NOT execute any tool locally.
 5. Verify the MCP tool is owned by Project David Core.
 6. Stream and display the final model response.
+7. Use an existing registered provider credential (no raw key).
 """
 
+import inspect
 import json
 import os
 import time
+from functools import partial
+from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
-
 from projectdavid import (
     ContentEvent,
     DecisionEvent,
@@ -23,7 +27,6 @@ from projectdavid import (
     ReasoningEvent,
     ToolCallRequestEvent,
 )
-
 
 # ------------------------------------------------------------------
 # 0. CONFIGURATION
@@ -49,15 +52,10 @@ BASE_URL = (
 API_KEY = os.getenv("DEV_PROJECT_DAVID_CORE_TEST_USER_KEY")
 
 ASSISTANT_ID = os.getenv("ASSISTANT_ID")
+PROVIDER_KEY_ID = os.getenv("PD_PROVIDER_KEY_ID", "").strip()
 
-# Override this in .tests.env if required:
-#
-# MCP_TEST_MODEL_ID=together-ai/...
-#
-MODEL_ID = (
-    os.getenv("MCP_TEST_MODEL_ID")
-    or "together-ai/mistralai/Ministral-3-14B-Instruct-2512"
-)
+# Use the configured provider/model; never silently select another provider.
+MODEL_ID = os.getenv("MCP_TEST_MODEL_ID", "").strip()
 
 
 TEST_PROMPT = """
@@ -75,6 +73,13 @@ documentation sections that DeepWiki returned.
 """.strip()
 
 
+# This integration test writes to the selected assistant. Keep it local.
+if urlsplit(BASE_URL).hostname not in {"localhost", "127.0.0.1", "::1"}:
+    raise RuntimeError("This integration test must target local Core")
+
+if ASSISTANT_ID and ASSISTANT_ID.startswith("asst_playground_"):
+    raise RuntimeError("Use an ordinary test assistant, not the protected Playground")
+
 if not API_KEY:
     raise RuntimeError(
         "Missing DEV_PROJECT_DAVID_CORE_TEST_USER_KEY / ENTITIES_API_KEY"
@@ -82,6 +87,14 @@ if not API_KEY:
 
 if not ASSISTANT_ID:
     raise RuntimeError("Missing ASSISTANT_ID")
+
+if not PROVIDER_KEY_ID.startswith("pkey_"):
+    raise RuntimeError(
+        "Set PD_PROVIDER_KEY_ID to an existing registered provider key ID"
+    )
+
+if not MODEL_ID or "/" not in MODEL_ID:
+    raise RuntimeError("Set MCP_TEST_MODEL_ID to the configured provider/model ID")
 
 
 print(f"{GREY}[CONFIG] Base URL:     {BASE_URL}{RESET}")
@@ -99,35 +112,102 @@ client = Entity(
 )
 
 
+# The synchronous wrapper may not expose provider_key_id yet. Use its existing
+# SDK inference client, binding the registered ID for this stream only.
+inference = client.inference.stream_inference_response
+if "provider_key_id" not in inspect.signature(inference).parameters:
+    raise RuntimeError("Installed SDK inference client lacks registered BYOK support")
+
+registered_inference = SimpleNamespace(
+    stream_inference_response=partial(inference, provider_key_id=PROVIDER_KEY_ID),
+)
+print(f"{GREEN}[AUTH] REGISTERED_PROVIDER_KEY=YES{RESET}")
+
+
 # ------------------------------------------------------------------
 # 2. PREFLIGHT: VERIFY ASSISTANT + MCP TOOL ATTACHMENT
 # ------------------------------------------------------------------
 
 print(f"\n{CYAN}=== ASSISTANT PREFLIGHT ==={RESET}")
 
+# Verify assistant access before making any registration changes.
 assistant = client.assistants.retrieve_assistant(ASSISTANT_ID)
 
+DEEPWIKI_URL = "https://mcp.deepwiki.com/mcp"
+REMOTE_TOOL = "read_wiki_structure"
+
+print(f"\n{CYAN}=== MCP REGISTRATION AND DISCOVERY ==={RESET}")
+registrations = client.mcp.list_servers()
+matching = [
+    server
+    for server in registrations
+    if str(server.url) == DEEPWIKI_URL and server.auth_type == "none"
+]
+server_id = os.getenv("DEEPWIKI_MCP_SERVER_ID", "").strip()
+if server_id:
+    matching = [server for server in matching if server.id == server_id]
+    if len(matching) != 1:
+        raise RuntimeError(
+            "DEEPWIKI_MCP_SERVER_ID must identify a matching unauthenticated registration"
+        )
+
+if len(matching) > 1:
+    raise RuntimeError(
+        "Multiple DeepWiki registrations; set DEEPWIKI_MCP_SERVER_ID to select one"
+    )
+if matching:
+    server = matching[0]
+    if not server.enabled:
+        raise RuntimeError("Existing DeepWiki registration is disabled")
+    print("MCP_REGISTRATION=REUSED")
+else:
+    server = client.mcp.create_server(name="deepwiki", url=DEEPWIKI_URL)
+    print("MCP_REGISTRATION=CREATED")
+
+print(f"MCP_SERVER_ID={server.id}")
+# Exercise live discovery even if the tool was already attached.
+discovered = client.mcp.discover_tools(server)
+selected = discovered.select(REMOTE_TOOL)
+print("MCP_DISCOVERY=PASS")
+
+
+def find_attachment():
+    return [
+        tool
+        for tool in client.mcp.list_assistant_tools(ASSISTANT_ID)
+        if tool.registration_id == server.id and tool.remote_name == REMOTE_TOOL
+    ]
+
+
+attachments = find_attachment()
+if not attachments:
+    client.mcp.attach_tools(assistant_id=ASSISTANT_ID, tools=selected)
+    print("MCP_ATTACHMENT=CREATED")
+else:
+    print("MCP_ATTACHMENT=REUSED")
+
+# Use the persisted alias rather than guessing from the server's name.
+attachments = find_attachment()
+if len(attachments) != 1 or not attachments[0].enabled:
+    raise RuntimeError("Expected one enabled DeepWiki attachment")
+expected_tool = attachments[0].provider_name
+print(f"MCP_PROVIDER_TOOL={expected_tool}")
+
+assistant = client.assistants.retrieve_assistant(ASSISTANT_ID)
 print(f"assistant.id={assistant.id}")
 print(f"assistant.model={assistant.model}")
 print(f"assistant.max_turns={assistant.max_turns}")
 
 tool_names = []
-
 for tool in assistant.tools or []:
-    function = tool.get("function") or {}
-    name = function.get("name")
-
+    name = (tool.get("function") or {}).get("name")
     if name:
         tool_names.append(name)
         print(f"tool={name}")
 
-
-expected_tool = "deepwiki__read_wiki_structure"
-
 if expected_tool not in tool_names:
     raise RuntimeError(
-        f"Expected MCP tool {expected_tool!r} is not attached "
-        f"to assistant {ASSISTANT_ID}"
+        "Persisted MCP attachment is missing from assistant tool definitions"
     )
 
 print(f"{GREEN}MCP_ATTACHMENT_PREFLIGHT=PASS{RESET}")
@@ -156,7 +236,7 @@ print(f"thread.id={thread.id}")
 message = client.messages.create_message(
     thread_id=thread.id,
     role="user",
-    content=TEST_PROMPT,
+    content=f"Use the attached tool named {expected_tool}.\n\n{TEST_PROMPT}",
     assistant_id=ASSISTANT_ID,
 )
 
@@ -166,9 +246,12 @@ print(f"message.id={message.id}")
 run = client.runs.create_run(
     assistant_id=ASSISTANT_ID,
     thread_id=thread.id,
+    model=MODEL_ID,
 )
 
 print(f"run.id={run.id}")
+if run.model != MODEL_ID:
+    raise RuntimeError(f"Unexpected persisted run model: {run.model!r}")
 
 
 # ------------------------------------------------------------------
@@ -182,8 +265,9 @@ stream.setup(
     assistant_id=ASSISTANT_ID,
     message_id=message.id,
     run_id=run.id,
-    api_key=os.getenv("TOGETHER_API_KEY"),
+    api_key=None,
 )
+stream.inference_client = registered_inference
 
 
 # ------------------------------------------------------------------
@@ -212,7 +296,7 @@ stream_completed = False
 
 try:
 
-    for event in stream.stream_events(model=MODEL_ID):
+    for event in stream.stream_events(model=run.model):
 
         current_tick = time.perf_counter()
         delta = current_tick - last_tick
@@ -248,7 +332,7 @@ try:
             color = YELLOW
             saw_client_tool_request = True
 
-        if "deepwiki__" in payload_json:
+        if expected_tool in payload_json:
             saw_deepwiki_reference = True
 
         print(
@@ -284,7 +368,7 @@ try:
 
             print(f"\n{YELLOW}" f"[OBSERVED TOOL REQUEST] {tool_name}" f"{RESET}")
 
-            if tool_name and tool_name.startswith("deepwiki__"):
+            if tool_name == expected_tool:
                 print(
                     f"{RED}"
                     "CLIENT_SIDE_MCP_REQUEST=OBSERVED\n"
@@ -362,7 +446,7 @@ if final_text:
 
 print(f"\n{CYAN}=== ACCEPTANCE ==={RESET}")
 
-if stream_completed and saw_content:
+if stream_completed and saw_content and not saw_client_tool_request:
 
     print(f"{GREEN}INFERENCE_STREAM=PASS{RESET}")
     print(f"{GREEN}FINAL_ANSWER=PASS{RESET}")
@@ -388,3 +472,9 @@ else:
 
 
 print(f"\n{YELLOW}" + "=" * 72 + f"{RESET}")
+
+
+# A successful stream is not by itself proof of remote MCP execution.
+print("CORE_MCP_EXECUTION=VERIFY_SERVER_LEDGER")
+if not (stream_completed and saw_content and not saw_client_tool_request):
+    raise SystemExit(1)

@@ -715,6 +715,13 @@ class OrchestratorCore(
                 # Persist durable turn lifecycle
                 # ------------------------------------------------------
 
+                # Admission is mandatory: do not dispatch a provider turn
+                # if the durable status transition is rejected or unavailable.
+                await self._native_exec.update_run_status(
+                    run_id,
+                    StatusEnum.in_progress.value,
+                )
+
                 try:
                     fields = {"current_turn": turn_count}
 
@@ -725,11 +732,6 @@ class OrchestratorCore(
                     await self._native_exec.update_run_fields(
                         run_id,
                         **fields,
-                    )
-
-                    await self._native_exec.update_run_status(
-                        run_id,
-                        StatusEnum.in_progress.value,
                     )
 
                 except Exception as lifecycle_exc:

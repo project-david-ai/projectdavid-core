@@ -13,11 +13,12 @@ from projectdavid import Entity
 from projectdavid_common import UtilsInterface, ValidationInterface
 from projectdavid_orm.projectdavid_orm.models import AssistantMcpTool
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, or_, select, union_all
+from sqlalchemy import and_, func, not_, or_, select, union_all
 from sqlalchemy.exc import IntegrityError
 
 from src.api.entities_api.db.database import SessionLocal
 from src.api.entities_api.models.models import Assistant, User, VectorStore
+from src.api.entities_api.services.erasure_state import require_mutable_user
 from src.api.entities_api.services.logging_service import LoggingUtility
 from src.api.entities_api.services.mcp_tool_config import (
     merge_user_tools_preserving_managed,
@@ -38,6 +39,7 @@ def playground_assistant_id(user_id: str) -> str:
 
 
 class SummaryFilters(BaseModel):
+    include_playground: bool = True
     limit: int = Field(default=50, ge=1, le=100)
     cursor: str | None = Field(
         default=None,
@@ -133,15 +135,57 @@ def decode_cursor(cursor: str) -> tuple[int, str]:
         raise HTTPException(422, "Invalid assistant cursor") from None
 
 
-def summary_query(user_id: str, filters: SummaryFilters):
+def research_inventory_exclusion():
+    """Presentation-only classification; never use this for access or deletion.
+
+    Legacy supervisors were created without role metadata. Match the exact
+    historical factory signature, not the worker_ prefix alone. Keep this
+    compatibility clause until those records have been retired.
+    """
+    metadata = Assistant.meta_data
+    marked = or_(
+        *(
+            func.coalesce(metadata[key].as_string(), "") == "true"
+            for key in (
+                "is_research_ephemeral",
+                "is_research_worker",
+                "research_worker_calling",
+            )
+        )
+    )
+    legacy_supervisor = and_(
+        func.coalesce(Assistant.name, "").regexp_match(r"^worker_[0-9a-f]{8}$"),
+        func.coalesce(Assistant.description, "") == "Temp research supervisor",
+        Assistant.deep_research.is_(True),
+    )
+    return not_(or_(marked, legacy_supervisor))
+
+
+def summary_query(
+    user_id: str,
+    filters: SummaryFilters,
+    is_protected_key: bool = False,
+):
     """Build a bounded, projected query without loading ORM relationships."""
     a = Assistant.__table__
     assoc = Assistant.users.property.secondary
 
     columns = [a.c[name] for name in AssistantSummary.model_fields]
+    visibility = a.c.is_protected.is_(False)
+    if is_protected_key and filters.include_playground:
+        visibility = or_(
+            visibility,
+            and_(
+                a.c.is_protected.is_(True),
+                a.c.owner_id == user_id,
+                a.c.id == playground_assistant_id(user_id),
+            ),
+        )
+
     conditions = [
         a.c.deleted_at.is_(None),
-        a.c.is_protected.is_(False),
+        visibility,
+        research_inventory_exclusion(),
     ]
 
     if filters.assistant_id is not None:
@@ -276,12 +320,19 @@ class AssistantService:
         db,
         user_id: str,
         filters: SummaryFilters,
+        is_protected_key: bool = False,
     ) -> SummaryPage:
         """Return a bounded page of active assistants visible to this user.
         Apply ownership, filtering, and cursor pagination in SQL before
         serializing summary fields. The caller owns the database session.
         """
-        rows = db.execute(summary_query(user_id, filters)).mappings().all()
+        rows = (
+            db.execute(
+                summary_query(user_id, filters, is_protected_key=is_protected_key)
+            )
+            .mappings()
+            .all()
+        )
 
         has_more = len(rows) > filters.limit
 
@@ -397,10 +448,7 @@ class AssistantService:
         assistant_id = playground_assistant_id(user_id)
 
         with SessionLocal() as db:
-            user = db.query(User).filter(User.id == user_id).first()
-            if user is None:
-                raise HTTPException(404, "User not found")
-
+            require_mutable_user(db, user_id)
             existing = db.query(Assistant).filter(Assistant.id == assistant_id).first()
 
             if existing is not None:
@@ -439,6 +487,8 @@ class AssistantService:
             except IntegrityError:
                 db.rollback()
 
+                # Reacquire the erasure fence after rolling back the transaction.
+                require_mutable_user(db, user_id)
                 # A concurrent request may have inserted the same ID.
                 existing = (
                     db.query(Assistant).filter(Assistant.id == assistant_id).first()
@@ -456,6 +506,7 @@ class AssistantService:
         self,
         assistant_id: str,
         user_id: str,
+        is_protected_key: bool = False,
     ) -> validator.AssistantRead:
         """
         Fetch an assistant and enforce ownership.
@@ -479,7 +530,15 @@ class AssistantService:
                     detail="Assistant not found",
                 )
 
-            self._assert_owner(db_asst, user_id)
+            if db_asst.is_protected:
+                if (
+                    not is_protected_key
+                    or db_asst.owner_id != user_id
+                    or db_asst.id != playground_assistant_id(user_id)
+                ):
+                    raise HTTPException(404, "Assistant not found")
+            else:
+                self._assert_owner(db_asst, user_id)
 
             return self.map_to_read_model(db_asst)
 

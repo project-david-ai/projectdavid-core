@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from src.api.entities_api.db.database import SessionLocal
 from src.api.entities_api.models.models import Assistant, Run, Thread
+from src.api.entities_api.services.erasure_state import require_mutable_user
 from src.api.entities_api.services.threads_service import ThreadService
 
 validator = ValidationInterface()
@@ -240,6 +241,10 @@ class RunService:
         is_protected_key: bool = False,
     ) -> validator.Run:
         with SessionLocal() as db:
+            # Serialize admission against account quarantine in this transaction.
+            # Canonical lock order: User -> erasure receipt -> Thread.
+            require_mutable_user(db, user_id)
+
             # Acquire the per-thread mutex before any consistent
             # read in this transaction. A waiter therefore creates
             # its read snapshot only after the previous creator
@@ -444,6 +449,26 @@ class RunService:
                     detail=f"Invalid status: {new_status}",
                 )
 
+            if status not in TERMINAL_RUN_STATUSES:
+                # A Run may resume after an SDK handoff or a terminal epoch.
+                # Resolve its owner first, then lock User -> receipt -> Run.
+                owner_id = run.user_id
+                if not owner_id:
+                    raise HTTPException(409, "Run has no owner.")
+                require_mutable_user(db, owner_id)
+                run = (
+                    db.query(Run)
+                    .filter(Run.id == run_id)
+                    .populate_existing()
+                    .with_for_update()
+                    .first()
+                )
+                if run is None:
+                    raise HTTPException(404, "Run not found")
+                if run.user_id != owner_id:
+                    raise HTTPException(409, "Run ownership changed.")
+
+            # Terminal reconciliation remains available during quarantine.
             self._apply_status_transition(run, status)
 
             db.commit()

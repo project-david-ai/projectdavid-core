@@ -5,6 +5,8 @@ from typing import Any, Dict, Union
 
 from redis import Redis as SyncRedis
 
+from src.api.entities_api.services.request_activity import run_tracked_sync
+
 try:
     from redis.asyncio import Redis as AsyncRedis
 except ImportError:
@@ -52,7 +54,7 @@ class AssistantCache:
         if isinstance(self.redis, AsyncRedis):
             raw = await self.redis.get(key)
         else:
-            raw = await asyncio.to_thread(self.redis.get, key)
+            raw = await run_tracked_sync(self.redis.get, key)
         return json.loads(raw) if raw else None
 
     async def set(self, assistant_id: str, payload: dict):
@@ -61,7 +63,7 @@ class AssistantCache:
         if isinstance(self.redis, AsyncRedis):
             await self.redis.set(key, data, ex=REDIS_ASSISTANT_TTL)
         else:
-            await asyncio.to_thread(self.redis.set, key, data, ex=REDIS_ASSISTANT_TTL)
+            await run_tracked_sync(self.redis.set, key, data, ex=REDIS_ASSISTANT_TTL)
 
     def _normalize_bool(self, value: Union[str, bool, int]) -> bool:
         """Helper to safely convert metadata strings/ints to boolean."""
@@ -150,7 +152,7 @@ class AssistantCache:
         if isinstance(self.redis, AsyncRedis):
             await self.redis.delete(key)
         else:
-            await asyncio.to_thread(self.redis.delete, key)
+            await run_tracked_sync(self.redis.delete, key)
 
     def invalidate_sync(self, assistant_id: str):
         key = self._cache_key(assistant_id)

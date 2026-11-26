@@ -21,6 +21,40 @@ def query_returning(*, first=None, all_items=None):
     return query
 
 
+def scalar_result(value):
+    """
+    Construct a SQLAlchemy execution result for scalar lookups.
+    """
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = value
+    return result
+
+
+def update_result(rowcount=1):
+    """
+    Construct a SQLAlchemy execution result for UPDATE statements.
+    """
+    result = MagicMock()
+    result.rowcount = rowcount
+    return result
+
+
+def mutable_user_results(user):
+    """
+    Database results expected by require_mutable_user().
+
+    1. Lock and retrieve the target user.
+    2. Confirm that no erasure receipt exists.
+
+    These fixtures exercise the actual quarantine guard rather than
+    mocking it out.
+    """
+    return [
+        scalar_result(user),
+        scalar_result(None),
+    ]
+
+
 def make_user():
     return User(
         id="user_test",
@@ -62,8 +96,12 @@ def test_key_creation_is_unprotected():
     user = make_user()
 
     db = MagicMock()
+
+    # Transactional user lock and erasure-state lookup.
+    db.execute.side_effect = mutable_user_results(user)
+
+    # The remaining query checks API-key prefix uniqueness.
     db.query.side_effect = [
-        query_returning(first=user),
         query_returning(first=None),
     ]
 
@@ -74,7 +112,11 @@ def test_key_creation_is_unprotected():
 
     assert key.is_protected is False
     assert key.is_active is True
+    assert key.user_id == user.id
+
+    assert db.execute.call_count == 2
     db.commit.assert_called_once()
+    db.rollback.assert_not_called()
 
 
 @pytest.mark.parametrize("include_inactive", [False, True])
@@ -176,6 +218,7 @@ def test_provisioning_preserves_protected_key():
         "ea_normal",
         key_name="project-black-bird",
     )
+
     protected = make_key(
         "ea_secret",
         protected=True,
@@ -187,6 +230,7 @@ def test_provisioning_preserves_protected_key():
     )
 
     db = MagicMock()
+    db.execute.return_value = scalar_result(None)
     db.query.side_effect = [
         query_returning(first=user),
         query_returning(first=user),
@@ -220,8 +264,19 @@ def test_missing_user_still_returns_404():
 
 
 def test_protect_existing_key_is_scoped_and_repeatable():
+    user = make_user()
     db = MagicMock()
-    db.execute.return_value.rowcount = 1
+
+    # Each invocation performs:
+    #   1. User-row lock.
+    #   2. Erasure-state lookup.
+    #   3. Protected-key update.
+    db.execute.side_effect = [
+        *mutable_user_results(user),
+        update_result(rowcount=1),
+        *mutable_user_results(user),
+        update_result(rowcount=1),
+    ]
 
     service = ApiKeyService(db)
 
@@ -234,28 +289,36 @@ def test_protect_existing_key_is_scoped_and_repeatable():
             is None
         )
 
-    assert db.execute.call_count == 2
+    assert db.execute.call_count == 6
     assert db.commit.call_count == 2
     db.rollback.assert_not_called()
 
-    statement = db.execute.call_args.args[0]
-    sql = str(statement).lower()
-    params = statement.compile().params
+    # Verify both UPDATE statements retain their ownership,
+    # prefix and active-credential restrictions.
+    for index in (2, 5):
+        statement = db.execute.call_args_list[index].args[0]
+        sql = str(statement).lower()
+        params = statement.compile().params
 
-    assert "update" in sql
-    assert "is_protected" in sql
-    assert "user_id" in sql
-    assert "prefix" in sql
-    assert "is_active" in sql
+        assert "update" in sql
+        assert "is_protected" in sql
+        assert "user_id" in sql
+        assert "prefix" in sql
+        assert "is_active" in sql
 
-    assert "user_test" in params.values()
-    assert "ea_secret" in params.values()
-    assert any(value is True for value in params.values())
+        assert "user_test" in params.values()
+        assert "ea_secret" in params.values()
+        assert any(value is True for value in params.values())
 
 
 def test_protect_missing_or_inactive_key_returns_404():
+    user = make_user()
     db = MagicMock()
-    db.execute.return_value.rowcount = 0
+
+    db.execute.side_effect = [
+        *mutable_user_results(user),
+        update_result(rowcount=0),
+    ]
 
     with pytest.raises(HTTPException) as error:
         ApiKeyService(db).protect_existing_key(
@@ -264,13 +327,21 @@ def test_protect_missing_or_inactive_key_returns_404():
         )
 
     assert error.value.status_code == 404
+    assert db.execute.call_count == 3
     db.rollback.assert_called_once()
     db.commit.assert_not_called()
 
 
 def test_protect_database_failure_rolls_back():
+    user = make_user()
     db = MagicMock()
-    db.execute.side_effect = RuntimeError("database failure")
+
+    # Allow the quarantine guard to succeed, then fail the
+    # actual credential UPDATE.
+    db.execute.side_effect = [
+        *mutable_user_results(user),
+        RuntimeError("database failure"),
+    ]
 
     with pytest.raises(HTTPException) as error:
         ApiKeyService(db).protect_existing_key(
@@ -280,6 +351,8 @@ def test_protect_database_failure_rolls_back():
 
     assert error.value.status_code == 500
     assert error.value.detail == ("Unable to protect service credential.")
+
+    assert db.execute.call_count == 3
     db.rollback.assert_called_once()
     db.commit.assert_not_called()
 
@@ -313,9 +386,23 @@ def test_protect_endpoint_admin_success_returns_204():
     administrator = make_user()
     administrator.is_admin = True
 
+    target_user = User(
+        id="user_target",
+        email="target@example.com",
+    )
+
     db = MagicMock()
-    db.query.return_value = query_returning(first=administrator)
-    db.execute.return_value.rowcount = 1
+
+    # Administrative authorization remains independent of
+    # the target account's quarantine state.
+    db.query.return_value = query_returning(
+        first=administrator,
+    )
+
+    db.execute.side_effect = [
+        *mutable_user_results(target_user),
+        update_result(rowcount=1),
+    ]
 
     response = protect_service_key(
         target_user_id="user_target",
@@ -326,5 +413,13 @@ def test_protect_endpoint_admin_success_returns_204():
 
     assert response.status_code == 204
     assert response.body == b""
-    db.execute.assert_called_once()
+
+    assert db.execute.call_count == 3
     db.commit.assert_called_once()
+    db.rollback.assert_not_called()
+
+    statement = db.execute.call_args.args[0]
+    params = statement.compile().params
+
+    assert "user_target" in params.values()
+    assert "ea_secret" in params.values()

@@ -43,6 +43,10 @@ EXPECTED = {
         "/assistants/{assistant_id}/mcp-tools",
         "DELETE",
     ),
+    (
+        "/mcp/servers/{server_id}/credential",
+        "PUT",
+    ),
 }
 
 

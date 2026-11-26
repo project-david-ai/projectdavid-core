@@ -20,19 +20,24 @@ from redis.asyncio import Redis
 from sqlalchemy.orm import Session
 
 # --- DB & MODEL IMPORTS ---
-from src.api.entities_api.db.database import get_db
+from src.api.entities_api.db.database import SessionLocal, get_db
 from src.api.entities_api.models.models import ApiKey, User
+from src.api.entities_api.services.erasure_state import erasure_state
+from src.api.entities_api.services.request_activity import track_authenticated_request
 
 API_KEY_NAME = "X-API-Key"
 _api_key_scheme = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
 # -----------------------------------------------------------------------------
-# FIX: Global Redis Connection Pool & Sync Factory
+# Global Redis Connection Pool & Sync Factory
 # -----------------------------------------------------------------------------
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 # 1. Create Pool Globally
-redis_pool = aioredis.ConnectionPool.from_url(REDIS_URL, decode_responses=True)
+redis_pool = aioredis.ConnectionPool.from_url(
+    REDIS_URL,
+    decode_responses=True,
+)
 
 
 # 2. Synchronous Factory (Use this in __init__ methods)
@@ -67,6 +72,7 @@ async def get_api_key(
         )
 
     prefix = api_key_header[:8]
+
     if len(api_key_header) <= len(prefix):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -76,7 +82,10 @@ async def get_api_key(
 
     key = (
         db.query(ApiKey)
-        .filter(ApiKey.prefix == prefix, ApiKey.is_active.is_(True))
+        .filter(
+            ApiKey.prefix == prefix,
+            ApiKey.is_active.is_(True),
+        )
         .first()
     )
 
@@ -94,6 +103,24 @@ async def get_api_key(
             headers={"WWW-Authenticate": "APIKey"},
         )
 
+    # Register before reading the receipt, so a request already admitted
+    # when quarantine commits remains counted until its ASGI lifetime ends.
+    # Use a fresh transaction: the credential query above may have opened
+    # a repeatable-read snapshot before quarantine committed.
+    if track_authenticated_request(key.user_id):
+        with SessionLocal() as admission_db:
+            receipt_state = erasure_state(admission_db, key.user_id)
+    else:
+        # Preserve the contract for direct, non-HTTP authentication callers.
+        receipt_state = erasure_state(db, key.user_id)
+
+    if receipt_state is not None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or inactive API Key.",
+            headers={"WWW-Authenticate": "APIKey"},
+        )
+
     return key
 
 
@@ -102,7 +129,6 @@ async def get_protected_service_key(
 ) -> ApiKey:
     """
     Require an authenticated, protected API key.
-
     The credential's user_id identifies the authorized Core user.
     Protected-key status does not grant cross-user privileges.
     """
@@ -115,7 +141,9 @@ async def get_protected_service_key(
     return auth_key
 
 
-async def get_current_user(api_key_data: ApiKey = Depends(get_api_key)) -> User:
+async def get_current_user(
+    api_key_data: ApiKey = Depends(get_api_key),
+) -> User:
     if not api_key_data.user:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -128,7 +156,9 @@ async def get_current_user(api_key_data: ApiKey = Depends(get_api_key)) -> User:
 # -----------------------------------------------------------------------------
 # Cache Dependencies
 # -----------------------------------------------------------------------------
-async def get_assistant_cache(redis: Redis = Depends(get_redis)) -> AssistantCache:
+async def get_assistant_cache(
+    redis: Redis = Depends(get_redis),
+) -> AssistantCache:
     return AssistantCache(
         redis=redis,
         pd_base_url=os.getenv("ASSISTANTS_BASE_URL"),
@@ -136,27 +166,36 @@ async def get_assistant_cache(redis: Redis = Depends(get_redis)) -> AssistantCac
     )
 
 
-async def get_message_cache(redis: Redis = Depends(get_redis)) -> MessageCache:
+async def get_message_cache(
+    redis: Redis = Depends(get_redis),
+) -> MessageCache:
     return MessageCache(redis=redis)
 
 
-async def get_web_cache(redis: Redis = Depends(get_redis)) -> WebSessionCache:
+async def get_web_cache(
+    redis: Redis = Depends(get_redis),
+) -> WebSessionCache:
     """
     Provides the WebSessionCache for managing browsing contexts.
     """
     return WebSessionCache(redis=redis)
 
 
-async def get_inventory_cache(redis: Redis = Depends(get_redis)) -> InventoryCache:
+async def get_inventory_cache(
+    redis: Redis = Depends(get_redis),
+) -> InventoryCache:
     """
     Provides the InventoryCache for storing/retrieving network device maps.
     """
     return InventoryCache(redis=redis)
 
 
-async def get_scratchpad_cache(redis: Redis = Depends(get_redis)) -> ScratchpadCache:
+async def get_scratchpad_cache(
+    redis: Redis = Depends(get_redis),
+) -> ScratchpadCache:
     """
-    Provides the ScratchpadCache for the Deep Research Agent's persistent working memory.
+    Provides the ScratchpadCache for the Deep Research Agent's
+    persistent working memory.
     """
     return ScratchpadCache(redis=redis)
 

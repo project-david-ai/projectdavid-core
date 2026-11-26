@@ -24,7 +24,7 @@ from entities_api.platform_tools.definitions.web_search.search_web_page import (
 # into perform_web_search/read_web_page/search_web_page/scroll_web_page.
 # Research workers execute multi-step tool chains internally.
 # One turn is insufficient for read -> search -> read -> verify -> append.
-RESEARCH_WORKER_MAX_TURNS = 8
+RESEARCH_WORKER_MAX_TURNS = 24
 
 
 WORKER_TOOLS = [

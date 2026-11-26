@@ -6,6 +6,7 @@ import os
 import re
 from collections import defaultdict
 from typing import Any, AsyncGenerator, Dict, List, Optional
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from projectdavid_common import ToolValidator
@@ -24,30 +25,56 @@ SEARXNG_BASE_URL = os.getenv("SEARXNG_URL", "http://searxng:8080")
 SEARXNG_TIMEOUT = int(os.getenv("SEARXNG_TIMEOUT", "15"))
 
 
-def _status(run_id: str, tool: str, message: str, status: str = "running") -> str:
-    """
-    Emit a status event as raw JSON conforming to the stream EVENT_CONTRACT.
+def _status(
+    run_id: str,
+    tool: str,
+    message: str,
+    status: str = "running",
+    *,
+    tool_call_id: Optional[str] = None,
+    url: Optional[str] = None,
+    favicon: Optional[str] = None,
+) -> str:
+    """Emit a web lifecycle event with optional presentation metadata."""
+    payload = {
+        "type": "web_status",
+        "run_id": run_id,
+        "tool": tool,
+        "status": status,
+        "message": message,
+        "origin_run_id": run_id,
+    }
+    if tool_call_id is not None:
+        payload["tool_call_id"] = tool_call_id
+    if url is not None:
+        payload["url"] = url
+    if favicon is not None:
+        payload["favicon"] = favicon
+    return json.dumps(payload)
 
-    Shape:
-        {
-            "type":    "web_status",
-            "run_id":  "<uuid>",
-            "tool":    "<tool_name>",
-            "status":  "running" | "success" | "error" | "warning",
-            "message": "<human readable>"
-        }
 
-    The SDK deserializes and routes this — no StatusEvent dataclass needed here.
-    """
-    return json.dumps(
-        {
-            "type": "web_status",
-            "run_id": run_id,
-            "tool": tool,
-            "status": status,
-            "message": message,
-        }
-    )
+def _web_status_url(value: Any) -> Optional[str]:
+    """Expose a page label, not credentials, query parameters or fragments."""
+    if (
+        not isinstance(value, str)
+        or len(value) > 2048
+        or any(ord(char) <= 32 or ord(char) == 127 or char == "\\" for char in value)
+    ):
+        return None
+    try:
+        parts = urlsplit(value)
+        if (
+            parts.scheme not in {"http", "https"}
+            or not parts.hostname
+            or parts.username is not None
+            or parts.password is not None
+        ):
+            return None
+        # Accessing port validates malformed port values.
+        _ = parts.port
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    except ValueError:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -511,8 +538,32 @@ class WebSearchMixin:
 
         ts_start = asyncio.get_event_loop().time()
 
+        page_url = (
+            arguments_dict.get("url")
+            if tool_name in {"read_web_page", "scroll_web_page", "search_web_page"}
+            and isinstance(arguments_dict, dict)
+            else None
+        )
+        status_url = _web_status_url(page_url)
+
+        def emit(
+            message: str,
+            status: str = "running",
+            *,
+            favicon: Optional[str] = None,
+        ) -> str:
+            return _status(
+                run_id,
+                tool_name,
+                message,
+                status,
+                tool_call_id=tool_call_id,
+                url=status_url,
+                favicon=favicon,
+            )
+
         # --- [1] STATUS: VALIDATING ---
-        yield _status(run_id, tool_name, "Validating parameters...")
+        yield emit("Validating parameters...")
 
         # --- VALIDATION ---
         validator = ToolValidator()
@@ -521,7 +572,7 @@ class WebSearchMixin:
 
         if validation_error:
             LOG.warning(f"{tool_name} ▸ Validation Failed: {validation_error}")
-            yield _status(run_id, tool_name, "Validation failed.", status="error")
+            yield emit("Validation failed.", status="error")
 
             error_feedback = self._format_web_tool_error(
                 tool_name, f"Validation Error: {validation_error}", arguments_dict
@@ -544,7 +595,7 @@ class WebSearchMixin:
             return
 
         # --- [2] STATUS: CREATING ACTION ---
-        yield _status(run_id, tool_name, "Initializing tool action...")
+        yield emit("Initializing tool action...")
 
         action = None
         try:
@@ -557,7 +608,7 @@ class WebSearchMixin:
             )
         except Exception as exc:
             LOG.error(f"{tool_name} ▸ Action creation failed: {exc}")
-            yield _status(run_id, tool_name, "Internal system error.", status="error")
+            yield emit("Internal system error.", status="error")
             return
 
         # --- [3] EXECUTION ---
@@ -570,7 +621,7 @@ class WebSearchMixin:
             # ----------------------------------------------------------------
             if tool_name == "read_web_page":
                 target_url = arguments_dict["url"]
-                yield _status(run_id, tool_name, f"Reading: {target_url}...")
+                yield emit(f"Reading: {target_url}...")
 
                 session = self._get_or_create_session(run_id)
 
@@ -621,9 +672,7 @@ class WebSearchMixin:
                         f"[{run_id}] scroll_web_page INTERCEPTED for '{target_url}' "
                         f"page={page_num}: scroll guard triggered."
                     )
-                    yield _status(
-                        run_id,
-                        tool_name,
+                    yield emit(
                         f"Scroll blocked by guard (page {page_num}).",
                         status="warning",
                     )
@@ -649,9 +698,7 @@ class WebSearchMixin:
                     f"(attempt {attempted_scroll}/{SCROLL_LIMIT_PER_URL})"
                 )
 
-                yield _status(
-                    run_id,
-                    tool_name,
+                yield emit(
                     f"Scrolling to page {page_num} "
                     f"(attempt {attempted_scroll}/{SCROLL_LIMIT_PER_URL})...",
                 )
@@ -697,7 +744,7 @@ class WebSearchMixin:
                 target_url = arguments_dict["url"]
                 query_val = arguments_dict["query"]
 
-                yield _status(run_id, tool_name, f"Searching page for '{query_val}'...")
+                yield emit(f"Searching page for '{query_val}'...")
 
                 raw_content = await self._native_exec.search_url(
                     url=target_url,
@@ -717,14 +764,14 @@ class WebSearchMixin:
             # ----------------------------------------------------------------
             elif tool_name == "perform_web_search":
                 query_val = arguments_dict["query"]
-                yield _status(run_id, tool_name, f"Querying SearxNG: '{query_val}'...")
+                yield emit(f"Querying SearxNG: '{query_val}'...")
 
                 session = self._get_or_create_session(run_id, query_val)
                 session["search_performed"] = True
                 query_tier = session.get("query_tier", 1)
 
                 searxng = SearxNGClient()
-                yield _status(run_id, tool_name, "Parsing search results...")
+                yield emit("Parsing search results...")
 
                 raw_content = await searxng.format_for_agent(
                     query=query_val,
@@ -746,18 +793,22 @@ class WebSearchMixin:
                 is_soft_failure = True
 
             if is_soft_failure:
-                yield _status(
-                    run_id, tool_name, "Encountered external error...", status="warning"
-                )
+                yield emit("Encountered external error...", status="warning")
                 final_content = self._format_web_tool_error(
                     tool_name, final_content, arguments_dict
                 )
             else:
-                yield _status(
-                    run_id,
-                    tool_name,
+                favicon = None
+                if status_url is not None and isinstance(page_url, str):
+                    try:
+                        favicon = await self._native_exec.get_web_favicon(page_url)
+                    except Exception:
+                        # Presentation metadata must never fail a tool action.
+                        favicon = None
+                yield emit(
                     "Content retrieved successfully.",
                     status="success",
+                    favicon=favicon,
                 )
 
             # --- [5] SUBMIT OUTPUT ---
@@ -791,9 +842,7 @@ class WebSearchMixin:
         except Exception as exc:
             # --- [7] HARD FAILURE ---
             LOG.error(f"[{run_id}] {tool_name} HARD FAILURE: {exc}")
-            yield _status(
-                run_id, tool_name, f"Critical failure: {str(exc)}", status="error"
-            )
+            yield emit(f"Critical failure: {str(exc)}", status="error")
 
             error_hint = self._format_web_tool_error(
                 tool_name, str(exc), arguments_dict

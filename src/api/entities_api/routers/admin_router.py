@@ -7,15 +7,19 @@ from projectdavid_common.schemas.api_key_schemas import (
 )
 from projectdavid_common.utilities.logging_service import LoggingUtility
 from pydantic import BaseModel, Field
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from src.api.entities_api.dependencies import get_api_key, get_db
 from src.api.entities_api.models.models import ApiKey as ApiKeyModel
+from src.api.entities_api.models.models import Assistant
 from src.api.entities_api.models.models import User as UserModel
 from src.api.entities_api.services.admin_provisioning_service import (
     AdminProvisioningService,
 )
 from src.api.entities_api.services.api_key_service import ApiKeyService
+from src.api.entities_api.services.assistants_service import playground_assistant_id
+from src.api.entities_api.services.erasure_state import erasure_state
 
 admin_router = APIRouter(
     prefix="/admin",
@@ -186,3 +190,101 @@ def protect_service_key(
     )
 
     return Response(status_code=204)
+
+
+class ProtectedResourcesResponse(BaseModel):
+    user_id: str
+    key_prefix: str
+    key_state: str
+    other_protected_keys: int
+    assistant_id: str
+    assistant_state: str
+    other_protected_assistants: int
+
+
+@admin_router.get(
+    "/users/{target_user_id}/protected-resources",
+    response_model=ProtectedResourcesResponse,
+)
+def inspect_protected_resources(
+    target_user_id: str,
+    key_prefix: str,
+    db: Session = Depends(get_db),
+    auth_key: ApiKeyModel = Depends(get_api_key),
+):
+    """Inspect designated Portal resources without returning credential material."""
+    requester = db.get(UserModel, auth_key.user_id)
+    if requester is None or not requester.is_admin:
+        raise HTTPException(403, "Admin privileges required.")
+
+    if erasure_state(db, target_user_id) is not None:
+        raise HTTPException(409, "Account deletion is pending or complete.")
+    target = db.get(UserModel, target_user_id)
+    if target is None:
+        raise HTTPException(404, "User not found.")
+    if target.is_admin:
+        raise HTTPException(409, "Expected a non-administrator Portal user.")
+
+    key = db.execute(
+        select(ApiKeyModel.is_active, ApiKeyModel.is_protected).where(
+            ApiKeyModel.user_id == target_user_id,
+            ApiKeyModel.prefix == key_prefix,
+        )
+    ).one_or_none()
+    if key is None:
+        key_state = "missing"
+    elif key.is_active is not True:
+        key_state = "inactive"
+    elif key.is_protected is True:
+        key_state = "protected"
+    elif key.is_protected is False:
+        key_state = "unprotected"
+    else:
+        key_state = "conflict"
+
+    other_keys = db.scalar(
+        select(func.count())
+        .select_from(ApiKeyModel)
+        .where(
+            ApiKeyModel.user_id == target_user_id,
+            ApiKeyModel.is_protected.is_(True),
+            ApiKeyModel.prefix != key_prefix,
+        )
+    )
+
+    assistant_id = playground_assistant_id(target_user_id)
+    assistant = db.execute(
+        select(Assistant.owner_id, Assistant.is_protected, Assistant.deleted_at).where(
+            Assistant.id == assistant_id
+        )
+    ).one_or_none()
+    if assistant is None:
+        assistant_state = "missing"
+    elif (
+        assistant.owner_id == target_user_id
+        and assistant.is_protected is True
+        and assistant.deleted_at is None
+    ):
+        assistant_state = "protected"
+    else:
+        assistant_state = "conflict"
+
+    other_assistants = db.scalar(
+        select(func.count())
+        .select_from(Assistant)
+        .where(
+            Assistant.owner_id == target_user_id,
+            Assistant.is_protected.is_(True),
+            Assistant.id != assistant_id,
+        )
+    )
+
+    return ProtectedResourcesResponse(
+        user_id=target_user_id,
+        key_prefix=key_prefix,
+        key_state=key_state,
+        other_protected_keys=other_keys,
+        assistant_id=assistant_id,
+        assistant_state=assistant_state,
+        other_protected_assistants=other_assistants,
+    )

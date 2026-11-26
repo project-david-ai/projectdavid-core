@@ -4,9 +4,7 @@ from types import SimpleNamespace
 from entities_api.orchestration.mixins.context_mixin import ContextMixin
 from entities_api.platform_tools.tool_reigistry.research_worker import (
     RESEARCH_WORKER_MAX_TURNS,
-    WORKER_TOOLS,
 )
-from projectdavid_common.schemas.assistants_schema import AssistantCreate
 
 from src.api.entities_api.orchestration.mixins.scratchpad_mixin import ScratchpadMixin
 from src.api.entities_api.utilities.assistant_manager import AssistantManager
@@ -250,4 +248,4 @@ def test_scratchpad_platform_schema_hides_resource_identity():
 
 def test_research_worker_has_multi_turn_budget():
     assert RESEARCH_WORKER_MAX_TURNS > 1
-    assert RESEARCH_WORKER_MAX_TURNS == 8
+    assert RESEARCH_WORKER_MAX_TURNS == 24

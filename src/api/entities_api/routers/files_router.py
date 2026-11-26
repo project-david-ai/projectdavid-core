@@ -21,10 +21,14 @@ from projectdavid_common.validation import FileDeleteResponse, FileResponse
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
+from src.api.entities_api.db.database import SessionLocal
 from src.api.entities_api.dependencies import get_api_key, get_db
 from src.api.entities_api.models.models import ApiKey as ApiKeyModel
 from src.api.entities_api.models.models import File as FileModel
+from src.api.entities_api.models.models import User
+from src.api.entities_api.services.erasure_state import erasure_state
 from src.api.entities_api.services.file_service import FileService
+from src.api.entities_api.services.request_activity import track_authenticated_request
 
 load_dotenv()
 router = APIRouter()
@@ -63,15 +67,24 @@ def download_file(
 
     logging_utility.info(f"Signature OK, proceeding to stream file_id: {file_id}")
 
-    svc = FileService(db)
     file_record = db.query(FileModel).filter(FileModel.id == file_id).first()
 
-    if not file_record:
+    if not file_record or not file_record.user_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "File not found")
 
+    # A signed URL is a bearer credential, even though it bypasses API-key
+    # authentication. Register its owner before the fresh receipt read, so
+    # admitted streams remain visible to the account-erasure coordinator.
+    owner_id = file_record.user_id
+    track_authenticated_request(owner_id)
+    with SessionLocal() as admission_db:
+        if erasure_state(admission_db, owner_id) is not None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "File not found")
+
+    svc = FileService(db)
     stream, orig_name, mime = svc.get_file_with_metadata(
         file_id,
-        user_id=file_record.user_id,
+        user_id=owner_id,
     )
 
     fname = orig_name if use_real_filename else file_id
@@ -132,6 +145,39 @@ def upload_file_endpoint(
     )
 
     return FileResponse.model_validate(created)
+
+
+@router.post("/internal/sandbox/artifacts", status_code=201, include_in_schema=False)
+def upload_sandbox_artifact(
+    owner_id: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    auth_key: ApiKeyModel = Depends(get_api_key),
+):
+    """Trusted sandbox service delegates ownership, not the socket client."""
+    admin = db.get(User, auth_key.user_id)
+    if admin is None or not admin.is_admin:
+        raise HTTPException(403, "Admin privileges required.")
+    track_authenticated_request(owner_id)
+    with SessionLocal() as admission_db:
+        if (
+            erasure_state(admission_db, owner_id) is not None
+            or admission_db.get(User, owner_id) is None
+        ):
+            raise HTTPException(403, "Sandbox access denied.")
+    # Fail before persistence if download signing is misconfigured.
+    if not os.getenv("SIGNED_URL_SECRET") or not os.getenv("DOWNLOAD_BASE_URL"):
+        raise HTTPException(503, "Download signing unavailable.")
+    created = FileService(db).upload_file(
+        file=file,
+        request=type("Req", (), {"purpose": "assistants", "user_id": owner_id}),
+    )
+    result = FileResponse.model_validate(created)
+    return {
+        "id": result.id,
+        "filename": result.filename,
+        "url": _build_signed_url(result.id, 600, True),
+    }
 
 
 # ----------------------------------------------------------------------
@@ -376,6 +422,12 @@ def generate_signed_url(
             "You do not have permission to access this file.",
         )
 
+    url = _build_signed_url(file_id, expires_in, use_real_filename)
+    logging_utility.info("User %s generated signed URL for %s", user_id, file_id)
+    return {"signed_url": url}
+
+
+def _build_signed_url(file_id: str, expires_in: int, use_real_filename: bool) -> str:
     secret = os.getenv("SIGNED_URL_SECRET", "")
     base_url = os.getenv("DOWNLOAD_BASE_URL", "").rstrip("/")
 
@@ -411,13 +463,7 @@ def generate_signed_url(
         else f"{base_url}{target_path}?{query}"
     )
 
-    logging_utility.info(
-        "User %s generated signed URL for %s",
-        user_id,
-        file_id,
-    )
-
-    return {"signed_url": url}
+    return url
 
 
 # ----------------------------------------------------------------------

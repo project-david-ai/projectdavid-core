@@ -1,4 +1,3 @@
-import asyncio
 import json
 from typing import Any, Dict, List, Optional
 
@@ -23,6 +22,7 @@ from src.api.entities_api.services.execution_ledger_service import (
 )
 from src.api.entities_api.services.logging_service import LoggingUtility
 from src.api.entities_api.services.message_service import MessageService
+from src.api.entities_api.services.request_activity import run_tracked_sync
 from src.api.entities_api.services.runs_service import RunService
 from src.api.entities_api.services.scratchpad_service import ScratchpadService
 from src.api.entities_api.services.threads_service import ThreadService
@@ -121,7 +121,7 @@ class NativeExecutionService:
                         detail="You do not have access to this assistant.",
                     )
 
-        await asyncio.to_thread(_check)
+        await run_tracked_sync(_check)
 
     @staticmethod
     async def resolve_provider_key_for_inference(
@@ -135,7 +135,7 @@ class NativeExecutionService:
             ProviderKeyService,
         )
 
-        return await asyncio.to_thread(
+        return await run_tracked_sync(
             ProviderKeyService().resolve_for_inference,
             provider_key_id=provider_key_id,
             user_id=user_id,
@@ -192,12 +192,10 @@ class NativeExecutionService:
             kwargs["top_p"] = top_p
 
         req = self.val_interface.AssistantCreate(**kwargs)
-        return await asyncio.to_thread(
-            self.assistant_svc.create_assistant, req, user_id
-        )
+        return await run_tracked_sync(self.assistant_svc.create_assistant, req, user_id)
 
     async def retrieve_assistant(self, assistant_id: str) -> Any:
-        return await asyncio.to_thread(
+        return await run_tracked_sync(
             self.assistant_svc.retrieve_assistant_internal, assistant_id
         )
 
@@ -207,7 +205,7 @@ class NativeExecutionService:
         user_id: str,
         permanent: bool = False,
     ) -> None:
-        return await asyncio.to_thread(
+        return await run_tracked_sync(
             self.assistant_svc.delete_assistant,
             assistant_id,
             user_id,
@@ -251,7 +249,7 @@ class NativeExecutionService:
         """
         Async wrapper — use this from async orchestrator contexts.
         """
-        return await asyncio.to_thread(self.get_file_as_base64_internal_sync, file_id)
+        return await run_tracked_sync(self.get_file_as_base64_internal_sync, file_id)
 
     # ------------------------------------------------------------------
     # Vector Store
@@ -276,7 +274,7 @@ class NativeExecutionService:
                     return None
                 return store
 
-        return await asyncio.to_thread(_fetch)
+        return await run_tracked_sync(_fetch)
 
     # ------------------------------------------------------------------
     # Action / Message Operations
@@ -312,7 +310,7 @@ class NativeExecutionService:
             function_args=normalised_args,
             decision=decision,
         )
-        return await asyncio.to_thread(self.action_svc.create_action, req)
+        return await run_tracked_sync(self.action_svc.create_action, req)
 
     async def update_action_status(
         self,
@@ -331,7 +329,7 @@ class NativeExecutionService:
             )
             return self.action_svc.update_action_status(action_id, req)
 
-        return await asyncio.to_thread(_update)
+        return await run_tracked_sync(_update)
 
     async def create_run(
         self,
@@ -363,7 +361,7 @@ class NativeExecutionService:
         def _create():
             return self.run_svc.create_run(req, user_id=user_id)
 
-        return await asyncio.to_thread(_create)
+        return await run_tracked_sync(_create)
 
     async def link_research_delegation(
         self,
@@ -475,7 +473,7 @@ class NativeExecutionService:
 
                 return edge.id
 
-        return await asyncio.to_thread(_link)
+        return await run_tracked_sync(_link)
 
     async def retire_research_worker_actor(
         self,
@@ -527,16 +525,16 @@ class NativeExecutionService:
                         details={"status": state},
                     )
 
-        await asyncio.to_thread(_retire)
+        await run_tracked_sync(_retire)
 
     async def retrieve_run(self, run_id: str) -> Any:
-        return await asyncio.to_thread(self.run_svc.retrieve_run, run_id)
+        return await run_tracked_sync(self.run_svc.retrieve_run, run_id)
 
     async def create_thread(self, user_id: str) -> Any:
         import types
 
         req = types.SimpleNamespace(participant_ids=[user_id], meta_data=None)
-        return await asyncio.to_thread(self.thread_svc.create_thread, req, user_id)
+        return await run_tracked_sync(self.thread_svc.create_thread, req, user_id)
 
     async def create_message(
         self,
@@ -551,12 +549,10 @@ class NativeExecutionService:
             content=content,
             role=role,
         )
-        return await asyncio.to_thread(self.message_svc.create_message_internal, req)
+        return await run_tracked_sync(self.message_svc.create_message_internal, req)
 
     async def delete_thread(self, thread_id: str, user_id: str) -> Any:
-        return await asyncio.to_thread(
-            self.thread_svc.delete_thread, thread_id, user_id
-        )
+        return await run_tracked_sync(self.thread_svc.delete_thread, thread_id, user_id)
 
     # ------------------------------------------------------------------
     # Message history — three distinct paths, use the right one
@@ -573,7 +569,7 @@ class NativeExecutionService:
 
         Never pass this output directly to the LLM — call hydrate_messages() first.
         """
-        return await asyncio.to_thread(
+        return await run_tracked_sync(
             self.message_svc.get_raw_messages_internal, thread_id
         )
 
@@ -585,7 +581,7 @@ class NativeExecutionService:
         FOR ORCHESTRATOR / LLM USE ONLY.
         Do NOT use this to populate Redis — use get_raw_messages() instead.
         """
-        return await asyncio.to_thread(
+        return await run_tracked_sync(
             self.message_svc.get_formatted_messages_internal, thread_id
         )
 
@@ -673,7 +669,7 @@ class NativeExecutionService:
 
             return hydrated
 
-        return await asyncio.to_thread(_do_hydrate, msgs)
+        return await run_tracked_sync(_do_hydrate, msgs)
 
     async def submit_tool_output(
         self,
@@ -692,7 +688,7 @@ class NativeExecutionService:
             tool_call_id=tool_call_id,
             meta_data={"action_id": action_id, "is_error": is_error},
         )
-        result = await asyncio.to_thread(
+        result = await run_tracked_sync(
             self.message_svc.submit_tool_output_internal, msg_req
         )
 
@@ -701,7 +697,7 @@ class NativeExecutionService:
             from src.api.entities_api.cache.message_cache import get_sync_message_cache
 
             cache = get_sync_message_cache()
-            await asyncio.to_thread(
+            await run_tracked_sync(
                 cache.append_message_sync,
                 thread_id,
                 {"role": "tool", "content": content, "tool_call_id": tool_call_id},
@@ -748,12 +744,12 @@ class NativeExecutionService:
         )
 
     async def update_run_status(self, run_id: str, new_status: str) -> Any:
-        return await asyncio.to_thread(
+        return await run_tracked_sync(
             self.run_svc.update_run_status, run_id, new_status
         )
 
     async def update_run_fields(self, run_id: str, **fields) -> Any:
-        return await asyncio.to_thread(self.run_svc.update_run_fields, run_id, **fields)
+        return await run_tracked_sync(self.run_svc.update_run_fields, run_id, **fields)
 
     async def save_assistant_message_chunk(
         self,
@@ -764,7 +760,7 @@ class NativeExecutionService:
         sender_id: str,
         is_last_chunk: bool = True,
     ) -> Any:
-        return await asyncio.to_thread(
+        return await run_tracked_sync(
             self.message_svc.save_assistant_message_chunk,
             thread_id,
             content,
@@ -781,6 +777,10 @@ class NativeExecutionService:
     async def read_url(self, url: str, force_refresh: bool = False) -> str:
         LOG.info(f"NativeExec ▸ read_url: {url} (force_refresh={force_refresh})")
         return await self.web_reader.read(url, force_refresh=force_refresh)
+
+    async def get_web_favicon(self, url: str) -> Optional[str]:
+        """Return cached web presentation metadata without network retrieval."""
+        return await self.web_reader.get_favicon(url)
 
     async def scroll_url(self, url: str, page: int) -> str:
         LOG.info(f"NativeExec ▸ scroll_url: {url} page={page}")
@@ -840,7 +840,7 @@ class NativeExecutionService:
                     },
                 }
 
-        return await asyncio.to_thread(_reserve)
+        return await run_tracked_sync(_reserve)
 
     async def activate_execution_actor(
         self,
@@ -870,7 +870,7 @@ class NativeExecutionService:
                     "model_snapshot": actor.model_snapshot,
                 }
 
-        return await asyncio.to_thread(_activate)
+        return await run_tracked_sync(_activate)
 
     async def retire_execution_actor(
         self,
@@ -895,7 +895,7 @@ class NativeExecutionService:
                     "assistant_id_snapshot": actor.assistant_id_snapshot,
                 }
 
-        return await asyncio.to_thread(_retire)
+        return await run_tracked_sync(_retire)
 
     async def complete_execution_epoch(
         self,
@@ -936,4 +936,4 @@ class NativeExecutionService:
                     "terminal_status": epoch.terminal_status,
                 }
 
-        return await asyncio.to_thread(_complete)
+        return await run_tracked_sync(_complete)

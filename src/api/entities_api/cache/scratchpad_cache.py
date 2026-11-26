@@ -1,14 +1,15 @@
-﻿# src/api/entities_api/cache/scratchpad_cache.py
+# src/api/entities_api/cache/scratchpad_cache.py
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import time
 from typing import Any, Dict, Union
 
 from redis import Redis as SyncRedis
+
+from src.api.entities_api.services.request_activity import run_tracked_sync
 
 try:
     from redis.asyncio import Redis as AsyncRedis
@@ -76,7 +77,7 @@ class ScratchpadCache:
                 **kwargs,
             )
 
-        return await asyncio.to_thread(
+        return await run_tracked_sync(
             method,
             *args,
             **kwargs,

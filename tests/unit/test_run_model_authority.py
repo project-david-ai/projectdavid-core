@@ -40,6 +40,11 @@ def _run_request(model=None, resources=None):
 
 def _create_run_with_mock_db(monkeypatch, *, override, default, resources=None):
     db = MagicMock()
+    # The account exists and has no erasure receipt.
+    db.execute.return_value.scalar_one_or_none.side_effect = [
+        SimpleNamespace(id="user_1"),
+        None,
+    ]
     db_ctx = MagicMock()
     db_ctx.__enter__.return_value = db
 
@@ -174,6 +179,10 @@ def _run_stateful_with_mocks(
     *,
     stream=False,
     status="queued",
+    response_consumer=None,
+    assistant_lookup=None,
+    authenticated_user_id="user_1",
+    assistant_access_error=None,
 ):
     run = SimpleNamespace(
         id="run_1",
@@ -186,7 +195,12 @@ def _run_stateful_with_mocks(
 
     native = MagicMock()
     native.retrieve_run = AsyncMock(return_value=run)
-    native.assert_assistant_access = AsyncMock()
+    native.assert_assistant_access = AsyncMock(side_effect=assistant_access_error)
+    native.retrieve_assistant = (
+        assistant_lookup
+        if assistant_lookup is not None
+        else AsyncMock(return_value=SimpleNamespace(meta_data={}, max_turns=200))
+    )
 
     native_service_class = MagicMock(return_value=native)
     native_service_class.resolve_provider_key_for_inference = AsyncMock(
@@ -235,7 +249,9 @@ def _run_stateful_with_mocks(
                 inference_router,
                 "get_api_key",
                 new=AsyncMock(
-                    return_value=SimpleNamespace(user_id="user_1", is_protected=False)
+                    return_value=SimpleNamespace(
+                        user_id=authenticated_user_id, is_protected=False
+                    )
                 ),
             ),
             patch.object(
@@ -253,6 +269,9 @@ def _run_stateful_with_mocks(
                 redis=MagicMock(),
                 project_api_key="project-key",
             )
+
+            if response_consumer is not None:
+                return await response_consumer(response)
 
             if stream:
                 response_chunks = [chunk async for chunk in response.body_iterator]
@@ -279,6 +298,7 @@ def test_stateful_buffered_inference_dispatches_persisted_model():
 
     assert calls[0]["model"] == "hyperbolic/overridden"
     assert calls[0]["api_key"] == "provider-key"
+    assert "max_turns" not in calls[0]
     assert body["model"] == "hyperbolic/overridden"
     assert body["content"] == "model-authority-ok"
     assert run.model == "hyperbolic/overridden"
@@ -297,9 +317,144 @@ def test_stateful_streaming_inference_dispatches_persisted_model():
     selector.select_provider.assert_called_once_with(model_id="together-ai/base-model")
 
     assert calls[0]["model"] == "together-ai/base-model"
+    assert "max_turns" not in calls[0]
     assert "model-authority-ok" in data
     assert "[DONE]" in data
     assert run.model == "together-ai/base-model"
+    db.commit.assert_not_called()
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"is_research_worker": "true"},
+        {"is_research_worker": True},
+        {"research_worker_calling": "true"},
+    ],
+)
+@pytest.mark.parametrize("model", ["hyperbolic/overridden", "together-ai/base-model"])
+def test_research_worker_budget_is_forwarded_from_assistant(stream, metadata, model):
+    lookup = AsyncMock(return_value=SimpleNamespace(meta_data=metadata, max_turns=8))
+    invoke, selector, calls, run, db = _run_stateful_with_mocks(
+        model, model, stream=stream, assistant_lookup=lookup
+    )
+
+    result = asyncio.run(invoke())
+
+    lookup.assert_awaited_once_with("assistant_1")
+    selector.select_provider.assert_called_once_with(model_id=model)
+    assert len(calls) == 1
+    assert calls[0]["max_turns"] == 8
+    assert calls[0]["model"] == model
+    assert run.model == model
+    db.commit.assert_not_called()
+    if stream:
+        assert "model-authority-ok" in result
+        assert "[DONE]" in result
+    else:
+        assert result["content"] == "model-authority-ok"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("budget", [0, -1, None, True, "8", 8.0])
+def test_invalid_research_worker_budget_rejected_before_dispatch(stream, budget):
+    lookup = AsyncMock(
+        return_value=SimpleNamespace(
+            meta_data={"is_research_worker": "true"}, max_turns=budget
+        )
+    )
+    invoke, selector, calls, _, db = _run_stateful_with_mocks(
+        "together-ai/base-model",
+        "together-ai/base-model",
+        stream=stream,
+        assistant_lookup=lookup,
+    )
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(invoke())
+
+    assert error.value.status_code == 500
+    assert error.value.detail == "Invalid research worker turn budget."
+    lookup.assert_awaited_once_with("assistant_1")
+    selector.select_provider.assert_not_called()
+    assert calls == []
+    db.commit.assert_not_called()
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        None,
+        {"is_research_worker": False},
+        {"deep_research": True},
+        {"junior_engineer": "true"},
+        {"is_research_worker": "false", "research_worker_calling": "true"},
+    ],
+)
+def test_non_worker_execution_budget_is_unchanged(stream, metadata):
+    lookup = AsyncMock(return_value=SimpleNamespace(meta_data=metadata, max_turns=8))
+    invoke, _, calls, _, _ = _run_stateful_with_mocks(
+        "together-ai/base-model",
+        "together-ai/base-model",
+        stream=stream,
+        assistant_lookup=lookup,
+    )
+
+    asyncio.run(invoke())
+
+    assert len(calls) == 1
+    assert "max_turns" not in calls[0]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("denial", ["run-owner", "assistant-access"])
+def test_research_budget_lookup_requires_authorization(stream, denial):
+    lookup = AsyncMock(
+        return_value=SimpleNamespace(
+            meta_data={"is_research_worker": "true"}, max_turns=8
+        )
+    )
+    access_error = (
+        HTTPException(status_code=403, detail="Assistant access denied.")
+        if denial == "assistant-access"
+        else None
+    )
+    invoke, selector, calls, _, db = _run_stateful_with_mocks(
+        "together-ai/base-model",
+        "together-ai/base-model",
+        stream=stream,
+        assistant_lookup=lookup,
+        authenticated_user_id="other_user" if denial == "run-owner" else "user_1",
+        assistant_access_error=access_error,
+    )
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(invoke())
+
+    assert error.value.status_code == 403
+    lookup.assert_not_awaited()
+    selector.select_provider.assert_not_called()
+    assert calls == []
+    db.commit.assert_not_called()
+
+
+def test_missing_assistant_rejected_before_provider_dispatch():
+    lookup = AsyncMock(return_value=None)
+    invoke, selector, calls, _, db = _run_stateful_with_mocks(
+        "together-ai/base-model",
+        "together-ai/base-model",
+        assistant_lookup=lookup,
+    )
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(invoke())
+
+    assert error.value.status_code == 404
+    assert error.value.detail == "Assistant not found."
+    selector.select_provider.assert_not_called()
+    assert calls == []
     db.commit.assert_not_called()
 
 
@@ -457,3 +612,85 @@ def test_research_delegation_persists_model_before_child_stream():
         for event in events
         if event.get("type") == "research_status"
     )
+
+
+def test_buffered_error_closes_execution_before_returning():
+    invoke, selector, _, _, _ = _run_stateful_with_mocks(
+        "together-ai/base-model", "together-ai/base-model"
+    )
+    finalized = []
+
+    async def worker(**kwargs):
+        try:
+            yield {"type": "error", "message": "inference failed"}
+            pytest.fail("Buffered execution must stop consuming after an error")
+        finally:
+            finalized.append(True)
+
+    selector.select_provider.return_value = (
+        SimpleNamespace(process_conversation=worker),
+        "provider-model",
+    )
+
+    async def check():
+        with pytest.raises(HTTPException) as error:
+            await invoke()
+        assert error.value.status_code == 500
+        assert error.value.detail == "inference failed"
+        # Assert before asyncio.run() can finalize orphaned generators.
+        assert finalized == [True]
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize("exit_path", ["explicit-close", "send-failure", "cancel"])
+def test_stream_shutdown_closes_suspended_execution(exit_path):
+    finalized = []
+
+    async def worker(**kwargs):
+        try:
+            yield {"type": "content", "content": "first chunk"}
+            pytest.fail("Execution must not resume after the consumer stops")
+        finally:
+            await asyncio.sleep(0)
+            finalized.append(True)
+
+    async def consume(response):
+        if exit_path == "explicit-close":
+            first = await anext(response.body_iterator)
+            assert "first chunk" in first
+            await response.body_iterator.aclose()
+        elif exit_path == "send-failure":
+
+            async def send(message):
+                if message["type"] == "http.response.body":
+                    raise OSError("client disconnected")
+
+            with pytest.raises(OSError, match="client disconnected"):
+                await response.stream_response(send)
+        else:
+            from anyio import CancelScope
+
+            with CancelScope() as scope:
+
+                async def send(message):
+                    if message["type"] == "http.response.body":
+                        scope.cancel()
+                        await asyncio.sleep(0)
+
+                await response.stream_response(send)
+
+        # Assert before event-loop shutdown can run delayed finalizers.
+        assert finalized == [True]
+
+    invoke, selector, _, _, _ = _run_stateful_with_mocks(
+        "together-ai/base-model",
+        "together-ai/base-model",
+        stream=True,
+        response_consumer=consume,
+    )
+    selector.select_provider.return_value = (
+        SimpleNamespace(process_conversation=worker),
+        "provider-model",
+    )
+    asyncio.run(invoke())

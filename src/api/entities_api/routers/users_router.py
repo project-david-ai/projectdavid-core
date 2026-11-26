@@ -126,9 +126,12 @@ def delete_user(
     auth_key: ApiKeyModel = Depends(get_api_key),
 ):
     """
-    GDPR right-to-erasure.  Permanently deletes a user and all of their data,
-    including physical files from Samba and Qdrant vector store collections.
-    Requires Admin authentication.
+    Request administrative account erasure.
+
+    Returns 204 only after confirmed completion (including completed retries).
+    Returns 409 while reconciliation is pending, 503 if a required service
+    is unavailable, or 404 when completion cannot be confirmed.
+    Requires administrator authentication.
     """
     logging_utility.info(
         f"User '{auth_key.user_id}' requesting GDPR erasure for user ID: {user_id}"
@@ -148,8 +151,6 @@ def delete_user(
         )
     user_service = UserService()
     try:
-        # erase_user() handles physical assets + messages + audit log
-        # before delegating to DB cascades for the rest.
         user_service.erase_user(user_id)
         return None
     except HTTPException:

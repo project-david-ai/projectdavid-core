@@ -18,6 +18,10 @@ from src.api.entities_api.models.models import (
     User,
     VectorStore,
 )
+from src.api.entities_api.services.erasure_state import (
+    erasure_state,
+    require_mutable_user,
+)
 from src.api.entities_api.services.logging_service import LoggingUtility
 from src.api.entities_api.services.vector_runtime.vector_store_manager import (
     VectorStoreManager,
@@ -37,78 +41,17 @@ class UserService:
     # ─────────────────────────────────────────────────────────────────────────
 
     def erase_user(self, user_id: str) -> None:
-        """
-        GDPR right-to-erasure.  Permanently and completely removes a user and
-        all of their data, including physical assets that DB cascades cannot
-        reach.
+        """Delegate account deletion to the durable erasure coordinator."""
+        from src.api.entities_api.services.account_erasure import erase_user
 
-        Deletion order
-        ──────────────
-        1.  Physical files from Samba       (must precede DB row deletion)
-        2.  Qdrant vector store collections (must precede DB row deletion)
-        3.  Messages in user's threads      (no FK — must be explicit)
-        4.  Soft-delete exclusively-owned assistants
-        5.  Write immutable AuditLog entry  (survives with user_id = NULL)
-        6.  db.delete(user) + commit        (DB cascades clean up the rest)
-
-        After step 6 the following are removed by cascade:
-            api_keys, runs → actions, files → file_storage,
-            vector_stores → vector_store_files,
-            sandboxes, batfish_snapshots,
-            thread_participants rows, user_assistants rows
-
-        And the following are nullified by SET NULL:
-            threads.owner_id, assistants.owner_id, audit_logs.user_id
-        """
-        with SessionLocal() as db:
-            db_user = db.query(User).filter(User.id == user_id).first()
-            if not db_user:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="User not found",
-                )
-
-            # ── 1. Physical file deletion from Samba ─────────────────────────
-            self._erase_physical_files(db, user_id)
-
-            # ── 2. Qdrant collection deletion ────────────────────────────────
-            self._erase_vector_store_collections(db, user_id)
-
-            # ── 3. Delete messages in user's threads ─────────────────────────
-            # messages.thread_id has no FK — orphans must be cleaned explicitly.
-            self._erase_messages_for_user_threads(db, user_id)
-
-            # ── 4. Soft-delete exclusively-owned assistants ──────────────────
-            self._soft_delete_exclusive_assistants(db, user_id)
-
-            # ── 5. Write immutable audit log entry ───────────────────────────
-            # Written before the user row is deleted so the DB session is still
-            # valid. user_id will be SET NULL by cascade when user row is gone.
-            self._write_erasure_audit_log(db, user_id)
-
-            # ── 6. Delete the user row — cascades handle the rest ────────────
-            db.delete(db_user)
-            db.commit()
-
-            logging_utility.info("GDPR erasure complete for user_id=%s", user_id)
+        erase_user(self, user_id)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Erasure helpers (private)
     # ─────────────────────────────────────────────────────────────────────────
 
     def _erase_physical_files(self, db: Session, user_id: str) -> None:
-        """
-        Delete every physical file from Samba for all files owned by user_id.
-        Errors are logged but do not abort the erasure — a missing physical
-        file should never block a legal deletion request.
-        """
-        samba = SambaClient(
-            os.getenv("SMBCLIENT_SERVER"),
-            os.getenv("SMBCLIENT_SHARE"),
-            os.getenv("SMBCLIENT_USERNAME"),
-            os.getenv("SMBCLIENT_PASSWORD"),
-        )
-
+        """Keep database locators intact unless every physical deletion succeeds."""
         storage_rows = (
             db.query(FileStorage)
             .join(File, File.id == FileStorage.file_id)
@@ -116,47 +59,49 @@ class UserService:
             .all()
         )
 
-        for row in storage_rows:
-            if row.storage_system == "samba":
-                try:
-                    samba.delete_file(row.storage_path)
-                    logging_utility.info(
-                        "Erased physical file: %s (file_id=%s)",
-                        row.storage_path,
-                        row.file_id,
-                    )
-                except Exception as exc:
-                    logging_utility.error(
-                        "Failed to delete physical file %s during erasure of user %s: %s",
-                        row.storage_path,
-                        user_id,
-                        exc,
-                    )
+        if not storage_rows:
+            return
+        if any(
+            row.storage_system != "samba" or not row.storage_path
+            for row in storage_rows
+        ):
+            raise HTTPException(409, "Account erasure requires storage reconciliation.")
+        samba = None
+        try:
+            samba = SambaClient(
+                os.getenv("SMBCLIENT_SERVER"),
+                os.getenv("SMBCLIENT_SHARE"),
+                os.getenv("SMBCLIENT_USERNAME"),
+                os.getenv("SMBCLIENT_PASSWORD"),
+            )
+            for row in storage_rows:
+                samba.delete_file(row.storage_path, missing_ok=True)
+        except Exception:
+            # Do not log exception strings: storage errors can contain private paths.
+            raise HTTPException(
+                503, "Physical file erasure is incomplete; retry required."
+            ) from None
+        finally:
+            if samba is not None and samba.conn is not None:
+                samba.conn.close()
 
     def _erase_vector_store_collections(self, db: Session, user_id: str) -> None:
-        """
-        Delete every Qdrant collection owned by user_id.
-        Errors are logged but do not abort the erasure.
-        """
-        vector_manager = VectorStoreManager()
-
+        """Abort before deleting locators if Qdrant cleanup is unconfirmed."""
         stores = db.query(VectorStore).filter(VectorStore.user_id == user_id).all()
-
-        for store in stores:
-            try:
+        if not stores:
+            return
+        vector_manager = None
+        try:
+            vector_manager = VectorStoreManager()
+            for store in stores:
                 vector_manager.delete_store(store.collection_name)
-                logging_utility.info(
-                    "Erased Qdrant collection: %s (store_id=%s)",
-                    store.collection_name,
-                    store.id,
-                )
-            except Exception as exc:
-                logging_utility.error(
-                    "Failed to delete Qdrant collection %s during erasure of user %s: %s",
-                    store.collection_name,
-                    user_id,
-                    exc,
-                )
+        except Exception:
+            raise HTTPException(
+                503, "Vector erasure is incomplete; retry required."
+            ) from None
+        finally:
+            if vector_manager is not None:
+                vector_manager.client.close()
 
     def _erase_messages_for_user_threads(self, db: Session, user_id: str) -> None:
         """
@@ -300,19 +245,36 @@ class UserService:
                     User.oauth_provider == provider,
                     User.provider_user_id == provider_user_id,
                 )
+                .with_for_update()
                 .first()
             )
-            if not user and email and email_verified:
-                potential_user = db.query(User).filter(User.email == email).first()
-                if potential_user and (
-                    not potential_user.oauth_provider
-                    or potential_user.oauth_provider == provider
+            matched_by_email = False
+            if user is None and email and email_verified:
+                user = (
+                    db.query(User).filter(User.email == email).with_for_update().first()
+                )
+                matched_by_email = user is not None
+
+            if user is not None:
+                # The identity lookup already holds the user-row lock.
+                # Read the receipt before changing any identity fields.
+                if erasure_state(db, user.id, for_update=True) is not None:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Account deletion is pending or complete.",
+                    )
+
+                # Preserve the existing verified-email linking policy.
+                if matched_by_email and (
+                    user.oauth_provider and user.oauth_provider != provider
                 ):
-                    user = potential_user
+                    user = None
+
+            if user is not None:
+                update_occurred = False
+                if matched_by_email:
                     user.oauth_provider = provider
                     user.provider_user_id = provider_user_id
-            if user:
-                update_occurred = False
                 if full_name is not None and user.full_name != full_name:
                     user.full_name = full_name
                     update_occurred = True
@@ -382,11 +344,7 @@ class UserService:
         self, user_id: str, user_update: ValidationInterface.UserUpdate
     ) -> ValidationInterface.UserRead:
         with SessionLocal() as db:
-            db_user = db.query(User).filter(User.id == user_id).first()
-            if not db_user:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
-                )
+            db_user = require_mutable_user(db, user_id)
             update_data = user_update.model_dump(exclude_unset=True)
             updated = False
             for key, value in update_data.items():
@@ -400,18 +358,13 @@ class UserService:
             return ValidationInterface.UserRead.model_validate(db_user)
 
     def delete_user(self, user_id: str) -> None:
-        """
-        Hard delete with no physical asset cleanup.
-        Use erase_user() for GDPR right-to-erasure.
-        """
+        """Reject legacy metadata-only deletion; never discard storage locators."""
         with SessionLocal() as db:
-            db_user = db.query(User).filter(User.id == user_id).first()
-            if not db_user:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
-                )
-            db.delete(db_user)
-            db.commit()
+            require_mutable_user(db, user_id)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Direct user deletion is disabled. Account erasure is required.",
+            )
 
     def get_or_create_user(
         self, user_id: Optional[str] = None
