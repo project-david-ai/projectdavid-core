@@ -1,3 +1,17 @@
+# [1.66.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.65.0...v1.66.0) (2026-11-27)
+
+
+### Bug Fixes
+
+* **api:** replace legacy Entities branding ([ff0784b](https://github.com/project-david-ai/projectdavid-core/commit/ff0784b5bb1075ab056cfd80a97d030808f6bed4))
+* **security:** enforce tenant ownership across actions and messages ([ed64509](https://github.com/project-david-ai/projectdavid-core/commit/ed64509a325f3575cb69ace58c8dcbc590eff178))
+
+
+### Features
+
+* **core:** support run status filtering and align SDK to 1.120.0 ([cac4a2f](https://github.com/project-david-ai/projectdavid-core/commit/cac4a2f276871fac408212e967817e96a355b2f1))
+* **docs:** generate curated public OpenAPI contract ([c2f5c9b](https://github.com/project-david-ai/projectdavid-core/commit/c2f5c9b16cd5a6d004043390cce0fcf95a2b19cd))
+
 # [1.65.0](https://github.com/project-david-ai/projectdavid-core/compare/v1.64.0...v1.65.0) (2026-11-26)
 
 
