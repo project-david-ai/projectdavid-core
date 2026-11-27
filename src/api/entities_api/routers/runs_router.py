@@ -236,6 +236,7 @@ def list_runs(
     order: Literal["asc", "desc"] = Query("asc"),
     thread_id: Optional[str] = Query(None),
     auth_key: ApiKeyModel = Depends(get_api_key),
+    status_filter: Optional[StatusEnum] = Query(None, alias="status"),
 ):
     user_id = auth_key.user_id
     logging_utility.info(
@@ -248,7 +249,11 @@ def list_runs(
     svc = RunService()
     try:
         runs, has_more = svc.list_runs(
-            user_id=user_id, limit=limit, order=order, thread_id=thread_id
+            user_id=user_id,
+            limit=limit,
+            order=order,
+            thread_id=thread_id,
+            status_filter=status_filter,
         )
         return {
             "object": "list",

@@ -1,13 +1,13 @@
 """
-Portal Local Function — Registered BYOK Integration Test.
+Portal Local Function — Native Registered BYOK Integration Test.
 
 Validates:
     1. Retrieval of a Portal-created assistant.
     2. Persistence of its local function definition.
-    3. Registered BYOK inference.
+    3. Registered BYOK inference through the native SDK transport.
     4. External function dispatch to the SDK.
     5. Local execution and tool-output submission.
-    6. SDK-managed continuation and final response.
+    6. SDK-managed continuation and final response with credential forwarding.
     7. Successful Run completion.
 
 No assistant creation or configuration mutations.
@@ -19,8 +19,8 @@ import time
 
 from collections import Counter
 from pathlib import Path
+from unittest.mock import patch
 
-import httpx
 from dotenv import load_dotenv
 
 from projectdavid import (
@@ -76,110 +76,6 @@ TEST_PROMPT = (
 VERIFICATION_REFERENCE = "FLIGHTY-PD-72941"
 
 COUNTS = Counter()
-
-
-# ============================================================
-# REGISTERED BYOK TRANSPORT
-# ============================================================
-
-
-class _RegisteredBYOKStreamTransport:
-    """
-    Replace only the inference HTTP transport.
-
-    SDK event mapping, external function execution, tool-output
-    submission and recursive turn management remain unchanged.
-    """
-
-    def __init__(
-        self,
-        *,
-        base_url: str,
-        core_api_key: str,
-        provider_key_id: str,
-    ):
-        self.base_url = base_url
-        self.core_api_key = core_api_key
-        self.provider_key_id = provider_key_id
-
-    async def stream_inference_response(
-        self,
-        *,
-        model: str,
-        thread_id: str,
-        message_id: str,
-        run_id: str,
-        assistant_id: str,
-        api_key: str | None = None,
-        timeout: float = 600.0,
-        **kwargs,
-    ):
-        if api_key is not None:
-            raise RuntimeError(
-                "Registered BYOK must not transmit " "plaintext provider credentials"
-            )
-
-        payload = {
-            "model": model,
-            "thread_id": thread_id,
-            "message_id": message_id,
-            "run_id": run_id,
-            "assistant_id": assistant_id,
-            "provider_key_id": self.provider_key_id,
-            "stream": True,
-        }
-
-        COUNTS["inference_requests"] += 1
-
-        print(
-            f"\n{CYAN}[BYOK] Inference request "
-            f"#{COUNTS['inference_requests']}{RESET}"
-        )
-
-        async with httpx.AsyncClient(
-            base_url=self.base_url,
-            timeout=httpx.Timeout(timeout, connect=10.0),
-            headers={"X-API-Key": self.core_api_key},
-            follow_redirects=False,
-        ) as http:
-            async with http.stream(
-                "POST",
-                "/v1/completions",
-                json=payload,
-            ) as response:
-                if response.status_code >= 400:
-                    raise RuntimeError(
-                        "Registered BYOK inference rejected: "
-                        f"HTTP {response.status_code}"
-                    )
-
-                finished = False
-
-                async for line in response.aiter_lines():
-                    if not line.startswith("data:"):
-                        continue
-
-                    data = line[5:].strip()
-
-                    if data == "[DONE]":
-                        finished = True
-                        break
-
-                    try:
-                        chunk = json.loads(data)
-                    except ValueError as exc:
-                        raise RuntimeError("Invalid registered BYOK SSE frame") from exc
-
-                    if not isinstance(chunk, dict):
-                        raise RuntimeError("Invalid inference chunk")
-
-                    if chunk.get("type") == "error":
-                        raise RuntimeError("Inference reported a stream error")
-
-                    yield chunk
-
-                if not finished:
-                    raise RuntimeError("Stream terminated without [DONE]")
 
 
 # ============================================================
@@ -385,11 +281,6 @@ def main():
             message_id=message.id,
             run_id=run.id,
             api_key=None,
-        )
-
-        stream.inference_client = _RegisteredBYOKStreamTransport(
-            base_url=BASE_URL,
-            core_api_key=USER_API_KEY,
             provider_key_id=PROVIDER_KEY_ID,
         )
 
@@ -401,62 +292,77 @@ def main():
         # 4. Single SDK-managed event loop.
         # ----------------------------------------------------
 
-        for event in stream.stream_events(model=model):
-            now = time.perf_counter()
-            delta = now - last_tick
-            last_tick = now
+        # Observe calls while executing the actual SDK transport unchanged.
+        with patch.object(
+            client.inference,
+            "stream_inference_response",
+            wraps=client.inference.stream_inference_response,
+        ) as native_transport:
+            for event in stream.stream_events(model=model):
+                now = time.perf_counter()
+                delta = now - last_tick
+                last_tick = now
 
-            event_name = type(event).__name__
-            COUNTS[event_name] += 1
+                event_name = type(event).__name__
+                COUNTS[event_name] += 1
 
-            if isinstance(event, ToolCallRequestEvent):
-                print(
-                    f"\n{YELLOW}[+{delta:.4f}s] "
-                    f"[TOOL REQUEST] {event.tool_name}{RESET}"
-                )
-
-                handler = TOOL_REGISTRY.get(event.tool_name)
-
-                if handler is None:
-                    raise RuntimeError(
-                        "Unexpected external tool request: " f"{event.tool_name}"
+                if isinstance(event, ToolCallRequestEvent):
+                    print(
+                        f"\n{YELLOW}[+{delta:.4f}s] "
+                        f"[TOOL REQUEST] {event.tool_name}{RESET}"
                     )
 
-                success = event.execute(handler)
+                    handler = TOOL_REGISTRY.get(event.tool_name)
 
-                if not success:
-                    raise RuntimeError(f"Tool execution failed: {event.tool_name}")
+                    if handler is None:
+                        raise RuntimeError(
+                            "Unexpected external tool request: " f"{event.tool_name}"
+                        )
 
-                COUNTS["executed_tools"] += 1
+                    success = event.execute(handler)
 
-                print(f"{GREEN}[TOOL OUTPUT SUBMITTED] " f"{event.tool_name}{RESET}")
+                    if not success:
+                        raise RuntimeError(f"Tool execution failed: {event.tool_name}")
 
-            elif isinstance(event, ContentEvent):
-                content = event.content or ""
+                    COUNTS["executed_tools"] += 1
 
-                print(
-                    f"{GREEN}{content}{RESET}",
-                    end="",
-                    flush=True,
-                )
+                    print(
+                        f"{GREEN}[TOOL OUTPUT SUBMITTED] " f"{event.tool_name}{RESET}"
+                    )
 
-                # Only collect content received after successful
-                # external function execution.
-                if COUNTS["executed_tools"]:
-                    final_content.append(content)
+                elif isinstance(event, ContentEvent):
+                    content = event.content or ""
 
-            elif isinstance(event, ReasoningEvent):
-                print(
-                    f"{CYAN}{event.content or ''}{RESET}",
-                    end="",
-                    flush=True,
-                )
+                    print(
+                        f"{GREEN}{content}{RESET}",
+                        end="",
+                        flush=True,
+                    )
 
-            elif isinstance(event, DecisionEvent):
-                print(f"\n{MAGENTA}[DECISION] " f"{event.content or ''}{RESET}")
+                    # Only collect content received after successful
+                    # external function execution.
+                    if COUNTS["executed_tools"]:
+                        final_content.append(content)
 
-            else:
-                print(f"\n{GREY}[+{delta:.4f}s] " f"{event_name}{RESET}")
+                elif isinstance(event, ReasoningEvent):
+                    print(
+                        f"{CYAN}{event.content or ''}{RESET}",
+                        end="",
+                        flush=True,
+                    )
+
+                elif isinstance(event, DecisionEvent):
+                    print(f"\n{MAGENTA}[DECISION] " f"{event.content or ''}{RESET}")
+
+                else:
+                    print(f"\n{GREY}[+{delta:.4f}s] " f"{event_name}{RESET}")
+
+            COUNTS["inference_requests"] = native_transport.call_count
+            for call in native_transport.call_args_list:
+                if call.kwargs.get("provider_key_id") != PROVIDER_KEY_ID:
+                    raise AssertionError("Registered credential was not forwarded")
+                if call.kwargs.get("api_key") is not None:
+                    raise AssertionError("Direct provider credential was supplied")
 
         # ----------------------------------------------------
         # 5. Runtime acceptance assertions.
