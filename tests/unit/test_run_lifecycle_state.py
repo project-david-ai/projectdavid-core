@@ -199,3 +199,27 @@ def test_explicit_finalize_status_still_transitions():
             StatusEnum.completed.value,
         )
     ]
+
+
+def test_noop_run_field_update_preserves_owner_context(monkeypatch):
+    service = RunService()
+    calls = []
+    expected = object()
+
+    def retrieve_run(run_id, *, user_id=None):
+        calls.append((run_id, user_id))
+        return expected
+
+    monkeypatch.setattr(service, "retrieve_run", retrieve_run)
+
+    assert service.update_run_fields("run_1", user_id="owner_1") is expected
+
+    assert (
+        service.update_run_fields("run_1", user_id="owner_1", unknown_field=True)
+        is expected
+    )
+
+    assert calls == [
+        ("run_1", "owner_1"),
+        ("run_1", "owner_1"),
+    ]

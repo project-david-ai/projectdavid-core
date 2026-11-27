@@ -505,7 +505,7 @@ class RunService:
                 run_id,
                 list(kwargs.keys()),
             )
-            return self.retrieve_run(run_id)
+            return self.retrieve_run(run_id, user_id=user_id)
 
         with SessionLocal() as db:
             run = self._get_run_or_404(run_id, db)
@@ -535,11 +535,15 @@ class RunService:
         limit: int = 20,
         order: str = "asc",
         thread_id: Optional[str] = None,
+        status_filter: Optional[StatusEnum] = None,
     ) -> Tuple[List[validator.Run], bool]:
         with SessionLocal() as db:
             q = db.query(Run).filter(Run.user_id == user_id)
             if thread_id:
                 q = q.filter(Run.thread_id == thread_id)
+
+            if status_filter is not None:
+                q = q.filter(Run.status == status_filter)
 
             q = q.order_by(
                 Run.created_at.asc() if order == "asc" else Run.created_at.desc()

@@ -20,7 +20,7 @@ transformers>=4.33.0,<5.0.0
 
 # ------------------------------------------------------------------ #
 # Internal packages
-projectdavid[embeddings]>=1.117.1
+projectdavid[embeddings]>=1.120.0
 # <--Depends on projectdavid-orm
 projectdavid-services>=1.2.0
 projectdavid-orm>=1.18.0
